@@ -24,16 +24,38 @@ public class PageTemplateFileService {
 
     /**
      * TSX 파일 생성
-     * 경로: {outputDir}/{slug}/page.tsx
+     * 경로: LIST → {outputDir}/{slug}/page.tsx (fileName 지정 시 {slug}/{fileName}.tsx)
+     *       LAYER → {outputDir}/{slug}/LayerPopup.tsx (fileName 지정 시 {slug}/{fileName}.tsx)
      *
-     * @param slug    kebab-case 식별자 (정규식 검증 완료된 값)
-     * @param tsxCode FE 생성 TSX 코드 문자열
+     * @param slug         kebab-case 식별자 (정규식 검증 완료된 값)
+     * @param tsxCode      FE 생성 TSX 코드 문자열
+     * @param templateType 템플릿 타입 ("LIST" 또는 "LAYER")
      * @return 생성된 파일의 절대경로 문자열
      * @throws RuntimeException 파일 쓰기 실패 시 → DB 트랜잭션 롤백 유발
      */
-    public String writeFile(String slug, String tsxCode) {
-        // 경로 구성: {outputDir}/{slug}/page.tsx
-        Path filePath = Paths.get(outputDir, slug, "page.tsx").toAbsolutePath().normalize();
+    public String writeFile(String slug, String tsxCode, String templateType) {
+        return writeFile(slug, tsxCode, templateType, null);
+    }
+
+    /**
+     * TSX 파일 생성 (파일명 직접 지정)
+     *
+     * @param slug         폴더명 (kebab-case 식별자)
+     * @param tsxCode      FE 생성 TSX 코드 문자열
+     * @param templateType 템플릿 타입 ("LIST" 또는 "LAYER")
+     * @param customFileName 커스텀 파일명 (확장자 제외, null이면 기본값 사용)
+     * @return 생성된 파일의 절대경로 문자열
+     */
+    public String writeFile(String slug, String tsxCode, String templateType, String customFileName) {
+        // 파일명 결정: 커스텀 입력 → 기본값(타입 기반)
+        String fileName;
+        if (customFileName != null && !customFileName.isBlank()) {
+            fileName = customFileName + ".tsx";
+        } else {
+            fileName = "LAYER".equals(templateType) ? "LayerPopup.tsx" : "page.tsx";
+        }
+        // 경로 구성: {outputDir}/{slug}/{fileName}
+        Path filePath = Paths.get(outputDir, slug, fileName).toAbsolutePath().normalize();
 
         // 출력 디렉토리 경계 검증 (Path Traversal 방지)
         Path baseDir = Paths.get(outputDir).toAbsolutePath().normalize();

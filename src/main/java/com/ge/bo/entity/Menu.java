@@ -78,6 +78,10 @@ public class Menu {
     @Builder.Default
     private Boolean isCategory = false;
 
+    /** page-data API 식별 슬러그 (영문·숫자·하이픈·언더스코어, nullable) */
+    @Column(length = 100)
+    private String slug;
+
     @CreatedBy
     @Column(name = "created_by", nullable = false, updatable = false, length = 50)
     private String createdBy;

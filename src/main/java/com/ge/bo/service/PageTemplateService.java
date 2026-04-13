@@ -41,10 +41,12 @@ public class PageTemplateService {
         return PageTemplateResponse.from(template);
     }
 
-    /** 단건 조회 (slug) — 동적 라우트 페이지에서 사용 */
+    /** 단건 조회 (slug + type) — LIST/LAYER 타입 구분하여 조회 */
     @Transactional(readOnly = true)
-    public PageTemplateResponse getBySlug(String slug) {
-        PageTemplate template = pageTemplateRepository.findBySlug(slug)
+    public PageTemplateResponse getBySlug(String slug, String type) {
+        // slug만으로 조회 시 동일 slug가 LIST/LAYER 양쪽에 존재하면 2개 반환 → 예외 발생
+        // type 파라미터로 명시적 구분
+        PageTemplate template = pageTemplateRepository.findBySlugAndTemplateType(slug, type)
                 .orElseThrow(ErrorCode.PAGE_TEMPLATE_NOT_FOUND::toException);
         return PageTemplateResponse.from(template);
     }
@@ -55,19 +57,34 @@ public class PageTemplateService {
      */
     @Transactional
     public PageTemplateResponse create(PageTemplateRequest request) {
-        // 이름 중복 검사
-        if (pageTemplateRepository.existsByName(request.getName())) {
-            throw ErrorCode.PAGE_TEMPLATE_NAME_DUPLICATE.toException();
+        String templateType = request.getTemplateType() != null ? request.getTemplateType() : "LIST";
+
+        // 동일 slug + type이 이미 존재하면 덮어쓰기(upsert) — 중복 오류 없이 기존 레코드 갱신
+        PageTemplate existing = pageTemplateRepository.findBySlugAndTemplateType(request.getSlug(), templateType)
+                .orElse(null);
+        if (existing != null) {
+            // 파일 덮어쓰기
+            String filePath = existing.getFilePath();
+            if (request.getTsxCode() != null && !request.getTsxCode().isBlank()) {
+                filePath = pageTemplateFileService.writeFile(request.getSlug(), request.getTsxCode(), templateType, request.getFileName());
+            }
+            existing.setName(request.getName());
+            existing.setDescription(request.getDescription());
+            existing.setConfigJson(request.getConfigJson());
+            existing.setCollapsible(request.isCollapsible());
+            existing.setFilePath(filePath);
+            return PageTemplateResponse.from(pageTemplateRepository.save(existing));
         }
-        // slug 중복 검사
-        if (pageTemplateRepository.existsBySlug(request.getSlug())) {
-            throw ErrorCode.PAGE_TEMPLATE_SLUG_DUPLICATE.toException();
+
+        // 이름 중복 검사 (같은 templateType 안에서만, 신규 생성 시)
+        if (pageTemplateRepository.existsByNameAndTemplateType(request.getName(), templateType)) {
+            throw ErrorCode.PAGE_TEMPLATE_NAME_DUPLICATE.toException();
         }
 
         // tsxCode가 있을 때만 TSX 파일 생성 (없으면 DB만 저장)
         String filePath = "";
         if (request.getTsxCode() != null && !request.getTsxCode().isBlank()) {
-            filePath = pageTemplateFileService.writeFile(request.getSlug(), request.getTsxCode());
+            filePath = pageTemplateFileService.writeFile(request.getSlug(), request.getTsxCode(), templateType, request.getFileName());
         }
 
         // DB 저장
@@ -78,7 +95,7 @@ public class PageTemplateService {
                 .configJson(request.getConfigJson())
                 .collapsible(request.isCollapsible())
                 .filePath(filePath)
-                .templateType(request.getTemplateType() != null ? request.getTemplateType() : "LIST")
+                .templateType(templateType)
                 .build();
 
         return PageTemplateResponse.from(pageTemplateRepository.save(template));
@@ -92,14 +109,12 @@ public class PageTemplateService {
         PageTemplate template = pageTemplateRepository.findById(id)
                 .orElseThrow(ErrorCode.PAGE_TEMPLATE_NOT_FOUND::toException);
 
-        // 이름 중복 검사 (자신 제외)
-        if (pageTemplateRepository.existsByNameAndIdNot(request.getName(), id)) {
+        String templateType = request.getTemplateType() != null ? request.getTemplateType() : template.getTemplateType();
+        // 이름 중복 검사 — 자신 제외, 같은 templateType 안에서만
+        if (pageTemplateRepository.existsByNameAndTemplateTypeAndIdNot(request.getName(), templateType, id)) {
             throw ErrorCode.PAGE_TEMPLATE_NAME_DUPLICATE.toException();
         }
-        // slug 중복 검사 (자신 제외)
-        if (pageTemplateRepository.existsBySlugAndIdNot(request.getSlug(), id)) {
-            throw ErrorCode.PAGE_TEMPLATE_SLUG_DUPLICATE.toException();
-        }
+        // slug 중복 검사 제거 — 파일 덮어쓰기 허용
 
         // tsxCode가 있을 때만 파일 처리
         String newFilePath = template.getFilePath();
@@ -107,7 +122,7 @@ public class PageTemplateService {
             // 기존 파일 삭제 (slug 변경 대비)
             pageTemplateFileService.deleteFile(template.getFilePath());
             // 신규 파일 쓰기 (실패 시 RuntimeException → DB 롤백)
-            newFilePath = pageTemplateFileService.writeFile(request.getSlug(), request.getTsxCode());
+            newFilePath = pageTemplateFileService.writeFile(request.getSlug(), request.getTsxCode(), templateType);
         }
 
         // DB 수정
@@ -123,6 +138,22 @@ public class PageTemplateService {
         }
 
         return PageTemplateResponse.from(pageTemplateRepository.save(template));
+    }
+
+    /**
+     * 파일만 생성 (DB 저장 없음) — 방식 B (생성 방식)
+     * fileName 미입력 시: LIST → page.tsx, LAYER → LayerPopup.tsx
+     */
+    public String generateFile(String slug, String tsxCode, String templateType) {
+        return generateFile(slug, tsxCode, templateType, null);
+    }
+
+    public String generateFile(String slug, String tsxCode, String templateType, String customFileName) {
+        pageTemplateFileService.writeFile(slug, tsxCode, templateType, customFileName);
+        String resolvedName = (customFileName != null && !customFileName.isBlank())
+                ? customFileName + ".tsx"
+                : ("LAYER".equals(templateType) ? "LayerPopup.tsx" : "page.tsx");
+        return "/admin/generated/" + slug + "/" + resolvedName;
     }
 
     /**

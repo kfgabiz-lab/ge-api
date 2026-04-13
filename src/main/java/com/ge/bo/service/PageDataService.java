@@ -30,6 +30,7 @@ public class PageDataService {
 
     private final PageDataRepository pageDataRepository;
     private final ObjectMapper objectMapper;
+    private final PageFileService pageFileService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -79,10 +80,23 @@ public class PageDataService {
             return buildEmptyResponse(page, size);
         }
 
-        // 데이터 조회 (created_at DESC 정렬)
+        // 정렬 조건 파싱 — "컬럼키,asc|desc" 형식, SQL Injection 방지
+        String orderBy = " ORDER BY created_at DESC"; // 기본값
+        String sortParam = allParams.get("sort");
+        if (sortParam != null && !sortParam.isBlank()) {
+            String[] parts = sortParam.split(",", 2);
+            String sortCol = parts[0].trim();
+            String sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
+            // 컬럼키 유효성 검증 (영문자/숫자/언더스코어만 허용)
+            if (sortCol.matches("[a-zA-Z0-9_]+")) {
+                orderBy = " ORDER BY data_json->>'" + sortCol + "' " + sortDir;
+            }
+        }
+
+        // 데이터 조회
         String dataSql = "SELECT id, template_slug, data_json::text, created_by, created_at, updated_by, updated_at "
                 + "FROM page_data " + whereClause
-                + " ORDER BY created_at DESC"
+                + orderBy
                 + " LIMIT :size OFFSET :offset";
         Query dataQuery = entityManager.createNativeQuery(dataSql);
         dataQuery.setParameter("slug", slug);
@@ -170,6 +184,7 @@ public class PageDataService {
 
     /**
      * 삭제
+     * page_data 삭제 전 연관 page_file(파일 + DB)을 먼저 정리
      *
      * @param slug 페이지 식별자
      * @param id   데이터 PK
@@ -178,7 +193,73 @@ public class PageDataService {
     public void delete(String slug, Long id) {
         pageDataRepository.findByIdAndTemplateSlug(id, slug)
                 .orElseThrow(ErrorCode.PAGE_DATA_NOT_FOUND::toException);
+
+        // 연관 파일 일괄 삭제 (파일시스템 + DB)
+        pageFileService.deleteByDataId(id);
+
         pageDataRepository.deleteByIdAndTemplateSlug(id, slug);
+    }
+
+    /**
+     * 전체 데이터 조회 — LIMIT/OFFSET 없이 전체 조회 (엑셀 다운로드 전용)
+     * 검색 조건은 search()와 동일하게 적용
+     *
+     * @param slug      페이지 식별자
+     * @param allParams 검색 조건 (export/format/headers/keys 등 예약어는 제외됨)
+     * @return 전체 데이터 목록 (Map<키, 값> 형태)
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> exportAll(String slug, Map<String, String> allParams) {
+        // 예약 파라미터 확장 (export 전용 파라미터 추가)
+        Set<String> reservedForExport = new HashSet<>(RESERVED_PARAMS);
+        reservedForExport.addAll(Set.of("format", "headers", "keys"));
+
+        // 검색 조건 파라미터 추출
+        Map<String, String> searchParams = new LinkedHashMap<>();
+        allParams.forEach((key, value) -> {
+            if (!reservedForExport.contains(key) && value != null && !value.isBlank()) {
+                searchParams.put(key, value);
+            }
+        });
+
+        // WHERE 절 동적 생성 (search()와 동일 로직)
+        StringBuilder whereClause = new StringBuilder("WHERE template_slug = :slug");
+        searchParams.forEach((key, value) -> {
+            if (key.matches("[a-zA-Z0-9_]+")) {
+                whereClause.append(" AND data_json->>'").append(key).append("' ILIKE :p_").append(key);
+            }
+        });
+
+        // LIMIT/OFFSET 없이 전체 조회
+        String dataSql = "SELECT id, template_slug, data_json::text, created_by, created_at, updated_by, updated_at "
+                + "FROM page_data " + whereClause
+                + " ORDER BY created_at DESC";
+        Query dataQuery = entityManager.createNativeQuery(dataSql);
+        dataQuery.setParameter("slug", slug);
+        searchParams.forEach((key, value) -> {
+            if (key.matches("[a-zA-Z0-9_]+")) {
+                dataQuery.setParameter("p_" + key, "%" + value + "%");
+            }
+        });
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = dataQuery.getResultList();
+
+        // Map<키, 값> 형태로 변환 (ExcelService에서 keys 기준으로 값 추출)
+        return rows.stream()
+                .map(row -> {
+                    Map<String, Object> dataMap = new LinkedHashMap<>();
+                    try {
+                        if (row[2] != null) {
+                            dataMap = objectMapper.readValue(row[2].toString(),
+                                    new com.fasterxml.jackson.core.type.TypeReference<>() {});
+                        }
+                    } catch (Exception e) {
+                        log.warn("exportAll dataJson 파싱 실패: {}", e.getMessage());
+                    }
+                    return dataMap;
+                })
+                .toList();
     }
 
     // ── private 헬퍼 ──────────────────────────────────────────

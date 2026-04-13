@@ -25,7 +25,7 @@ public class PageTemplateRequest {
      * 소문자, 숫자, 하이픈, 언더스코어 허용 — Path Traversal 방지
      */
     @NotBlank(message = "slug는 필수입니다.")
-    @Pattern(regexp = "^[a-z0-9_-]+$", message = "slug는 소문자, 숫자, 하이픈, 언더스코어만 허용됩니다.")
+    @Pattern(regexp = "^[a-zA-Z0-9_-]+$", message = "slug는 영문(대·소문자), 숫자, 하이픈, 언더스코어만 허용됩니다. (DEBUG)")
     @Size(max = 100, message = "slug는 100자 이하여야 합니다.")
     private String slug;
 
@@ -49,4 +49,13 @@ public class PageTemplateRequest {
 
     /** 템플릿 유형 (LIST / LAYER) — 미전송 시 기존값 유지 또는 기본값 "LIST" */
     private String templateType;
+
+    /**
+     * 생성할 파일명 (확장자 제외, 선택)
+     * - 입력 시: {slug}/{fileName}.tsx 로 생성
+     * - 미입력 시: 기존 기본값 사용 (LIST → page, LAYER → LayerPopup)
+     */
+    @Pattern(regexp = "^[a-zA-Z0-9_-]*$", message = "fileName은 영문, 숫자, 하이픈, 언더스코어만 허용됩니다.")
+    @Size(max = 100)
+    private String fileName;
 }

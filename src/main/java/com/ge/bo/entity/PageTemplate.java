@@ -17,8 +17,9 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "page_template",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_page_template_name", columnNames = "name"),
-                @UniqueConstraint(name = "uq_page_template_slug", columnNames = "slug")
+                /* 같은 templateType 안에서만 이름/slug 중복 불가 — 타입이 다르면 동일 이름/slug 허용 */
+                @UniqueConstraint(name = "uq_page_template_name_type", columnNames = {"name", "template_type"}),
+                @UniqueConstraint(name = "uq_page_template_slug_type", columnNames = {"slug", "template_type"})
         })
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)

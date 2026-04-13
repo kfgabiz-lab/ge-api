@@ -26,4 +26,10 @@ public interface MenuRepository extends JpaRepository<Menu, Long> {
 
     /** URL 중복 확인 — 수정 시 (자신 제외) */
     boolean existsByUrlAndIdNot(String url, Long id);
+
+    /** Slug 중복 확인 — 생성 시 */
+    boolean existsBySlug(String slug);
+
+    /** Slug 중복 확인 — 수정 시 (자신 제외) */
+    boolean existsBySlugAndIdNot(String slug, Long id);
 }

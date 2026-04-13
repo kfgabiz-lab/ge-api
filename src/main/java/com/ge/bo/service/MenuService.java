@@ -65,6 +65,7 @@ public class MenuService {
         validateUrlFormat(cleanUrl);
         validateNameDuplicate(trimmedName, parent, request.menuType(), null);
         validateUrlDuplicate(cleanUrl, null);
+        validateSlugDuplicate(sanitizeSlug(request.slug()), null);
 
         Menu menu = Menu.builder()
             .name(trimmedName)
@@ -75,6 +76,7 @@ public class MenuService {
             .sortOrder(request.sortOrder() != null ? request.sortOrder() : 1)
             .visible(request.visible() != null ? request.visible() : true)
             .isCategory(request.isCategory() != null ? request.isCategory() : false)
+            .slug(sanitizeSlug(request.slug()))
             .build();
 
         return MenuResponse.from(menuRepository.save(menu));
@@ -107,6 +109,7 @@ public class MenuService {
         validateUrlFormat(cleanUrl);
         validateNameDuplicate(trimmedName, menu.getParent(), menu.getMenuType(), id);
         validateUrlDuplicate(cleanUrl, id);
+        validateSlugDuplicate(sanitizeSlug(request.slug()), id);
 
         menu.setName(trimmedName);
         menu.setUrl(cleanUrl);
@@ -114,6 +117,7 @@ public class MenuService {
         menu.setSortOrder(request.sortOrder() != null ? request.sortOrder() : menu.getSortOrder());
         menu.setVisible(request.visible() != null ? request.visible() : menu.getVisible());
         menu.setIsCategory(request.isCategory() != null ? request.isCategory() : menu.getIsCategory());
+        menu.setSlug(sanitizeSlug(request.slug()));
 
         return MenuResponse.from(menu);
     }
@@ -251,6 +255,22 @@ public class MenuService {
             throw ErrorCode.MENU_XSS_DETECTED.toException();
         }
         return name != null ? name.trim() : "";
+    }
+
+    /** Slug 중복 검증 (excludeId: 수정 시 자신 제외) */
+    private void validateSlugDuplicate(String slug, Long excludeId) {
+        if (slug == null || slug.isEmpty()) return;
+        boolean duplicate = excludeId == null
+            ? menuRepository.existsBySlug(slug)
+            : menuRepository.existsBySlugAndIdNot(slug, excludeId);
+        if (duplicate) throw ErrorCode.MENU_SLUG_DUPLICATE.toException();
+    }
+
+    /** 슬러그 정제: trim, 빈 문자열은 null 반환 */
+    private String sanitizeSlug(String slug) {
+        if (slug == null) return null;
+        String trimmed = slug.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /** URL 정제: XSS 체크 + trim + trailing slash 제거 */
