@@ -19,7 +19,6 @@ public record MenuResponse(
     Integer sortOrder,
     Boolean visible,
     Boolean isCategory,
-    String slug,
     LocalDateTime createdAt,
     LocalDateTime updatedAt,
     List<MenuResponse> children
@@ -37,7 +36,6 @@ public record MenuResponse(
             menu.getSortOrder(),
             menu.getVisible(),
             menu.getIsCategory(),
-            menu.getSlug(),
             menu.getCreatedAt(),
             menu.getUpdatedAt(),
             menu.getChildren() != null

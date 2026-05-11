@@ -2,6 +2,7 @@ package com.ge.bo.service;
 
 import com.ge.bo.dto.MenuRequest;
 import com.ge.bo.dto.MenuResponse;
+import com.ge.bo.dto.MenuSortBatchItem;
 import com.ge.bo.dto.RoleMenuResponse;
 import com.ge.bo.entity.Menu;
 import com.ge.bo.entity.Role;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -65,7 +67,6 @@ public class MenuService {
         validateUrlFormat(cleanUrl);
         validateNameDuplicate(trimmedName, parent, request.menuType(), null);
         validateUrlDuplicate(cleanUrl, null);
-        validateSlugDuplicate(sanitizeSlug(request.slug()), null);
 
         Menu menu = Menu.builder()
             .name(trimmedName)
@@ -77,7 +78,6 @@ public class MenuService {
             .sortOrder(request.sortOrder() != null ? request.sortOrder() : 1)
             .visible(request.visible() != null ? request.visible() : true)
             .isCategory(request.isCategory() != null ? request.isCategory() : false)
-            .slug(sanitizeSlug(request.slug()))
             .build();
 
         return MenuResponse.from(menuRepository.save(menu));
@@ -110,7 +110,6 @@ public class MenuService {
         validateUrlFormat(cleanUrl);
         validateNameDuplicate(trimmedName, menu.getParent(), menu.getMenuType(), id);
         validateUrlDuplicate(cleanUrl, id);
-        validateSlugDuplicate(sanitizeSlug(request.slug()), id);
 
         menu.setName(trimmedName);
         menu.setDescription(request.description());
@@ -119,7 +118,6 @@ public class MenuService {
         menu.setSortOrder(request.sortOrder() != null ? request.sortOrder() : menu.getSortOrder());
         menu.setVisible(request.visible() != null ? request.visible() : menu.getVisible());
         menu.setIsCategory(request.isCategory() != null ? request.isCategory() : menu.getIsCategory());
-        menu.setSlug(sanitizeSlug(request.slug()));
 
         return MenuResponse.from(menu);
     }
@@ -146,6 +144,27 @@ public class MenuService {
     @Transactional
     public void updateSortOrder(Long id, Integer sortOrder) {
         findMenuOrThrow(id).setSortOrder(sortOrder);
+    }
+
+    /** 드래그 정렬 일괄 변경 — sortOrder + parentId 동시 업데이트 */
+    @Transactional
+    public void updateSortBatch(List<MenuSortBatchItem> items) {
+        for (MenuSortBatchItem item : items) {
+            Menu menu = findMenuOrThrow(item.id());
+            if (item.sortOrder() != null) {
+                menu.setSortOrder(item.sortOrder());
+            }
+            Long currentParentId = menu.getParent() != null ? menu.getParent().getId() : null;
+            if (!Objects.equals(currentParentId, item.parentId())) {
+                if (item.parentId() == null) {
+                    menu.setParent(null);
+                } else {
+                    Menu parent = menuRepository.findById(item.parentId())
+                        .orElseThrow(ErrorCode.MENU_PARENT_NOT_FOUND::toException);
+                    menu.setParent(parent);
+                }
+            }
+        }
     }
 
     /* ══════════════════════════════════════ */
@@ -257,22 +276,6 @@ public class MenuService {
             throw ErrorCode.MENU_XSS_DETECTED.toException();
         }
         return name != null ? name.trim() : "";
-    }
-
-    /** Slug 중복 검증 (excludeId: 수정 시 자신 제외) */
-    private void validateSlugDuplicate(String slug, Long excludeId) {
-        if (slug == null || slug.isEmpty()) return;
-        boolean duplicate = excludeId == null
-            ? menuRepository.existsBySlug(slug)
-            : menuRepository.existsBySlugAndIdNot(slug, excludeId);
-        if (duplicate) throw ErrorCode.MENU_SLUG_DUPLICATE.toException();
-    }
-
-    /** 슬러그 정제: trim, 빈 문자열은 null 반환 */
-    private String sanitizeSlug(String slug) {
-        if (slug == null) return null;
-        String trimmed = slug.trim();
-        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /** URL 정제: XSS 체크 + trim + trailing slash 제거 */

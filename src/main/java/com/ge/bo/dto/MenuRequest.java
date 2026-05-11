@@ -36,10 +36,5 @@ public record MenuRequest(
 
     Boolean visible,
 
-    Boolean isCategory,
-
-    @Size(max = 100, message = "슬러그는 100자 이하로 입력해주세요.")
-    @Pattern(regexp = "^$|^[a-zA-Z0-9\\-_]+$",
-             message = "슬러그는 영문, 숫자, -, _만 사용 가능합니다.")
-    String slug
+    Boolean isCategory
 ) {}

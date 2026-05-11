@@ -3,6 +3,7 @@ package com.ge.bo.controller;
 import com.ge.bo.annotation.ApiLinkedEntity;
 import com.ge.bo.dto.MenuRequest;
 import com.ge.bo.dto.MenuResponse;
+import com.ge.bo.dto.MenuSortBatchItem;
 import com.ge.bo.dto.RoleMenuResponse;
 import com.ge.bo.service.MenuService;
 import jakarta.validation.Valid;
@@ -67,6 +68,13 @@ public class MenuController {
             return ResponseEntity.badRequest().build();
         }
         menuService.updateSortOrder(id, sortOrder);
+        return ResponseEntity.ok().build();
+    }
+
+    /** 드래그 정렬 일괄 변경 */
+    @PatchMapping("/sort-batch")
+    public ResponseEntity<Void> updateSortBatch(@RequestBody List<MenuSortBatchItem> items) {
+        menuService.updateSortBatch(items);
         return ResponseEntity.ok().build();
     }
 
