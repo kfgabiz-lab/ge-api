@@ -15,7 +15,7 @@ spring:
         format_sql: true
 
 server:
-  port: 8002
+  port: 8080
 
 # JWT 설정
 app:

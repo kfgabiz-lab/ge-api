@@ -4,7 +4,7 @@
 $projectPath = "C:\Users\Administrator\.gemini\workspace\Bo\bo-api"
 $buildPath   = "$projectPath\build\libs"
 $profile     = "local"
-$port        = 8002
+$port        = 8080
 
 Write-Host "=== Bo BE 재시작 시작 ==="
 
