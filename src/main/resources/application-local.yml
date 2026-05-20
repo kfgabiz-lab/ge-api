@@ -1,0 +1,11 @@
+# ローカル 개발 환경 설정
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/bo
+    username: postgres
+    password: "1234"
+
+# CORS - 로컬 FE 주소
+cors:
+  allowed-origins: "http://localhost:3002,http://localhost:3001"
