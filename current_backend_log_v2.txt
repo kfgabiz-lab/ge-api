@@ -1,1 +1,0 @@
-﻿Starting a Gradle Daemon, 9 busy and 2 incompatible and 3 stopped Daemons could not be reused, use --status for details

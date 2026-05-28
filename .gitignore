@@ -23,3 +23,29 @@ out/
 ### 환경변수 / 보안 파일 ###
 application-local.yml
 .env
+
+### 로그 / 디버그 파일 ###
+*.log
+spring.log
+backend_log*.txt
+backend_debug.txt
+be_log.txt
+be_run.log
+be_run_new.log
+boot_run_debug.txt
+boot_run_output.txt
+build_log.txt
+compile_log.txt
+current_backend_log*.txt
+error_logs.txt
+final_debug.log
+gradle_err.txt
+last_logs.txt
+log_readable.txt
+runtime_debug.log
+startup.log
+startup_log*.txt
+backend_log_fresh.txt
+backend_log_last.txt
+backend_log_readable.txt
+backend_log_utf8.txt
