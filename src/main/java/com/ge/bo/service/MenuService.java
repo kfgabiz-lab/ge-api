@@ -135,15 +135,27 @@ public class MenuService {
     validateChildUrl(parent, cleanUrl);
     validateUrlFormat(cleanUrl);
 
-    /* nameMsgKey로 message_resource 조회 → ko 값을 name에 저장 */
-    String nameKo = messageResourceService.resolveKo(request.nameMsgKey());
-    String descriptionKo = messageResourceService.resolveKo(request.descriptionMsgKey());
+    /* name/nameMsgKey 검증 — 둘 중 하나는 필수 */
+    boolean hasMsgKey = request.nameMsgKey() != null && !request.nameMsgKey().isBlank();
+    boolean hasDirectName = request.name() != null && !request.name().isBlank();
+    if (!hasMsgKey && !hasDirectName) {
+      throw ErrorCode.MENU_NAME_REQUIRED.toException();
+    }
+
+    /* 다국어 모드 ON: msgKey로 ko 값 조회 / OFF: 직접 입력값 사용 */
+    String nameKo = hasMsgKey
+            ? messageResourceService.resolveKo(request.nameMsgKey())
+            : request.name().trim();
+    boolean hasDescMsgKey = request.descriptionMsgKey() != null && !request.descriptionMsgKey().isBlank();
+    String descriptionKo = hasDescMsgKey
+            ? messageResourceService.resolveKo(request.descriptionMsgKey())
+            : (request.description() != null ? request.description().trim() : "");
 
     Menu menu = Menu.builder()
             .name(nameKo)
-            .nameMsgKey(request.nameMsgKey())
+            .nameMsgKey(hasMsgKey ? request.nameMsgKey() : null)
             .description(descriptionKo.isEmpty() ? null : descriptionKo)
-            .descriptionMsgKey(request.descriptionMsgKey())
+            .descriptionMsgKey(hasDescMsgKey ? request.descriptionMsgKey() : null)
             .url(cleanUrl)
             .icon(request.icon())
             .parent(parent)
@@ -181,14 +193,26 @@ public class MenuService {
     validateChildUrl(menu.getParent(), cleanUrl);
     validateUrlFormat(cleanUrl);
 
-    /* nameMsgKey로 message_resource 조회 → ko 값을 name에 저장 */
-    String nameKo = messageResourceService.resolveKo(request.nameMsgKey());
-    String descriptionKo = messageResourceService.resolveKo(request.descriptionMsgKey());
+    /* name/nameMsgKey 검증 — 둘 중 하나는 필수 */
+    boolean hasMsgKey = request.nameMsgKey() != null && !request.nameMsgKey().isBlank();
+    boolean hasDirectName = request.name() != null && !request.name().isBlank();
+    if (!hasMsgKey && !hasDirectName) {
+      throw ErrorCode.MENU_NAME_REQUIRED.toException();
+    }
+
+    /* 다국어 모드 ON: msgKey로 ko 값 조회 / OFF: 직접 입력값 사용 */
+    String nameKo = hasMsgKey
+            ? messageResourceService.resolveKo(request.nameMsgKey())
+            : request.name().trim();
+    boolean hasDescMsgKey = request.descriptionMsgKey() != null && !request.descriptionMsgKey().isBlank();
+    String descriptionKo = hasDescMsgKey
+            ? messageResourceService.resolveKo(request.descriptionMsgKey())
+            : (request.description() != null ? request.description().trim() : "");
 
     menu.setName(nameKo);
-    menu.setNameMsgKey(request.nameMsgKey());
+    menu.setNameMsgKey(hasMsgKey ? request.nameMsgKey() : null);
     menu.setDescription(descriptionKo.isEmpty() ? null : descriptionKo);
-    menu.setDescriptionMsgKey(request.descriptionMsgKey());
+    menu.setDescriptionMsgKey(hasDescMsgKey ? request.descriptionMsgKey() : null);
     menu.setUrl(cleanUrl);
     menu.setIcon(request.icon());
     menu.setSortOrder(request.sortOrder() != null ? request.sortOrder() : menu.getSortOrder());

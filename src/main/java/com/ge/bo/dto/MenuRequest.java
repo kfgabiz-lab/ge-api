@@ -4,13 +4,22 @@ import jakarta.validation.constraints.*;
 
 /**
  * 메뉴 생성/수정 요청 DTO
- * 메뉴명·설명은 다국어관리(message_resource)에서 key를 선택하여 전달한다.
+ * 다국어 모드 ON  → nameMsgKey 전달 (message_resource 키)
+ * 다국어 모드 OFF → name 직접 입력 전달
+ * 두 값 중 하나는 반드시 있어야 하며, 서비스 레이어에서 검증한다.
  */
 public record MenuRequest(
 
+    /** 다국어 모드 OFF 시 직접 입력한 메뉴명 */
+    @Size(max = 50, message = "메뉴명은 50자 이하여야 합니다.")
+    String name,
+
     /** 메뉴명 다국어 키 — message_resource.key (WORD 타입) */
-    @NotBlank(message = "메뉴명 다국어 키를 선택해주세요.")
     String nameMsgKey,
+
+    /** 다국어 모드 OFF 시 직접 입력한 메뉴 설명 (선택) */
+    @Size(max = 500, message = "메뉴 설명은 500자 이하여야 합니다.")
+    String description,
 
     /** 메뉴 설명 다국어 키 — message_resource.key (WORD/SENTENCE 타입, 선택) */
     String descriptionMsgKey,

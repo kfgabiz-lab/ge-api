@@ -1,7 +1,7 @@
 # 환경 1: 개발마스터 — 로컬 PC + 로컬 DB
 # Git Remote: ge / 공통 개발 결과물 공유용
 recaptcha:
-  secret-key: "6LfNdAYtAAAAAIhC2g663sKwYXo_mFrUCTAg8h_5"
+  secret-key: "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
 
 spring:
   datasource:

@@ -1,7 +1,7 @@
 # 환경 3: 개발서버 배포 전용
 # 배포 담당자 관리 — 개발자가 직접 수정하지 않음
 recaptcha:
-  secret-key: "6LfNdAYtAAAAAIhC2g663sKwYXo_mFrUCTAg8h_5"
+  secret-key: "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
 
 spring:
   datasource:

@@ -1,7 +1,7 @@
 # 환경 2: 개발자 — 로컬 PC + 공용 개발서버 DB
 # Git Remote: ge-bo (FE), ge-api (BE) / 개발자 개인 작업 환경
 recaptcha:
-  secret-key: "6LfNdAYtAAAAAIhC2g663sKwYXo_mFrUCTAg8h_5"
+  secret-key: "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
 
 spring:
   datasource:

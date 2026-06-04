@@ -26,6 +26,7 @@ public enum ErrorCode {
     MENU_TYPE_CHANGE(HttpStatus.BAD_REQUEST, "MENU_TYPE_CHANGE", "메뉴 구분은 변경할 수 없습니다. 삭제 후 재생성해주세요."),
     MENU_PARENT_CHANGE(HttpStatus.BAD_REQUEST, "MENU_PARENT_CHANGE", "상위 메뉴는 변경할 수 없습니다. 삭제 후 재생성해주세요."),
     MENU_TYPE_INVALID(HttpStatus.BAD_REQUEST, "MENU_TYPE_INVALID", "메뉴 구분은 BO 또는 FO만 가능합니다."),
+    MENU_NAME_REQUIRED(HttpStatus.BAD_REQUEST, "MENU_NAME_REQUIRED", "메뉴명 또는 다국어 키를 입력해주세요."),
 
     /* 역할 */
     ROLE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "해당 역할을 찾을 수 없습니다."),
