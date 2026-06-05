@@ -9,6 +9,17 @@ import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 
 /**
@@ -16,6 +27,7 @@ import java.time.Duration;
  * 사용법: externalApiClient.call(ApiCallRequest.post(url).body(data).build(), ResponseType.class)
  * - RestClient 빈 1개 재사용 (매번 new 생성 금지)
  * - 전역 타임아웃: 연결 5초 / 읽기 10초
+ * - 사내 SSL 검사 우회 처리 포함 (운영 시 회사 CA를 Java truststore에 등록 권장)
  */
 @Slf4j
 @Component
@@ -23,14 +35,32 @@ public class ExternalApiClient {
 
     private final RestClient restClient;
 
+    // SSL 전체 신뢰 컨텍스트 (한 번만 생성해서 재사용)
+    private final SSLContext trustAllSslContext;
+
     public ExternalApiClient(RestClient.Builder builder) {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        // SSL 컨텍스트 초기화
+        this.trustAllSslContext = createTrustAllSslContext();
+
+        // SimpleClientHttpRequestFactory를 익명 클래스로 확장해 prepareConnection 오버라이드
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory() {
+            @Override
+            protected void prepareConnection(HttpURLConnection conn, String httpMethod)
+                    throws IOException {
+                // 사내 SSL 검사 우회 (운영 시 회사 CA를 Java truststore에 등록 권장)
+                if (conn instanceof HttpsURLConnection https) {
+                    https.setSSLSocketFactory(trustAllSslContext.getSocketFactory());
+                    https.setHostnameVerifier((h, s) -> true);
+                }
+                super.prepareConnection(conn, httpMethod);
+            }
+        };
         factory.setConnectTimeout(Duration.ofSeconds(5));
         factory.setReadTimeout(Duration.ofSeconds(10));
 
         this.restClient = builder
-            .requestFactory(factory)
-            .build();
+                .requestFactory(factory)
+                .build();
     }
 
     /**
@@ -71,6 +101,27 @@ public class ExternalApiClient {
         } catch (Exception e) {
             log.error("외부 API 호출 오류 url={}", request.getUrl(), e);
             return ApiCallResult.failure(0, "외부 API 호출 오류");
+        }
+    }
+
+    /**
+     * SSL 전체 신뢰 컨텍스트 생성
+     * 사내 SSL 검사 우회용 — 운영 환경에서는 회사 CA를 Java truststore에 등록하여 사용 권장
+     */
+    private SSLContext createTrustAllSslContext() {
+        try {
+            TrustManager[] trustAll = new TrustManager[]{
+                    new X509TrustManager() {
+                        public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                        public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                        public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                    }
+            };
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, trustAll, new SecureRandom());
+            return ctx;
+        } catch (NoSuchAlgorithmException | KeyManagementException e) {
+            throw new RuntimeException("SSL 우회 컨텍스트 생성 실패", e);
         }
     }
 }
