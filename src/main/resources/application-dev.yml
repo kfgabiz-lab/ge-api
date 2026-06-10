@@ -29,5 +29,11 @@ page-template:
 # 배포 환경 — WARN 수준만 출력
 logging:
   level:
-    root: WARN
-    com.ge.bo: WARN
+    com.ge.bo: DEBUG
+    org.springframework.security: DEBUG
+    # SQL 파라미터 실제 값 출력
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    # 트랜잭션 커밋/롤백 로그
+    org.springframework.transaction: TRACE
+    org.springframework.orm.jpa: DEBUG
