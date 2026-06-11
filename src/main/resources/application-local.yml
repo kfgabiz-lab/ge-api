@@ -18,6 +18,7 @@ spring:
         format_sql: true
 totp:
   issuer: "Ge Admin"
+  enabled: false   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
 # CORS — 로컬 FE 주소
 cors:
   allowed-origins: "http://localhost:3002,http://localhost:3001"

@@ -470,15 +470,17 @@ public class PageDataService {
 
     /**
      * 네이티브 쿼리 결과의 타임스탬프 변환
-     * Hibernate 6에서 TIMESTAMPTZ는 OffsetDateTime 또는 java.sql.Timestamp로 반환될 수 있음
+     * Hibernate 6 + PostgreSQL JDBC에서 TIMESTAMPTZ는 다양한 타입으로 반환될 수 있음
      */
   private java.time.OffsetDateTime toOffsetDateTime(Object obj) {
-    if (obj instanceof java.time.OffsetDateTime odt) {
-      return odt;
-    }
-    if (obj instanceof java.sql.Timestamp ts) {
-      return ts.toInstant().atOffset(java.time.ZoneOffset.UTC);
-    }
+    if (obj == null) return null;
+    log.debug("createdAt 실제 타입: {}, 값: {}", obj.getClass().getName(), obj);
+    if (obj instanceof java.time.OffsetDateTime odt) return odt;
+    if (obj instanceof java.time.Instant instant) return instant.atOffset(java.time.ZoneOffset.UTC);
+    if (obj instanceof java.time.ZonedDateTime zdt) return zdt.toOffsetDateTime();
+    if (obj instanceof java.sql.Timestamp ts) return ts.toInstant().atOffset(java.time.ZoneOffset.UTC);
+    if (obj instanceof java.time.LocalDateTime ldt) return ldt.atOffset(java.time.ZoneOffset.UTC);
+    try { return java.time.OffsetDateTime.parse(obj.toString()); } catch (Exception ignored) {}
     return null;
   }
 
