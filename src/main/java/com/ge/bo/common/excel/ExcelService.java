@@ -7,6 +7,9 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -31,13 +34,14 @@ public class ExcelService {
     /**
      * xlsx 파일 생성 (Apache POI XSSFWorkbook 사용)
      *
-     * @param headers   컬럼 헤더 목록
-     * @param keys      data_json 키 목록 (헤더와 순서 일치)
-     * @param rows      데이터 목록
-     * @param sheetName 시트명
+     * @param headers     컬럼 헤더 목록
+     * @param keys        data_json 키 목록 (헤더와 순서 일치)
+     * @param dateFormats 날짜 포맷 목록 (keys와 순서 일치, 빈 문자열이면 포맷 미적용)
+     * @param rows        데이터 목록
+     * @param sheetName   시트명
      * @return xlsx 바이트 배열
      */
-  public byte[] buildXlsx(List<String> headers, List<String> keys,
+  public byte[] buildXlsx(List<String> headers, List<String> keys, List<String> dateFormats,
                              List<Map<String, Object>> rows, String sheetName) {
     try (Workbook workbook = new XSSFWorkbook();
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -71,7 +75,8 @@ public class ExcelService {
         Map<String, Object> rowData = rows.get(rowIdx);
         for (int colIdx = 0; colIdx < keys.size(); colIdx++) {
           Object value = getNestedValue(rowData, keys.get(colIdx));
-          String text = value != null ? value.toString() : "";
+          String fmt   = (dateFormats != null && colIdx < dateFormats.size()) ? dateFormats.get(colIdx) : "";
+          String text  = applyDateFormat(value, fmt);
           Cell cell = dataRow.createCell(colIdx);
           cell.setCellValue(text);
           if (colIdx < colMaxLen.length) {
@@ -96,12 +101,13 @@ public class ExcelService {
     /**
      * CSV 파일 생성 (UTF-8 BOM 포함 — 엑셀에서 한글 깨짐 방지)
      *
-     * @param headers 컬럼 헤더 목록
-     * @param keys    data_json 키 목록 (헤더와 순서 일치)
-     * @param rows    데이터 목록
+     * @param headers     컬럼 헤더 목록
+     * @param keys        data_json 키 목록 (헤더와 순서 일치)
+     * @param dateFormats 날짜 포맷 목록 (keys와 순서 일치, 빈 문자열이면 포맷 미적용)
+     * @param rows        데이터 목록
      * @return csv 바이트 배열 (BOM + UTF-8)
      */
-  public byte[] buildCsv(List<String> headers, List<String> keys,
+  public byte[] buildCsv(List<String> headers, List<String> keys, List<String> dateFormats,
                             List<Map<String, Object>> rows) {
     StringBuilder sb = new StringBuilder();
 
@@ -111,12 +117,12 @@ public class ExcelService {
 
         /* ── 데이터 행 ── */
     for (Map<String, Object> row : rows) {
-      List<String> values = keys.stream()
-                    .map(key -> {
-                      Object value = getNestedValue(row, key);
-                      return escapeCsv(value != null ? value.toString() : "");
-                    })
-                    .toList();
+      List<String> values = new java.util.ArrayList<>();
+      for (int i = 0; i < keys.size(); i++) {
+        Object value = getNestedValue(row, keys.get(i));
+        String fmt   = (dateFormats != null && i < dateFormats.size()) ? dateFormats.get(i) : "";
+        values.add(escapeCsv(applyDateFormat(value, fmt)));
+      }
       sb.append(String.join(",", values));
       sb.append("\n");
     }
@@ -128,6 +134,45 @@ public class ExcelService {
     System.arraycopy(bom, 0, result, 0, bom.length);
     System.arraycopy(content, 0, result, bom.length, content.length);
     return result;
+  }
+
+    /**
+     * 날짜 포맷 적용 — FE TableCellRenderer와 동일한 규칙
+     *
+     * 사용법:
+     *   applyDateFormat("2024-03-15T09:30:00Z", "YYYY-MM-DD") → "2024-03-15"
+     *   applyDateFormat("2024-03-15T09:30:00Z", "YYYY/MM/DD HH:mm") → "2024/03/15 09:30"
+     *   applyDateFormat(value, "") → value.toString() (포맷 없음)
+     *
+     * @param value  원본 값 (null 허용)
+     * @param format 날짜 포맷 문자열 (빈 문자열이면 원본값 반환)
+     * @return 포맷 적용된 문자열
+     */
+  private String applyDateFormat(Object value, String format) {
+    if (value == null) return "";
+    String raw = value.toString();
+    if (format == null || format.isBlank()) return raw;
+    try {
+            // ISO 8601 형식 파싱 (Instant 또는 LocalDateTime 모두 처리)
+      ZonedDateTime zdt;
+      if (raw.endsWith("Z") || raw.contains("+")) {
+        zdt = Instant.parse(raw).atZone(ZoneId.systemDefault());
+      } else {
+        zdt = java.time.LocalDateTime.parse(raw).atZone(ZoneId.systemDefault());
+      }
+      String YYYY = String.format("%04d", zdt.getYear());
+      String MM   = String.format("%02d", zdt.getMonthValue());
+      String DD   = String.format("%02d", zdt.getDayOfMonth());
+      String HH   = String.format("%02d", zdt.getHour());
+      String mm   = String.format("%02d", zdt.getMinute());
+      String ss   = String.format("%02d", zdt.getSecond());
+      return format
+                .replace("YYYY", YYYY).replace("MM", MM).replace("DD", DD)
+                .replace("HH", HH).replace("mm", mm).replace("ss", ss);
+    } catch (Exception e) {
+            // 파싱 실패 시 원본값 그대로 반환
+      return raw;
+    }
   }
 
     /**

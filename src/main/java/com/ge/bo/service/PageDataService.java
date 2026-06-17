@@ -306,10 +306,10 @@ public class PageDataService {
      * @return 전체 데이터 목록 (Map<키, 값> 형태)
      */
   @Transactional(readOnly = true)
-    public List<Map<String, Object>> exportAll(String slug, Map<String, String> allParams) {
+    public List<Map<String, Object>> exportAll(String slug, Map<String, String> allParams, Long siteId) {
         // 예약 파라미터 확장 (export 전용 파라미터 추가)
     Set<String> reservedForExport = new HashSet<>(RESERVED_PARAMS);
-    reservedForExport.addAll(Set.of("format", "headers", "keys"));
+    reservedForExport.addAll(Set.of("format", "headers", "keys", "dateFormats"));
 
         // 검색 조건 파라미터 추출
     Map<String, String> searchParams = new LinkedHashMap<>();
@@ -319,8 +319,11 @@ public class PageDataService {
       }
     });
 
-        // WHERE 절 동적 생성 (search()와 동일 로직)
+        // WHERE 절 동적 생성 — search()와 동일하게 사이트 ID 필터 포함
     StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug");
+    if (siteId != null) {
+      whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
+    }
     appendWhereConditions(whereClause, searchParams);
 
         // LIMIT/OFFSET 없이 전체 조회
@@ -329,12 +332,15 @@ public class PageDataService {
                 + " ORDER BY created_at DESC";
     Query dataQuery = entityManager.createNativeQuery(dataSql);
     dataQuery.setParameter("slug", slug);
+    if (siteId != null) {
+      dataQuery.setParameter("siteId", siteId);
+    }
     bindSearchParams(dataQuery, searchParams);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
 
-        // Map<키, 값> 형태로 변환 (ExcelService에서 keys 기준으로 값 추출)
+        // Map<키, 값> 형태로 변환 + FE buildTableRow와 동일한 플래트닝 적용
     return rows.stream()
                 .map(row -> {
                   Map<String, Object> dataMap = new LinkedHashMap<>();
@@ -347,9 +353,52 @@ public class PageDataService {
                   } catch (Exception e) {
                     log.warn("exportAll dataJson 파싱 실패: {}", e.getMessage());
                   }
-                  return dataMap;
+                  // FE buildTableRow와 동일하게 메타 필드 추가
+                  Map<String, Object> result = flattenDataJson(dataMap);
+                  result.put("createdBy",  row[3]);
+                  result.put("createdAt",  row[4] != null ? row[4].toString() : null);
+                  result.put("updatedBy",  row[5]);
+                  result.put("updatedAt",  row[6] != null ? row[6].toString() : null);
+                  return result;
                 })
                 .toList();
+  }
+
+    /**
+     * FE buildTableRow 플래트닝과 동일 로직 — data_json 중첩 섹션을 루트로 병합
+     *
+     * 예) { "form1": { "title": "A", "content": "B" } }
+     *   → { "form1": {...}, "title": "A", "content": "B" }
+     *
+     * 중복 키(여러 섹션에 동일 키 존재) 는 루트로 올리지 않음 — dot notation accessor 사용
+     */
+    @SuppressWarnings("unchecked")
+  private Map<String, Object> flattenDataJson(Map<String, Object> raw) {
+    if (raw == null || raw.isEmpty()) return raw;
+
+        // 최상위 object 값(contentKey 섹션) 목록
+    List<Map.Entry<String, Object>> sectionEntries = raw.entrySet().stream()
+                .filter(e -> e.getValue() instanceof Map)
+                .collect(java.util.stream.Collectors.toList());
+
+    if (sectionEntries.isEmpty()) return raw;
+
+        // 각 키가 몇 개 섹션에 존재하는지 카운트
+    Map<String, Integer> keyCount = new LinkedHashMap<>();
+    for (Map.Entry<String, Object> entry : sectionEntries) {
+      Map<String, Object> section = (Map<String, Object>) entry.getValue();
+      section.keySet().forEach(k -> keyCount.merge(k, 1, Integer::sum));
+    }
+
+        // 중복 없는 키만 루트로 flat 병합
+    Map<String, Object> result = new LinkedHashMap<>(raw);
+    for (Map.Entry<String, Object> entry : sectionEntries) {
+      Map<String, Object> section = (Map<String, Object>) entry.getValue();
+      section.forEach((k, v) -> {
+        if (keyCount.getOrDefault(k, 0) == 1) result.put(k, v);
+      });
+    }
+    return result;
   }
 
     /**

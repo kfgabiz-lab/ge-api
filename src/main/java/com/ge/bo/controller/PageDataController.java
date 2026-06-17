@@ -136,8 +136,10 @@ public class PageDataController {
                         @RequestParam(defaultValue = "xlsx") String format,
                         @RequestParam(required = false) String headers,
                         @RequestParam(required = false) String keys,
-                        @RequestParam Map<String, String> allParams) {
-                // 헤더/키 파싱 (미전달 시 빈 목록)
+                        @RequestParam(required = false) String dateFormats,
+                        @RequestParam Map<String, String> allParams,
+                        @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+                // 헤더/키/날짜포맷 파싱 (미전달 시 빈 목록)
                 // split(",", -1) — limit=-1로 trailing 빈 문자열도 보존 (기본 split은 trailing 제거)
     List<String> headerList = (headers != null && !headers.isBlank())
                                 ? Arrays.asList(headers.split(",", -1))
@@ -145,9 +147,12 @@ public class PageDataController {
     List<String> keyList = (keys != null && !keys.isBlank())
                                 ? Arrays.asList(keys.split(",", -1))
                                 : Collections.emptyList();
+    List<String> dateFormatList = (dateFormats != null && !dateFormats.isBlank())
+                                ? Arrays.asList(dateFormats.split(",", -1))
+                                : Collections.emptyList();
 
-                // 전체 데이터 조회
-    List<Map<String, Object>> rows = pageDataService.exportAll(slug, allParams);
+                // 전체 데이터 조회 (search()와 동일한 사이트 ID 필터 적용)
+    List<Map<String, Object>> rows = pageDataService.exportAll(slug, allParams, siteId);
 
                 // 파일명: {slug}_{yyyyMMdd}.xlsx or .csv
     String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
@@ -156,8 +161,8 @@ public class PageDataController {
 
                 // 엑셀/CSV 바이트 생성
     byte[] fileBytes = isCsv
-                                ? excelService.buildCsv(headerList, keyList, rows)
-                                : excelService.buildXlsx(headerList, keyList, rows, slug);
+                                ? excelService.buildCsv(headerList, keyList, dateFormatList, rows)
+                                : excelService.buildXlsx(headerList, keyList, dateFormatList, rows, slug);
 
                 // 응답 헤더 설정
     HttpHeaders responseHeaders = new HttpHeaders();
