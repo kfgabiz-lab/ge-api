@@ -138,11 +138,12 @@ public class PageDataController {
                         @RequestParam(required = false) String keys,
                         @RequestParam Map<String, String> allParams) {
                 // 헤더/키 파싱 (미전달 시 빈 목록)
+                // split(",", -1) — limit=-1로 trailing 빈 문자열도 보존 (기본 split은 trailing 제거)
     List<String> headerList = (headers != null && !headers.isBlank())
-                                ? Arrays.asList(headers.split(","))
+                                ? Arrays.asList(headers.split(",", -1))
                                 : Collections.emptyList();
     List<String> keyList = (keys != null && !keys.isBlank())
-                                ? Arrays.asList(keys.split(","))
+                                ? Arrays.asList(keys.split(",", -1))
                                 : Collections.emptyList();
 
                 // 전체 데이터 조회

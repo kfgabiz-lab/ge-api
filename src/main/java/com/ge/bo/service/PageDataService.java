@@ -86,8 +86,14 @@ public class PageDataService {
       String[] parts = sortParam.split(",", 2);
       String sortCol = parts[0].trim();
       String sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
-            // 컬럼키 유효성 검증 (영문자/숫자/언더스코어만 허용)
-      if (sortCol.matches("[a-zA-Z0-9_]+")) {
+            // dot notation 정렬 지원 — "tab1.form1.title,asc" 형태
+      if (sortCol.contains(".")) {
+        String[] segs = sortCol.split("\\.");
+        if (isValidSegments(segs)) {
+          orderBy = " ORDER BY " + buildJsonPath(segs) + " " + sortDir;
+        }
+      } else if (sortCol.matches("[a-zA-Z0-9_]+")) {
+        // 단순 키 정렬
         orderBy = " ORDER BY data_json->>'" + sortCol + "' " + sortDir;
       }
     }
@@ -490,84 +496,146 @@ public class PageDataService {
 
     /**
      * WHERE 절에 검색 조건 추가
-     * - eq_ 접두사: 정확 일치 (ex: eq_parentId=1 → data_json->>'parentId' = '1')
-     * - 값에 '~' 포함: 날짜/숫자 range 검색 (>= start, <= end)
-     * - 일반 값: ILIKE 부분 문자열 검색
-     * SQL Injection 방지: 키(또는 eq_ 제거 후 fieldKey)는 영문자/숫자/언더스코어만 허용
+     * - eq_ 접두사: 정확 일치 (ex: eq_title=홍 / eq_tab1.form1.title=홍)
+     * - 값에 '~' 포함: range 검색 (>= start, <= end)
+     * - 일반 값: ILIKE 부분 일치
+     * - dot notation 키: 중첩 경로 직접 지정 (ex: form1.title / tab1.form1.title)
+     * SQL Injection 방지: 키 세그먼트 각각 영문자/숫자/언더스코어만 허용
      */
   private void appendWhereConditions(StringBuilder whereClause, Map<String, String> searchParams) {
     searchParams.forEach((key, value) -> {
-            // eq_ 접두사 → 정확 일치 조건 (최상위 + contentKey 1단계 중첩 동시 검색)
+      // eq_ 접두사 → 정확 일치
       if (key.startsWith("eq_")) {
-        String fieldKey = key.substring(3); // "eq_" 제거
-        if (!fieldKey.matches("[a-zA-Z0-9_]+")) {
-          return; // SQL Injection 방지
+        String fieldKey = key.substring(3);
+        if (fieldKey.contains(".")) {
+          // dot notation 정확 일치: eq_tab1.form1.title=홍
+          String[] segments = fieldKey.split("\\.");
+          if (!isValidSegments(segments)) return;
+          String paramName = "p_" + key.replace(".", "_");
+          whereClause.append(" AND ").append(buildJsonPath(segments)).append(" = :").append(paramName);
+        } else {
+          // 단순 키 정확 일치 (최상위 + 1단계 중첩 동시 검색)
+          if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+          whereClause.append(" AND (data_json->>'").append(fieldKey).append("' = :p_").append(key)
+              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+              .append(" AND kv.value->>'").append(fieldKey).append("' = :p_").append(key).append("))");
         }
-        whereClause.append(" AND (data_json->>'").append(fieldKey).append("' = :p_").append(key)
-                        .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-                        .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-                        .append(" AND kv.value->>'").append(fieldKey).append("' = :p_").append(key).append("))");
         return;
       }
-            // 일반 파라미터
-      if (!key.matches("[a-zA-Z0-9_]+")) {
-        return; // SQL Injection 방지
+
+      // dot notation 파라미터 → 경로 기반 직접 검색 (ex: form1.title / tab1.form1.title)
+      if (key.contains(".")) {
+        String[] segments = key.split("\\.");
+        if (!isValidSegments(segments)) return;
+        String paramName = "p_" + key.replace(".", "_");
+        String jsonPath  = buildJsonPath(segments);
+        if (value.contains("~")) {
+          // range 검색
+          String[] parts = value.split("~", 2);
+          String start = parts[0].trim();
+          String end   = parts.length > 1 ? parts[1].trim() : "";
+          if (!start.isEmpty()) whereClause.append(" AND ").append(jsonPath).append(" >= :").append(paramName).append("_start");
+          if (!end.isEmpty())   whereClause.append(" AND ").append(jsonPath).append(" <= :").append(paramName).append("_end");
+        } else {
+          // ILIKE 부분 일치
+          whereClause.append(" AND ").append(jsonPath).append(" ILIKE :").append(paramName);
+        }
+        return;
       }
+
+      // 단순 키 (기존 방식 유지 — 최상위 + 1단계 중첩 동시 검색)
+      if (!key.matches("[a-zA-Z0-9_]+")) return;
       if (value.contains("~")) {
-                // range 검색
+        // range 검색
         String[] parts = value.split("~", 2);
         String start = parts[0].trim();
-        String end = parts.length > 1 ? parts[1].trim() : "";
-        if (!start.isEmpty()) {
-          whereClause.append(" AND data_json->>'").append(key).append("' >= :p_").append(key).append("_start");
-        }
-        if (!end.isEmpty()) {
-          whereClause.append(" AND data_json->>'").append(key).append("' <= :p_").append(key).append("_end");
-        }
+        String end   = parts.length > 1 ? parts[1].trim() : "";
+        if (!start.isEmpty()) whereClause.append(" AND data_json->>'").append(key).append("' >= :p_").append(key).append("_start");
+        if (!end.isEmpty())   whereClause.append(" AND data_json->>'").append(key).append("' <= :p_").append(key).append("_end");
       } else {
-                // ILIKE 부분 일치 (최상위 + contentKey 1단계 중첩 동시 검색)
+        // ILIKE 부분 일치 (최상위 + 1단계 중첩 동시 검색)
         whereClause.append(" AND (data_json->>'").append(key).append("' ILIKE :p_").append(key)
-                        .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-                        .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-                        .append(" AND kv.value->>'").append(key).append("' ILIKE :p_").append(key).append("))");
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND kv.value->>'").append(key).append("' ILIKE :p_").append(key).append("))");
       }
     });
+  }
+
+  /**
+   * 세그먼트 배열 유효성 검증 — SQL Injection 방지
+   * 각 세그먼트가 영문자/숫자/언더스코어만 포함해야 함
+   */
+  private boolean isValidSegments(String[] segments) {
+    if (segments.length == 0) return false;
+    return Arrays.stream(segments).allMatch(s -> s.matches("[a-zA-Z0-9_]+"));
+  }
+
+  /**
+   * 세그먼트 배열 → JSONB 경로 표현식 생성
+   * ["tab1","form1","title"] → data_json->'tab1'->'form1'->>'title'
+   * ["form1","title"]        → data_json->'form1'->>'title'
+   * ["title"]                → data_json->>'title'
+   */
+  private String buildJsonPath(String[] segments) {
+    StringBuilder path = new StringBuilder("data_json");
+    for (int i = 0; i < segments.length - 1; i++) {
+      path.append("->'").append(segments[i]).append("'");
+    }
+    path.append("->>'").append(segments[segments.length - 1]).append("'");
+    return path.toString();
   }
 
     /**
      * 쿼리에 검색 파라미터 바인딩
      * - eq_ 접두사: 값 그대로 바인딩 (정확 일치)
+     * - dot notation 키: . → _ 치환한 파라미터명으로 바인딩
      * - '~' range 값: p_{key}_start / p_{key}_end 바인딩
      * - 일반 값: p_{key} ILIKE 패턴 바인딩
      */
   private void bindSearchParams(Query query, Map<String, String> searchParams) {
     searchParams.forEach((key, value) -> {
-            // eq_ 접두사 → 값 그대로 바인딩 (정확 일치)
+      // eq_ 접두사 → 정확 일치 바인딩
       if (key.startsWith("eq_")) {
         String fieldKey = key.substring(3);
-        if (!fieldKey.matches("[a-zA-Z0-9_]+")) {
-          return; // SQL Injection 방지
+        if (fieldKey.contains(".")) {
+          String[] segments = fieldKey.split("\\.");
+          if (!isValidSegments(segments)) return;
+          query.setParameter("p_" + key.replace(".", "_"), value);
+        } else {
+          if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+          query.setParameter("p_" + key, value);
         }
-        query.setParameter("p_" + key, value);
         return;
       }
-            // 일반 파라미터
-      if (!key.matches("[a-zA-Z0-9_]+")) {
-        return; // SQL Injection 방지
+
+      // dot notation → . 을 _ 로 치환한 파라미터명 사용
+      if (key.contains(".")) {
+        String[] segments = key.split("\\.");
+        if (!isValidSegments(segments)) return;
+        String paramName = "p_" + key.replace(".", "_");
+        if (value.contains("~")) {
+          String[] parts = value.split("~", 2);
+          String start = parts[0].trim();
+          String end   = parts.length > 1 ? parts[1].trim() : "";
+          if (!start.isEmpty()) query.setParameter(paramName + "_start", start);
+          if (!end.isEmpty())   query.setParameter(paramName + "_end", end);
+        } else {
+          query.setParameter(paramName, "%" + value + "%");
+        }
+        return;
       }
+
+      // 단순 키 (기존 방식)
+      if (!key.matches("[a-zA-Z0-9_]+")) return;
       if (value.contains("~")) {
-                // range 바인딩
         String[] parts = value.split("~", 2);
         String start = parts[0].trim();
-        String end = parts.length > 1 ? parts[1].trim() : "";
-        if (!start.isEmpty()) {
-          query.setParameter("p_" + key + "_start", start);
-        }
-        if (!end.isEmpty()) {
-          query.setParameter("p_" + key + "_end", end);
-        }
+        String end   = parts.length > 1 ? parts[1].trim() : "";
+        if (!start.isEmpty()) query.setParameter("p_" + key + "_start", start);
+        if (!end.isEmpty())   query.setParameter("p_" + key + "_end", end);
       } else {
-                // ILIKE 패턴 바인딩
         query.setParameter("p_" + key, "%" + value + "%");
       }
     });
