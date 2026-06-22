@@ -32,10 +32,3 @@ logging:
     root: WARN
     com.ge.bo: INFO
 
-ls:
-  isApiLogin: true
-  inApi:
-    connectPortalEncKey: abc
-  outApi:
-    googleMapKey : abc
-    recapchaKey : abc
