@@ -33,4 +33,9 @@ logging:
     com.ge.bo: INFO
 
 ls:
- isApiLogin: true
+  isApiLogin: true
+    inApi:
+      connectPortalEncKey: abc
+    outApi:
+      googleMapKey : abc
+      recapchaKey : abc
