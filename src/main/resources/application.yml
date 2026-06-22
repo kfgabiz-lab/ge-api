@@ -34,8 +34,8 @@ logging:
 
 ls:
   isApiLogin: true
-    inApi:
-      connectPortalEncKey: abc
-    outApi:
-      googleMapKey : abc
-      recapchaKey : abc
+  inApi:
+    connectPortalEncKey: abc
+  outApi:
+    googleMapKey : abc
+    recapchaKey : abc
