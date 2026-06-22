@@ -31,3 +31,6 @@ logging:
   level:
     root: WARN
     com.ge.bo: INFO
+
+ls:
+ isApiLogin: true
