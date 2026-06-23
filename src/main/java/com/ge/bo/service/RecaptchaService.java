@@ -22,7 +22,7 @@ public class RecaptchaService {
     private static final String VERIFY_URL =
         "https://www.google.com/recaptcha/api/siteverify?secret=%s&response=%s";
 
-    @Value("${recaptcha.secret-key}")
+    @Value("${ls.lse.outApi.recapchaKey}")
     private String secretKey;
 
     private final ExternalApiClient externalApiClient;

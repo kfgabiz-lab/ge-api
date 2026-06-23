@@ -33,7 +33,7 @@ public class TotpService {
   private final RoleRepository roleRepository;
   private final JwtTokenProvider jwtTokenProvider;
 
-  @Value("${totp.issuer}")
+  @Value("${ls.totp.isUser}")
   private String totpIssuer;
 
   /**

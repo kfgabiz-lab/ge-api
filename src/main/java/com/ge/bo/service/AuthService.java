@@ -29,8 +29,8 @@ public class AuthService {
   private static final int LOCK_DURATION_MINUTES = 30;
   private static final long REFRESH_TOKEN_DAYS = 7L;
 
-  /** application.yml totp.enabled — false 시 2차인증 스킵하고 바로 JWT 발급 */
-  @Value("${totp.enabled:true}")
+  /** application.yml ls.totp.enabled — false 시 2차인증 스킵하고 바로 JWT 발급 */
+  @Value("${ls.totp.enabled:true}")
   private boolean totpEnabled;
 
   private final AdminRepository adminRepository;

@@ -1,8 +1,5 @@
 # 환경 1: 개발마스터 — 로컬 PC + 로컬 DB
 # Git Remote: ge / 공통 개발 결과물 공유용
-recaptcha:
-  secret-key: "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
-
 spring:
   datasource:
     driver-class-name: org.postgresql.Driver
@@ -16,9 +13,6 @@ spring:
     properties:
       hibernate:
         format_sql: true
-totp:
-  issuer: "Ge Admin"
-  enabled: false   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
 # CORS — 로컬 FE 주소
 cors:
   allowed-origins: "http://localhost:3002,http://localhost:3001"
@@ -45,6 +39,9 @@ logging:
     
 ls:
   isApiLogin: false
+  totp:
+    isUser: "Ge Admin"
+    enabled: false   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
   lse:
     inApi:
       connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@

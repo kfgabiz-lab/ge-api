@@ -1,6 +1,4 @@
-totp:
-  issuer: "LSE Admin"
-  enabled: true   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
+
 
 spring:
   profiles:
@@ -36,3 +34,6 @@ logging:
 
 ls:
   isApiLogin: true
+  totp:
+    isUser: "LSE Admin"
+    enabled: true   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인

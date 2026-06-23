@@ -1,12 +1,3 @@
-# 환경 2: 개발자 — 로컬 PC + 공용 개발서버 DB
-# Git Remote: ge-bo (FE), ge-api (BE) / 개발자 개인 작업 환경
-recaptcha:
-  secret-key: "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
-
-totp:
-  issuer: "LSE Admin"
-  enabled: false   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
-
 spring:
   datasource:
     driver-class-name: org.postgresql.Driver
@@ -48,6 +39,9 @@ logging:
 
 ls:
   isApiLogin: true
+  totp:
+    isUser: "LSE Admin"
+    enabled: false   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
   lse:
     inApi:
       connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@
