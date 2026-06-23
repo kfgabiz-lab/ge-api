@@ -42,3 +42,13 @@ logging:
     # 트랜잭션 커밋/롤백 로그
     org.springframework.transaction: TRACE
     org.springframework.orm.jpa: DEBUG
+    
+ls:
+  isApiLogin: false
+  lse:
+    inApi:
+      connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@
+      connectPortalIv: IV($&*)2516($&*)
+    outApi:
+      googleMapKey : abc
+      recapchaKey : "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
