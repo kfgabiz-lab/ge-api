@@ -60,6 +60,9 @@ public enum ErrorCode {
     SLUG_REGISTRY_NOT_FOUND(HttpStatus.NOT_FOUND, "SLUG_REGISTRY_NOT_FOUND", "해당 slug를 찾을 수 없습니다."),
     SLUG_REGISTRY_SLUG_DUPLICATE(HttpStatus.CONFLICT, "SLUG_REGISTRY_SLUG_DUPLICATE", "이미 사용 중인 slug입니다."),
 
+    /* Slug 연동 */
+    SLUG_RELATION_NOT_FOUND(HttpStatus.NOT_FOUND, "SLUG_RELATION_NOT_FOUND", "해당 SLUG 연동 설정을 찾을 수 없습니다."),
+
     /* Slug Entity */
     SLUG_ENTITY_NOT_FOUND(HttpStatus.NOT_FOUND, "SLUG_ENTITY_NOT_FOUND", "해당 entity를 찾을 수 없습니다."),
     SLUG_ENTITY_SLUG_DUPLICATE(HttpStatus.CONFLICT, "SLUG_ENTITY_SLUG_DUPLICATE", "이미 사용 중인 slug입니다."),
