@@ -38,10 +38,10 @@ logging:
 
 
 ls:
-  isApiLogin: true
+  isApiLogin: false    # true = SSO API 활성화 / false = 비밀번호만으로 로그인
   totp:
     isUser: "LSE Admin"
-    enabled: false   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
+    enabled: false    # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
   lse:
     inApi:
       connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@

@@ -37,3 +37,8 @@ ls:
   totp:
     isUser: "LSE Admin"
     enabled: true   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
+  lse:
+    sso:
+      baseUrl: https://lsesso.ls-electric.com/service
+      sysName: NAHP          # SSO 시스템 코드
+      defaultRole: PENDING_ADMIN      # SSO 자동 생성 계정 기본 역할

@@ -1,7 +1,9 @@
 package com.ge.bo.service;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -15,74 +17,129 @@ import com.ge.bo.dto.LoginResponse;
 import com.ge.bo.entity.AdminUser;
 import com.ge.bo.exception.BusinessException;
 import com.ge.bo.repository.AdminRepository;
+import com.ge.bo.repository.CodeDetailRepository;
 import com.ge.bo.repository.RoleRepository;
 import com.ge.bo.security.JwtTokenProvider;
+import com.ge.bo.sso.LseSsoService;
+import com.ge.bo.sso.SsoResult;
+import com.ge.bo.sso.SsoResultCode;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.Optional;
+import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
-  private static final int MAX_FAILED_ATTEMPTS = 5;
-  private static final int LOCK_DURATION_MINUTES = 30;
   private static final long REFRESH_TOKEN_DAYS = 7L;
+  private static final String PENDING_ROLE = "PENDING_ADMIN";
 
-  /** application.yml ls.totp.enabled — false 시 2차인증 스킵하고 바로 JWT 발급 */
+  /** 공통코드 LOGIN_LOCK_MAX_ATTEMPTS.name 에서 로드, 기본값 5 */
+  private int maxFailedAttempts = 5;
+
+  /** 공통코드 LOGIN_LOCK_ENABLED.name 에서 로드 (Y/N), 기본값 true */
+  private boolean lockEnabled = true;
+
+  /** ls.totp.enabled — false 시 2차인증 스킵하고 바로 JWT 발급 */
   @Value("${ls.totp.enabled:true}")
   private boolean totpEnabled;
 
+  /** true = LS Electric SSO 서버 인증 / false = 로컬 BCrypt 로그인 */
+  @Value("${ls.isApiLogin:false}")
+  private boolean isApiLogin;
+
+  @Value("${ls.lse.sso.sysName:NAHP}")
+  private String ssoSysName;
+
+  /** SSO 자동 생성 계정의 기본 역할 코드 */
+  @Value("${ls.lse.sso.defaultRole:USER}")
+  private String ssoDefaultRole;
+
   private final AdminRepository adminRepository;
   private final RoleRepository roleRepository;
+  private final CodeDetailRepository codeDetailRepository;
   private final PasswordEncoder passwordEncoder;
   private final JwtTokenProvider jwtTokenProvider;
   private final RecaptchaService recaptchaService;
+  private final LseSsoService lseSsoService;
+  private final LoginAdminService loginAdminService;
+
+  @PostConstruct
+  void loadConfig() {
+    log.info("[AuthService] totpEnabled={}, isApiLogin={}", totpEnabled, isApiLogin);
+    codeDetailRepository.findFirstByGroup_GroupCodeAndActiveTrue("LOGIN_LOCK_MAX_ATTEMPTS")
+        .map(cd -> {
+          try { return Integer.parseInt(cd.getName()); } catch (NumberFormatException e) { return null; }
+        })
+        .ifPresent(v -> {
+          maxFailedAttempts = v;
+          log.info("LOGIN_LOCK_MAX_ATTEMPTS 공통코드에서 로드: {}", v);
+        });
+
+    codeDetailRepository.findFirstByGroup_GroupCodeAndActiveTrue("LOGIN_LOCK_ENABLED")
+        .ifPresent(cd -> {
+          lockEnabled = "Y".equalsIgnoreCase(cd.getName());
+          log.info("LOGIN_LOCK_ENABLED 공통코드에서 로드: {}", cd.getName());
+        });
+  }
 
   /**
    * 1단계 로그인 (reCAPTCHA + 비밀번호 검증)
-   * totp.enabled=true  → tempToken 발급 후 2FA 단계 진행
-   * totp.enabled=false → 바로 accessToken 발급 (2FA 스킵)
+   * ls.isApiLogin=true  → LS Electric SSO 서버 인증 후 JWT 발급 (TOTP 스킵)
+   * totp.enabled=true   → tempToken 발급 후 2FA 단계 진행
+   * totp.enabled=false  → 바로 accessToken 발급 (2FA 스킵)
    *
-   * @param request 로그인 요청 DTO (이메일, 비밀번호, reCAPTCHA 토큰)
-   * @return LoginResponse (2FA 활성 시 tempToken, 비활성 시 accessToken)
+   * @param request 로그인 요청 DTO (이메일/사원번호, 비밀번호, reCAPTCHA 토큰)
+   * @return LoginResponse
    */
   @Transactional
   public LoginResponse login(LoginRequest request) {
+    if (request.getEmail() == null || request.getEmail().isBlank()
+        || request.getPassword() == null || request.getPassword().isBlank()) {
+      throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
+          "ID or password가 일치하지 않습니다.");
+    }
+
+    if (isApiLogin) {
+      return ssoLogin(request);
+    }
+
     // reCAPTCHA 토큰 검증
     recaptchaService.verify(request.getRecaptchaToken());
 
     AdminUser admin = adminRepository.findByEmail(request.getEmail())
-        .orElseThrow(() -> BusinessException.unauthorized("이메일 또는 비밀번호가 일치하지 않습니다."));
-
-    // 임시 잠금 확인
-    if (admin.getLockedUntil() != null && admin.getLockedUntil().isAfter(OffsetDateTime.now())) {
-      throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_TEMPORARILY_LOCKED",
-          "로그인 시도 횟수를 초과했습니다. " + LOCK_DURATION_MINUTES + "분 후 다시 시도해주세요.");
-    }
+        .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
+            "ID or password가 일치하지 않습니다."));
 
     // 계정 비활성화 확인
     if (!admin.isActive()) {
-      throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_LOCKED",
-          "잠긴 계정입니다. 관리자에게 문의하세요.");
+      throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
     }
 
     // 비밀번호 검증
     if (!passwordEncoder.matches(request.getPassword(), admin.getPasswordHash())) {
-      int attempts = admin.getFailedLoginAttempts() + 1;
-      admin.setFailedLoginAttempts(attempts);
-      if (attempts >= MAX_FAILED_ATTEMPTS) {
-        admin.setLockedUntil(OffsetDateTime.now().plusMinutes(LOCK_DURATION_MINUTES));
-        throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_TEMPORARILY_LOCKED",
-            "로그인 시도 횟수(" + MAX_FAILED_ATTEMPTS + "회)를 초과했습니다. "
-                + LOCK_DURATION_MINUTES + "분 후 다시 시도해주세요.");
+      if (lockEnabled) {
+        int attempts = loginAdminService.incrementFailure(admin.getId(), maxFailedAttempts);
+        if (attempts >= maxFailedAttempts) {
+          throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_DISABLED", "계정이 비활성화되었습니다.");
+        }
+        throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
+            "비밀번호 " + attempts + "회 실패 하셨습니다. " + maxFailedAttempts + "회 실패 시 계정 비활성화됩니다.");
       }
-      throw BusinessException.unauthorized("이메일 또는 비밀번호가 일치하지 않습니다.");
+      throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
+          "ID or password가 일치하지 않습니다.");
     }
 
-    // 비밀번호 검증 성공 — 실패 카운터 초기화
-    admin.setFailedLoginAttempts(0);
-    admin.setLockedUntil(null);
+    // 비밀번호 검증 성공 — 실패 카운터 초기화 + lastLoginAt 갱신
+    loginAdminService.recordSuccess(admin.getId());
+
+    // 승인 대기 확인
+    if (PENDING_ROLE.equals(admin.getRole())) {
+      throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
+    }
 
     // 2차인증 비활성화 시 바로 accessToken 발급
     if (!totpEnabled) {
@@ -198,5 +255,124 @@ public class AuthService {
         .sameSite("Strict")
         .build();
     response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+  }
+
+  /**
+   * SSO 로그인
+   * OK    → 기존 TOTP 흐름 (totpEnabled 설정 따름)
+   * FAIL  → 실패 누적 없이 SSO 메시지 반환 (퇴사자/휴직자 등)
+   * ERROR → 실패횟수 +1 후 오류 메시지 반환
+   */
+  private LoginResponse ssoLogin(LoginRequest request) {
+    Optional<AdminUser> existing = adminRepository.findByEmail(request.getEmail());
+    if (existing.isPresent()) {
+      AdminUser a = existing.get();
+      if (!a.isActive()) {
+        throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
+      }
+    }
+
+    // SSO 서버 호출
+    SsoResult sso;
+    try {
+      sso = lseSsoService.login(request.getEmail(), request.getPassword(), ssoSysName);
+    } catch (Exception e) {
+      throw BusinessException.unauthorized("SSO 서버 연결에 실패했습니다.");
+    }
+
+    if (!sso.success()) {
+      if (sso.result() == SsoResultCode.ERROR) {
+        // 비밀번호 오류 — lock ON이고 기존 계정이 있으면 실패횟수 증가
+        if (lockEnabled && existing.isPresent()) {
+          int attempts = loginAdminService.incrementFailure(
+              existing.get().getId(), maxFailedAttempts);
+          if (attempts >= maxFailedAttempts) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_DISABLED", "계정이 비활성화되었습니다.");
+          }
+          throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
+              "비밀번호 " + attempts + "회 실패 하셨습니다. " + maxFailedAttempts + "회 실패 시 계정 비활성화됩니다.");
+        }
+        throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
+            "ID or password가 일치하지 않습니다.");
+      }
+      // FAIL (퇴사자/비회원 등) — 기존 계정 있으면 is_active false 처리
+      existing.ifPresent(a -> loginAdminService.deactivateUser(a.getId()));
+      throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
+    }
+
+    // 신규 유져
+    if (existing.isEmpty()) {
+      AdminUser newUser = buildNewSsoUser(request.getEmail(), sso);
+      loginAdminService.saveNewSsoUser(newUser);
+      throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
+    }
+
+    AdminUser admin = existing.get();
+    loginAdminService.recordSuccess(admin.getId());
+
+    // 부서 변경
+    if (sso.deptCode() != null && !sso.deptCode().equals(admin.getDeptCode())) {
+      loginAdminService.updateDeptChange(
+          admin.getId(), sso.deptCode(), sso.deptName(), sso.userName());
+      throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
+    }
+
+    // 이름/부서 동기화
+    if (sso.deptCode() != null) admin.setDeptCode(sso.deptCode());
+    if (sso.deptName() != null) admin.setDeptName(sso.deptName());
+    if (sso.userName() != null) admin.setName(sso.userName());
+    adminRepository.save(admin);
+
+    // 승인 대기 확인 (기존 유저가 PENDING_ADMIN인 경우)
+    if (PENDING_ROLE.equals(admin.getRole())) {
+      throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
+    }
+
+    // 기존 TOTP 흐름과 동일
+    if (!totpEnabled) {
+      boolean isSystem = roleRepository.findByCode(admin.getRole())
+          .map(role -> role.isSystem())
+          .orElse(false);
+      String accessToken = jwtTokenProvider.generateAccessToken(admin.getEmail(), admin.getRole());
+      return LoginResponse.builder()
+          .accessToken(accessToken)
+          .expiresIn(3600L)
+          .adminInfo(LoginResponse.AdminInfo.builder()
+              .id(admin.getId())
+              .name(admin.getName())
+              .email(admin.getEmail())
+              .role(admin.getRole())
+              .isSystem(isSystem)
+              .build())
+          .build();
+    }
+
+    String tempToken = jwtTokenProvider.generateTotpPendingToken(admin.getEmail());
+    if (!admin.isTotpEnabled()) {
+      return LoginResponse.builder()
+          .tempToken(tempToken)
+          .requireTotpSetup(true)
+          .requireTotpVerify(false)
+          .build();
+    }
+    return LoginResponse.builder()
+        .tempToken(tempToken)
+        .requireTotpSetup(false)
+        .requireTotpVerify(true)
+        .build();
+  }
+
+  /** SSO 최초 로그인 유저 엔티티 빌드 */
+  private AdminUser buildNewSsoUser(String email, SsoResult sso) {
+    return AdminUser.builder()
+        .email(email)
+        .name(sso.userName() != null ? sso.userName() : sso.userId())
+        .passwordHash(passwordEncoder.encode(UUID.randomUUID().toString()))
+        .role(ssoDefaultRole)
+        .deptCode(sso.deptCode())
+        .deptName(sso.deptName())
+        .isActive(false)
+        .lastLoginAt(OffsetDateTime.now())
+        .build();
   }
 }
