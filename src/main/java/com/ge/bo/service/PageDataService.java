@@ -626,12 +626,14 @@ public class PageDataService {
         String rangeKey = key.substring(4);
         String fromPart, toPart;
         if (rangeKey.contains(".")) {
-          // dot notation: 명시적 경로 지정 → 중첩 탐색 불필요
+          // dot notation: 명시적 경로 지정 → _from/_to 분리 키로 탐색
           String[] segs = rangeKey.split("\\.");
           if (!isValidSegments(segs)) return;
-          String jsonPath = buildJsonPath(segs);
-          fromPart = "SPLIT_PART(" + jsonPath + ", '~', 1)";
-          toPart   = "SPLIT_PART(" + jsonPath + ", '~', 2)";
+          // 마지막 세그먼트에 _from/_to 접미사 붙여 경로 생성
+          String[] fromSegs = segs.clone(); fromSegs[fromSegs.length - 1] = fromSegs[fromSegs.length - 1] + "_from";
+          String[] toSegs   = segs.clone(); toSegs[toSegs.length - 1]     = toSegs[toSegs.length - 1]     + "_to";
+          fromPart = buildJsonPath(fromSegs);
+          toPart   = buildJsonPath(toSegs);
           switch (value) {
             case "before":
               whereClause.append(" AND ").append(fromPart).append(" > CURRENT_DATE::text");
@@ -646,12 +648,12 @@ public class PageDataService {
             default: break;
           }
         } else {
-          // 단순 키: 최상위 + 1단계 중첩 동시 탐색 (기존 일반 검색과 동일 패턴)
+          // 단순 키: _from/_to 분리 키로 최상위 + 1단계 중첩 동시 탐색
           if (!rangeKey.matches("[a-zA-Z0-9_]+")) return;
-          String fromRoot   = "SPLIT_PART(data_json->>'" + rangeKey + "', '~', 1)";
-          String toRoot     = "SPLIT_PART(data_json->>'" + rangeKey + "', '~', 2)";
-          String fromNested = "SPLIT_PART(kv.value->>'" + rangeKey + "', '~', 1)";
-          String toNested   = "SPLIT_PART(kv.value->>'" + rangeKey + "', '~', 2)";
+          String fromRoot   = "data_json->>'" + rangeKey + "_from'";
+          String toRoot     = "data_json->>'" + rangeKey + "_to'";
+          String fromNested = "kv.value->>'" + rangeKey + "_from'";
+          String toNested   = "kv.value->>'" + rangeKey + "_to'";
           String nested     = " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ";
           switch (value) {
             case "before":
@@ -720,6 +722,28 @@ public class PageDataService {
           // ILIKE 부분 일치
           whereClause.append(" AND ").append(jsonPath).append(" ILIKE :").append(paramName);
         }
+        return;
+      }
+
+      // _from 접미사 → dateRange 시작일 이상 조건 (최상위 + 1단계 중첩 동시 검색)
+      if (key.endsWith("_from")) {
+        if (!key.matches("[a-zA-Z0-9_]+")) return;
+        String paramName = "p_" + key;
+        whereClause.append(" AND (data_json->>'").append(key).append("' >= :").append(paramName)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND kv.value->>'").append(key).append("' >= :").append(paramName).append("))");
+        return;
+      }
+
+      // _to 접미사 → dateRange 종료일 이하 조건 (최상위 + 1단계 중첩 동시 검색)
+      if (key.endsWith("_to")) {
+        if (!key.matches("[a-zA-Z0-9_]+")) return;
+        String paramName = "p_" + key;
+        whereClause.append(" AND (data_json->>'").append(key).append("' <= :").append(paramName)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND kv.value->>'").append(key).append("' <= :").append(paramName).append("))");
         return;
       }
 
@@ -806,6 +830,13 @@ public class PageDataService {
         } else {
           query.setParameter(paramName, "%" + value + "%");
         }
+        return;
+      }
+
+      // _from/_to 접미사 → 값 그대로 바인딩 (범위 비교용, ILIKE 아님)
+      if (key.endsWith("_from") || key.endsWith("_to")) {
+        if (!key.matches("[a-zA-Z0-9_]+")) return;
+        query.setParameter("p_" + key, value);
         return;
       }
 
