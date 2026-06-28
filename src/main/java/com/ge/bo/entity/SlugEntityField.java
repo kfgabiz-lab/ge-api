@@ -69,6 +69,14 @@ public class SlugEntityField {
     @Column(name = "default_value", length = 200)
     private String defaultValue;
 
+    /** 빌더 필드 타입 (예: input, textarea, date, checkbox 등) — 빌더 자동 매핑 시 columnType보다 우선 적용 */
+    @Column(name = "field_type", length = 50)
+    private String fieldType;
+
+    /** 공통코드 그룹 코드 — 빌더 select/radio/checkbox 옵션 자동 연결용 */
+    @Column(name = "code_group_code", length = 50)
+    private String codeGroupCode;
+
     /** 컬럼 설명 */
     @Column(length = 500)
     private String description;

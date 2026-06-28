@@ -26,6 +26,12 @@ public record SlugEntityFieldRequest(
 
     Integer columnLength,
 
+    /** 빌더 필드 타입 (선택, 예: input, textarea, date, checkbox 등) */
+    String fieldType,
+
+    /** 공통코드 그룹 코드 (선택) */
+    String codeGroupCode,
+
     Boolean isNullable,
 
     @Size(max = 500)

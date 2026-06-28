@@ -110,6 +110,8 @@ public class SlugEntityService {
                 .label(req.label().trim())
                 .columnType(req.columnType())
                 .columnLength(req.columnLength())
+                .fieldType(trimOrNull(req.fieldType()))
+                .codeGroupCode(trimOrNull(req.codeGroupCode()))
                 .isNullable(req.isNullable() != null ? req.isNullable() : true)
                 .description(trimOrNull(req.description()))
                 .sortOrder(i)
