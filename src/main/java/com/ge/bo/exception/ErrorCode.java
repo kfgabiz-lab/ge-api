@@ -62,6 +62,9 @@ public enum ErrorCode {
     /* 트랜잭션 로그 */
     TRANSACTION_LOG_NOT_FOUND(HttpStatus.NOT_FOUND, "TRANSACTION_LOG_NOT_FOUND", "해당 트랜잭션 로그를 찾을 수 없습니다."),
 
+    /* 접속이력 */
+    LOGIN_LOG_NOT_FOUND(HttpStatus.NOT_FOUND, "LOGIN_LOG_NOT_FOUND", "해당 접속이력을 찾을 수 없습니다."),
+
     /* Slug 레지스트리 */
     SLUG_REGISTRY_NOT_FOUND(HttpStatus.NOT_FOUND, "SLUG_REGISTRY_NOT_FOUND", "해당 slug를 찾을 수 없습니다."),
     SLUG_REGISTRY_SLUG_DUPLICATE(HttpStatus.CONFLICT, "SLUG_REGISTRY_SLUG_DUPLICATE", "이미 사용 중인 slug입니다."),

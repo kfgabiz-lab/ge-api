@@ -1,5 +1,6 @@
 package com.ge.bo.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -29,13 +30,26 @@ public class AuthController {
    * totp.enabled=false → accessToken 직접 반환 + refreshToken 쿠키 발급
    */
   @PostMapping("/login")
-  public LoginResponse login(@RequestBody LoginRequest request, HttpServletResponse response) {
-    LoginResponse result = authService.login(request);
+  public LoginResponse login(@RequestBody LoginRequest request,
+                             HttpServletResponse response,
+                             HttpServletRequest httpRequest) {
+    String clientIp = extractClientIp(httpRequest);
+    String userAgent = httpRequest.getHeader("User-Agent");
+    LoginResponse result = authService.login(request, clientIp, userAgent);
     // 2FA 비활성화 시 accessToken이 바로 발급되므로 refreshToken 쿠키도 함께 발급
     if (result.getAccessToken() != null && result.getAdminInfo() != null) {
       authService.issueRefreshTokenCookie(response, result.getAdminInfo().getEmail());
     }
     return result;
+  }
+
+  /** X-Forwarded-For 우선으로 실제 클라이언트 IP 추출 */
+  private String extractClientIp(HttpServletRequest request) {
+    String forwarded = request.getHeader("X-Forwarded-For");
+    if (forwarded != null && !forwarded.isBlank()) {
+      return forwarded.split(",")[0].trim();
+    }
+    return request.getRemoteAddr();
   }
 
   /**

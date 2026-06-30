@@ -826,6 +826,27 @@ public class PageDataService {
         return;
       }
 
+      // | 구분자 → OR 다중 필드 ILIKE (최상위 + 1단계 중첩 동시 검색)
+      if (key.contains("|")) {
+        String[] fields = key.split("\\|");
+        if (!Arrays.stream(fields).allMatch(f -> f.matches("[a-zA-Z0-9_]+"))) return;
+        String paramName = "p_or_" + key.replace("|", "__");
+        // 최상위 OR 조건
+        String topLevel = Arrays.stream(fields)
+            .map(f -> "data_json->>'" + f + "' ILIKE :" + paramName)
+            .collect(java.util.stream.Collectors.joining(" OR "));
+        // 1단계 중첩 OR 조건
+        String nested = Arrays.stream(fields)
+            .map(f -> "kv.value->>'" + f + "' ILIKE :" + paramName)
+            .collect(java.util.stream.Collectors.joining(" OR "));
+        whereClause.append(" AND (")
+            .append(topLevel)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND (").append(nested).append(")))");
+        return;
+      }
+
       // 단순 키 (기존 방식 유지 — 최상위 + 1단계 중첩 동시 검색)
       if (!key.matches("[a-zA-Z0-9_]+")) return;
       if (value.contains("~")) {
@@ -923,6 +944,14 @@ public class PageDataService {
       if (key.endsWith("_gte") || key.endsWith("_lte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         query.setParameter("p_" + key, value);
+        return;
+      }
+
+      // | 구분자 → OR 다중 필드 ILIKE 파라미터 바인딩
+      if (key.contains("|")) {
+        String[] fields = key.split("\\|");
+        if (!Arrays.stream(fields).allMatch(f -> f.matches("[a-zA-Z0-9_]+"))) return;
+        query.setParameter("p_or_" + key.replace("|", "__"), "%" + value + "%");
         return;
       }
 
