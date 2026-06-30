@@ -3,7 +3,7 @@ totp:
 
 spring:
   profiles:
-    active: developer   # ★ 실행 환경 선택 — local / developer / dev
+    active: dev   # ★ 실행 환경 선택 — local / developer / dev
   main:
     allow-bean-definition-overriding: true
   jackson:
