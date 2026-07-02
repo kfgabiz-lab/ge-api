@@ -6,7 +6,10 @@ import com.ge.bo.dto.FieldPatchRequest;
 import com.ge.bo.dto.PageDataListResponse;
 import com.ge.bo.dto.PageDataRequest;
 import com.ge.bo.dto.PageDataResponse;
+import com.ge.bo.repository.AdminRepository;
+import com.ge.bo.service.DownloadLogService;
 import com.ge.bo.service.PageDataService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ContentDisposition;
@@ -14,6 +17,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
@@ -37,6 +41,8 @@ public class PageDataController {
 
   private final PageDataService pageDataService;
   private final ExcelService excelService;
+  private final DownloadLogService downloadLogService;
+  private final AdminRepository adminRepository;
 
         /**
          * 목록 조회 — 페이지네이션 + 동적 JSONB 검색
@@ -147,8 +153,10 @@ public class PageDataController {
                         @RequestParam(required = false) String headers,
                         @RequestParam(required = false) String keys,
                         @RequestParam(required = false) String dateFormats,
+                        @RequestParam(required = false) String reason,
                         @RequestParam Map<String, String> allParams,
-                        @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+                        @RequestHeader(value = "X-Site-Id", required = false) Long siteId,
+                        HttpServletRequest request) {
                 // 헤더/키/날짜포맷 파싱 (미전달 시 빈 목록)
                 // split(",", -1) — limit=-1로 trailing 빈 문자열도 보존 (기본 split은 trailing 제거)
     List<String> headerList = (headers != null && !headers.isBlank())
@@ -181,6 +189,20 @@ public class PageDataController {
                                 ContentDisposition.attachment()
                                                 .filename(fileName, StandardCharsets.UTF_8)
                                                 .build());
+
+                // reason이 있으면 다운로드 이력 비동기 저장
+    if (reason != null && !reason.isBlank()) {
+        /* email → admin_user.id 조회 (PageDataService.getCurrentUserId() 동일 패턴) */
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        String createdBy = adminRepository.findByEmail(email)
+                .map(u -> String.valueOf(u.getId()))
+                .orElse(null);
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        String ipAddress = (forwardedFor != null && !forwardedFor.isBlank())
+                ? forwardedFor.split(",")[0].trim()
+                : request.getRemoteAddr();
+        downloadLogService.saveAsync(slug, reason, isCsv ? "csv" : "xlsx", createdBy, ipAddress);
+    }
 
     return ResponseEntity.ok()
                                 .headers(responseHeaders)
