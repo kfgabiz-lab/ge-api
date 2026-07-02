@@ -172,8 +172,11 @@ public class PageDataService {
     PageData pageData = pageDataRepository.findByIdAndDataSlug(id, slug)
                 .orElseThrow(ErrorCode.PAGE_DATA_NOT_FOUND::toException);
     PageDataResponse response = PageDataResponse.from(pageData);
-        // createdBy/updatedBy id → name 변환
-    return response.withUserNames(
+    // _fetchedRel{id} 포함 — 검색 API와 동일한 FETCH 관계 적용
+    List<PageDataResponse> enriched = applyFetch(slug, List.of(response));
+    PageDataResponse enrichedResponse = enriched.get(0);
+    // createdBy/updatedBy id → name 변환
+    return enrichedResponse.withUserNames(
         resolveUserName(pageData.getCreatedBy()),
         resolveUserName(pageData.getUpdatedBy())
     );
@@ -689,49 +692,51 @@ public class PageDataService {
           String[] toSegs   = segs.clone(); toSegs[toSegs.length - 1]     = toSegs[toSegs.length - 1]     + "_to";
           fromPart = buildJsonPath(fromSegs);
           toPart   = buildJsonPath(toSegs);
-          // substring(..., 1, 10): 저장값이 datetime 형태여도 날짜 10자리만 추출해 CURRENT_DATE와 비교
-          String fromSub = "substring(" + fromPart + ", 1, 10)";
-          String toSub   = "substring(" + toPart   + ", 1, 10)";
+          // regexp_replace로 숫자만 추출 후 8자리 비교 — YYYY-MM-DD/YYYYMMDD/YYYYMMDDHHMMSS 포맷 모두 대응
+          String fromSub = "substring(regexp_replace(" + fromPart + ", '[^0-9]', '', 'g'), 1, 8)";
+          String toSub   = "substring(regexp_replace(" + toPart   + ", '[^0-9]', '', 'g'), 1, 8)";
+          String today   = "to_char(CURRENT_DATE, 'YYYYMMDD')";
           switch (value) {
             case "before":
-              whereClause.append(" AND ").append(fromSub).append(" > CURRENT_DATE::text");
+              whereClause.append(" AND ").append(fromSub).append(" > ").append(today);
               break;
             case "in_range":
-              whereClause.append(" AND ").append(fromSub).append(" <= CURRENT_DATE::text")
-                         .append(" AND ").append(toSub).append(" >= CURRENT_DATE::text");
+              whereClause.append(" AND ").append(fromSub).append(" <= ").append(today)
+                         .append(" AND ").append(toSub).append(" >= ").append(today);
               break;
             case "after":
-              whereClause.append(" AND ").append(toSub).append(" < CURRENT_DATE::text");
+              whereClause.append(" AND ").append(toSub).append(" < ").append(today);
               break;
             default: break;
           }
         } else {
           // 단순 키: _from/_to 분리 키로 최상위 + 1단계 중첩 동시 탐색
-          // substring(..., 1, 10): 저장값이 datetime 형태여도 날짜 10자리만 추출해 CURRENT_DATE와 비교
+          // regexp_replace로 숫자만 추출 후 8자리 비교 — YYYY-MM-DD/YYYYMMDD/YYYYMMDDHHMMSS 포맷 모두 대응
           if (!rangeKey.matches("[a-zA-Z0-9_]+")) return;
-          String fromRoot   = "substring(data_json->>'" + rangeKey + "_from', 1, 10)";
-          String toRoot     = "substring(data_json->>'" + rangeKey + "_to', 1, 10)";
-          String fromNested = "substring(kv.value->>'" + rangeKey + "_from', 1, 10)";
-          String toNested   = "substring(kv.value->>'" + rangeKey + "_to', 1, 10)";
+          String fromRoot   = "substring(regexp_replace(data_json->>'" + rangeKey + "_from', '[^0-9]', '', 'g'), 1, 8)";
+          String toRoot     = "substring(regexp_replace(data_json->>'" + rangeKey + "_to', '[^0-9]', '', 'g'), 1, 8)";
+          String fromNested = "substring(regexp_replace(kv.value->>'" + rangeKey + "_from', '[^0-9]', '', 'g'), 1, 8)";
+          String toNested   = "substring(regexp_replace(kv.value->>'" + rangeKey + "_to', '[^0-9]', '', 'g'), 1, 8)";
+          String today      = "to_char(CURRENT_DATE, 'YYYYMMDD')";
           String nested     = " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ";
           switch (value) {
             case "before":
               whereClause.append(" AND (")
-                  .append(fromRoot).append(" > CURRENT_DATE::text")
-                  .append(nested).append(fromNested).append(" > CURRENT_DATE::text)")
+                  .append(fromRoot).append(" > ").append(today)
+                  .append(nested).append(fromNested).append(" > ").append(today).append(")")
                   .append(")");
               break;
             case "in_range":
               whereClause.append(" AND (")
-                  .append(fromRoot).append(" <= CURRENT_DATE::text AND ").append(toRoot).append(" >= CURRENT_DATE::text")
+                  .append(fromRoot).append(" <= ").append(today).append(" AND ").append(toRoot).append(" >= ").append(today)
                   .append(nested)
-                  .append(fromNested).append(" <= CURRENT_DATE::text AND ").append(toNested).append(" >= CURRENT_DATE::text)")
+                  .append(fromNested).append(" <= ").append(today).append(" AND ").append(toNested).append(" >= ").append(today).append(")")
                   .append(")");
               break;
             case "after":
               whereClause.append(" AND (")
-                  .append(toRoot).append(" < CURRENT_DATE::text")
-                  .append(nested).append(toNested).append(" < CURRENT_DATE::text)")
+                  .append(toRoot).append(" < ").append(today)
+                  .append(nested).append(toNested).append(" < ").append(today).append(")")
                   .append(")");
               break;
             default: break;
@@ -785,52 +790,52 @@ public class PageDataService {
       }
 
       // _from 접미사 → dateRange 시작일 이상 조건 (최상위 + 1단계 중첩 동시 검색)
-      // substring(..., 1, 10): 저장값이 datetime(YYYY-MM-DDTHH:mm) 형태여도 날짜 10자리만 추출해 비교
+      // bindSearchParams에서 검색값에 000000/T00:00:00 suffix를 붙여 저장값 포맷에 맞게 정규화
       if (key.endsWith("_from")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String paramName = "p_" + key;
-        whereClause.append(" AND (substring(data_json->>'").append(key).append("', 1, 10) >= :").append(paramName)
+        whereClause.append(" AND (data_json->>'").append(key).append("' >= :").append(paramName)
             .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
             .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-            .append(" AND substring(kv.value->>'").append(key).append("', 1, 10) >= :").append(paramName).append("))");
+            .append(" AND kv.value->>'").append(key).append("' >= :").append(paramName).append("))");
         return;
       }
 
       // _to 접미사 → dateRange 종료일 이하 조건 (최상위 + 1단계 중첩 동시 검색)
-      // substring(..., 1, 10): 종료일 당일 시간 포함 데이터 누락 방지
+      // bindSearchParams에서 검색값에 235959/T23:59:59 suffix를 붙여 종료일 당일 데이터 포함
       if (key.endsWith("_to")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String paramName = "p_" + key;
-        whereClause.append(" AND (substring(data_json->>'").append(key).append("', 1, 10) <= :").append(paramName)
+        whereClause.append(" AND (data_json->>'").append(key).append("' <= :").append(paramName)
             .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
             .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-            .append(" AND substring(kv.value->>'").append(key).append("', 1, 10) <= :").append(paramName).append("))");
+            .append(" AND kv.value->>'").append(key).append("' <= :").append(paramName).append("))");
         return;
       }
 
       // _gte 접미사 → 단일 date 컬럼 범위 검색 시작 조건 (fieldKey = key에서 _gte 제거)
-      // substring(..., 1, 10): datetime 저장값과 date 검색값 혼용 시 날짜 단위로 정규화
+      // bindSearchParams에서 검색값에 000000/T00:00:00 suffix를 붙여 저장값 포맷에 맞게 정규화
       if (key.endsWith("_gte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String fieldKey = key.substring(0, key.length() - 4);
         String paramName = "p_" + key;
-        whereClause.append(" AND (substring(data_json->>'").append(fieldKey).append("', 1, 10) >= :").append(paramName)
+        whereClause.append(" AND (data_json->>'").append(fieldKey).append("' >= :").append(paramName)
             .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
             .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-            .append(" AND substring(kv.value->>'").append(fieldKey).append("', 1, 10) >= :").append(paramName).append("))");
+            .append(" AND kv.value->>'").append(fieldKey).append("' >= :").append(paramName).append("))");
         return;
       }
 
       // _lte 접미사 → 단일 date 컬럼 범위 검색 종료 조건 (fieldKey = key에서 _lte 제거)
-      // substring(..., 1, 10): 종료일 당일 시간 포함 데이터 누락 방지
+      // bindSearchParams에서 검색값에 235959/T23:59:59 suffix를 붙여 종료일 당일 데이터 포함
       if (key.endsWith("_lte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String fieldKey = key.substring(0, key.length() - 4);
         String paramName = "p_" + key;
-        whereClause.append(" AND (substring(data_json->>'").append(fieldKey).append("', 1, 10) <= :").append(paramName)
+        whereClause.append(" AND (data_json->>'").append(fieldKey).append("' <= :").append(paramName)
             .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
             .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-            .append(" AND substring(kv.value->>'").append(fieldKey).append("', 1, 10) <= :").append(paramName).append("))");
+            .append(" AND kv.value->>'").append(fieldKey).append("' <= :").append(paramName).append("))");
         return;
       }
 
@@ -881,6 +886,32 @@ public class PageDataService {
   private boolean isValidSegments(String[] segments) {
     if (segments.length == 0) return false;
     return Arrays.stream(segments).allMatch(s -> s.matches("[a-zA-Z0-9_]+"));
+  }
+
+  /**
+   * 날짜 검색값 시작일 정규화 — 저장값 포맷에 맞게 시간 suffix 추가
+   * YYYYMMDD(8자리 숫자)       → YYYYMMDD000000
+   * YYYY-MM-DD(10자리 하이픈)  → YYYY-MM-DDT00:00:00
+   * 이미 시간 포함(길이 > 10)  → 그대로
+   */
+  private String normalizeDateFrom(String value) {
+    if (value == null) return value;
+    if (value.length() == 8 && value.matches("[0-9]+")) return value + "000000";
+    if (value.length() == 10 && value.contains("-"))    return value + "T00:00:00";
+    return value;
+  }
+
+  /**
+   * 날짜 검색값 종료일 정규화 — 저장값 포맷에 맞게 시간 suffix 추가
+   * YYYYMMDD(8자리 숫자)       → YYYYMMDD235959
+   * YYYY-MM-DD(10자리 하이픈)  → YYYY-MM-DDT23:59:59
+   * 이미 시간 포함(길이 > 10)  → 그대로
+   */
+  private String normalizeDateTo(String value) {
+    if (value == null) return value;
+    if (value.length() == 8 && value.matches("[0-9]+")) return value + "235959";
+    if (value.length() == 10 && value.contains("-"))    return value + "T23:59:59";
+    return value;
   }
 
   /**
@@ -941,19 +972,19 @@ public class PageDataService {
         return;
       }
 
-      // _from/_to 접미사 → 날짜 10자리로 정규화 후 바인딩 (datetime 포맷 혼용 대응)
-      if (key.endsWith("_from") || key.endsWith("_to")) {
+      // _from/_gte 접미사 → 시작일 suffix 추가 후 바인딩
+      // YYYYMMDD → YYYYMMDD000000 / YYYY-MM-DD → YYYY-MM-DDT00:00:00 / 이미 시간 포함 → 그대로
+      if (key.endsWith("_from") || key.endsWith("_gte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
-        String dateVal = (value != null && value.length() > 10) ? value.substring(0, 10) : value;
-        query.setParameter("p_" + key, dateVal);
+        query.setParameter("p_" + key, normalizeDateFrom(value));
         return;
       }
 
-      // _gte/_lte 접미사 → 날짜 10자리로 정규화 후 바인딩 (datetime 포맷 혼용 대응)
-      if (key.endsWith("_gte") || key.endsWith("_lte")) {
+      // _to/_lte 접미사 → 종료일 suffix 추가 후 바인딩
+      // YYYYMMDD → YYYYMMDD235959 / YYYY-MM-DD → YYYY-MM-DDT23:59:59 / 이미 시간 포함 → 그대로
+      if (key.endsWith("_to") || key.endsWith("_lte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
-        String dateVal = (value != null && value.length() > 10) ? value.substring(0, 10) : value;
-        query.setParameter("p_" + key, dateVal);
+        query.setParameter("p_" + key, normalizeDateTo(value));
         return;
       }
 
