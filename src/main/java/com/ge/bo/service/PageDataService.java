@@ -689,26 +689,30 @@ public class PageDataService {
           String[] toSegs   = segs.clone(); toSegs[toSegs.length - 1]     = toSegs[toSegs.length - 1]     + "_to";
           fromPart = buildJsonPath(fromSegs);
           toPart   = buildJsonPath(toSegs);
+          // substring(..., 1, 10): 저장값이 datetime 형태여도 날짜 10자리만 추출해 CURRENT_DATE와 비교
+          String fromSub = "substring(" + fromPart + ", 1, 10)";
+          String toSub   = "substring(" + toPart   + ", 1, 10)";
           switch (value) {
             case "before":
-              whereClause.append(" AND ").append(fromPart).append(" > CURRENT_DATE::text");
+              whereClause.append(" AND ").append(fromSub).append(" > CURRENT_DATE::text");
               break;
             case "in_range":
-              whereClause.append(" AND ").append(fromPart).append(" <= CURRENT_DATE::text")
-                         .append(" AND ").append(toPart).append(" >= CURRENT_DATE::text");
+              whereClause.append(" AND ").append(fromSub).append(" <= CURRENT_DATE::text")
+                         .append(" AND ").append(toSub).append(" >= CURRENT_DATE::text");
               break;
             case "after":
-              whereClause.append(" AND ").append(toPart).append(" < CURRENT_DATE::text");
+              whereClause.append(" AND ").append(toSub).append(" < CURRENT_DATE::text");
               break;
             default: break;
           }
         } else {
           // 단순 키: _from/_to 분리 키로 최상위 + 1단계 중첩 동시 탐색
+          // substring(..., 1, 10): 저장값이 datetime 형태여도 날짜 10자리만 추출해 CURRENT_DATE와 비교
           if (!rangeKey.matches("[a-zA-Z0-9_]+")) return;
-          String fromRoot   = "data_json->>'" + rangeKey + "_from'";
-          String toRoot     = "data_json->>'" + rangeKey + "_to'";
-          String fromNested = "kv.value->>'" + rangeKey + "_from'";
-          String toNested   = "kv.value->>'" + rangeKey + "_to'";
+          String fromRoot   = "substring(data_json->>'" + rangeKey + "_from', 1, 10)";
+          String toRoot     = "substring(data_json->>'" + rangeKey + "_to', 1, 10)";
+          String fromNested = "substring(kv.value->>'" + rangeKey + "_from', 1, 10)";
+          String toNested   = "substring(kv.value->>'" + rangeKey + "_to', 1, 10)";
           String nested     = " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ";
           switch (value) {
             case "before":
@@ -781,48 +785,52 @@ public class PageDataService {
       }
 
       // _from 접미사 → dateRange 시작일 이상 조건 (최상위 + 1단계 중첩 동시 검색)
+      // substring(..., 1, 10): 저장값이 datetime(YYYY-MM-DDTHH:mm) 형태여도 날짜 10자리만 추출해 비교
       if (key.endsWith("_from")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String paramName = "p_" + key;
-        whereClause.append(" AND (data_json->>'").append(key).append("' >= :").append(paramName)
+        whereClause.append(" AND (substring(data_json->>'").append(key).append("', 1, 10) >= :").append(paramName)
             .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
             .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-            .append(" AND kv.value->>'").append(key).append("' >= :").append(paramName).append("))");
+            .append(" AND substring(kv.value->>'").append(key).append("', 1, 10) >= :").append(paramName).append("))");
         return;
       }
 
       // _to 접미사 → dateRange 종료일 이하 조건 (최상위 + 1단계 중첩 동시 검색)
+      // substring(..., 1, 10): 종료일 당일 시간 포함 데이터 누락 방지
       if (key.endsWith("_to")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String paramName = "p_" + key;
-        whereClause.append(" AND (data_json->>'").append(key).append("' <= :").append(paramName)
+        whereClause.append(" AND (substring(data_json->>'").append(key).append("', 1, 10) <= :").append(paramName)
             .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
             .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-            .append(" AND kv.value->>'").append(key).append("' <= :").append(paramName).append("))");
+            .append(" AND substring(kv.value->>'").append(key).append("', 1, 10) <= :").append(paramName).append("))");
         return;
       }
 
       // _gte 접미사 → 단일 date 컬럼 범위 검색 시작 조건 (fieldKey = key에서 _gte 제거)
+      // substring(..., 1, 10): datetime 저장값과 date 검색값 혼용 시 날짜 단위로 정규화
       if (key.endsWith("_gte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String fieldKey = key.substring(0, key.length() - 4);
         String paramName = "p_" + key;
-        whereClause.append(" AND (data_json->>'").append(fieldKey).append("' >= :").append(paramName)
+        whereClause.append(" AND (substring(data_json->>'").append(fieldKey).append("', 1, 10) >= :").append(paramName)
             .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
             .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-            .append(" AND kv.value->>'").append(fieldKey).append("' >= :").append(paramName).append("))");
+            .append(" AND substring(kv.value->>'").append(fieldKey).append("', 1, 10) >= :").append(paramName).append("))");
         return;
       }
 
       // _lte 접미사 → 단일 date 컬럼 범위 검색 종료 조건 (fieldKey = key에서 _lte 제거)
+      // substring(..., 1, 10): 종료일 당일 시간 포함 데이터 누락 방지
       if (key.endsWith("_lte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String fieldKey = key.substring(0, key.length() - 4);
         String paramName = "p_" + key;
-        whereClause.append(" AND (data_json->>'").append(fieldKey).append("' <= :").append(paramName)
+        whereClause.append(" AND (substring(data_json->>'").append(fieldKey).append("', 1, 10) <= :").append(paramName)
             .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
             .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-            .append(" AND kv.value->>'").append(fieldKey).append("' <= :").append(paramName).append("))");
+            .append(" AND substring(kv.value->>'").append(fieldKey).append("', 1, 10) <= :").append(paramName).append("))");
         return;
       }
 
@@ -933,17 +941,19 @@ public class PageDataService {
         return;
       }
 
-      // _from/_to 접미사 → 값 그대로 바인딩 (범위 비교용, ILIKE 아님)
+      // _from/_to 접미사 → 날짜 10자리로 정규화 후 바인딩 (datetime 포맷 혼용 대응)
       if (key.endsWith("_from") || key.endsWith("_to")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
-        query.setParameter("p_" + key, value);
+        String dateVal = (value != null && value.length() > 10) ? value.substring(0, 10) : value;
+        query.setParameter("p_" + key, dateVal);
         return;
       }
 
-      // _gte/_lte 접미사 → 값 그대로 바인딩 (단일 date 컬럼 범위 비교용)
+      // _gte/_lte 접미사 → 날짜 10자리로 정규화 후 바인딩 (datetime 포맷 혼용 대응)
       if (key.endsWith("_gte") || key.endsWith("_lte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
-        query.setParameter("p_" + key, value);
+        String dateVal = (value != null && value.length() > 10) ? value.substring(0, 10) : value;
+        query.setParameter("p_" + key, dateVal);
         return;
       }
 
