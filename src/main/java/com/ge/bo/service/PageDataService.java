@@ -384,7 +384,7 @@ public class PageDataService {
     public List<Map<String, Object>> exportAll(String slug, Map<String, String> allParams, Long siteId) {
         // 예약 파라미터 확장 (export 전용 파라미터 추가)
     Set<String> reservedForExport = new HashSet<>(RESERVED_PARAMS);
-    reservedForExport.addAll(Set.of("format", "headers", "keys", "dateFormats"));
+    reservedForExport.addAll(Set.of("format", "headers", "keys", "dateFormats", "codeMaps", "reason"));
 
         // 검색 조건 파라미터 추출
     Map<String, String> searchParams = new LinkedHashMap<>();

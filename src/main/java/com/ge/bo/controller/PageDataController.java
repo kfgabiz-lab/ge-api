@@ -1,5 +1,7 @@
 package com.ge.bo.controller;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.annotation.ApiLinkedEntity;
 import com.ge.bo.common.excel.ExcelService;
 import com.ge.bo.dto.FieldPatchRequest;
@@ -12,6 +14,7 @@ import com.ge.bo.service.PageDataService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -36,6 +39,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/page-data/{slug}")
 @RequiredArgsConstructor
+@Slf4j
 @ApiLinkedEntity("PageData")
 public class PageDataController {
 
@@ -43,6 +47,7 @@ public class PageDataController {
   private final ExcelService excelService;
   private final DownloadLogService downloadLogService;
   private final AdminRepository adminRepository;
+  private final ObjectMapper objectMapper;
 
         /**
          * 목록 조회 — 페이지네이션 + 동적 JSONB 검색
@@ -153,6 +158,7 @@ public class PageDataController {
                         @RequestParam(required = false) String headers,
                         @RequestParam(required = false) String keys,
                         @RequestParam(required = false) String dateFormats,
+                        @RequestParam(required = false) String codeMaps,
                         @RequestParam(required = false) String reason,
                         @RequestParam Map<String, String> allParams,
                         @RequestHeader(value = "X-Site-Id", required = false) Long siteId,
@@ -169,6 +175,16 @@ public class PageDataController {
                                 ? Arrays.asList(dateFormats.split(",", -1))
                                 : Collections.emptyList();
 
+                // 공통코드 라벨 매핑표 파싱 — FE가 다국어까지 반영해 만든 { key: { code: label } } (없으면 빈 맵)
+    Map<String, Map<String, String>> codeMapData = Collections.emptyMap();
+    if (codeMaps != null && !codeMaps.isBlank()) {
+      try {
+        codeMapData = objectMapper.readValue(codeMaps, new TypeReference<Map<String, Map<String, String>>>() {});
+      } catch (Exception e) {
+        log.warn("export codeMaps 파싱 실패, 매핑 없이 진행: {}", e.getMessage());
+      }
+    }
+
                 // 전체 데이터 조회 (search()와 동일한 사이트 ID 필터 적용)
     List<Map<String, Object>> rows = pageDataService.exportAll(slug, allParams, siteId);
 
@@ -179,8 +195,8 @@ public class PageDataController {
 
                 // 엑셀/CSV 바이트 생성
     byte[] fileBytes = isCsv
-                                ? excelService.buildCsv(headerList, keyList, dateFormatList, rows)
-                                : excelService.buildXlsx(headerList, keyList, dateFormatList, rows, slug);
+                                ? excelService.buildCsv(headerList, keyList, dateFormatList, codeMapData, rows)
+                                : excelService.buildXlsx(headerList, keyList, dateFormatList, codeMapData, rows, slug);
 
                 // 응답 헤더 설정
     HttpHeaders responseHeaders = new HttpHeaders();

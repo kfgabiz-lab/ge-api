@@ -18,15 +18,16 @@ import java.util.Map;
  *
  * 사용법:
  *   // xlsx 생성
- *   byte[] bytes = excelService.buildXlsx(headers, keys, rows, "시트명");
+ *   byte[] bytes = excelService.buildXlsx(headers, keys, dateFormats, codeMaps, rows, "시트명");
  *
  *   // csv 생성 (UTF-8 BOM 포함 — 엑셀 한글 깨짐 방지)
- *   byte[] bytes = excelService.buildCsv(headers, keys, rows);
+ *   byte[] bytes = excelService.buildCsv(headers, keys, dateFormats, codeMaps, rows);
  *
  * 파라미터 공통:
- *   headers — 컬럼 헤더 목록 (예: ["이름", "이메일", "상태"])
- *   keys    — data_json 키 목록 (헤더와 순서 동일, 예: ["name", "email", "status"])
- *   rows    — 데이터 목록 (Map<키, 값>)
+ *   headers   — 컬럼 헤더 목록 (예: ["이름", "이메일", "상태"])
+ *   keys      — data_json 키 목록 (헤더와 순서 동일, 예: ["name", "email", "status"])
+ *   codeMaps  — 공통코드 라벨 매핑표 (key → {코드값: 라벨}, 없으면 빈 맵)
+ *   rows      — 데이터 목록 (Map<키, 값>)
  */
 @Service
 public class ExcelService {
@@ -37,11 +38,13 @@ public class ExcelService {
      * @param headers     컬럼 헤더 목록
      * @param keys        data_json 키 목록 (헤더와 순서 일치)
      * @param dateFormats 날짜 포맷 목록 (keys와 순서 일치, 빈 문자열이면 포맷 미적용)
+     * @param codeMaps    공통코드 라벨 매핑표 (key → {코드값: 라벨}, FE가 다국어까지 반영해 생성, 없으면 빈 맵)
      * @param rows        데이터 목록
      * @param sheetName   시트명
      * @return xlsx 바이트 배열
      */
   public byte[] buildXlsx(List<String> headers, List<String> keys, List<String> dateFormats,
+                             Map<String, Map<String, String>> codeMaps,
                              List<Map<String, Object>> rows, String sheetName) {
     try (Workbook workbook = new XSSFWorkbook();
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -77,6 +80,7 @@ public class ExcelService {
           Object value = getNestedValue(rowData, keys.get(colIdx));
           String fmt   = (dateFormats != null && colIdx < dateFormats.size()) ? dateFormats.get(colIdx) : "";
           String text  = applyDateFormat(value, fmt);
+          text = applyCodeMap(text, codeMaps != null ? codeMaps.get(keys.get(colIdx)) : null);
           Cell cell = dataRow.createCell(colIdx);
           cell.setCellValue(text);
           if (colIdx < colMaxLen.length) {
@@ -104,10 +108,12 @@ public class ExcelService {
      * @param headers     컬럼 헤더 목록
      * @param keys        data_json 키 목록 (헤더와 순서 일치)
      * @param dateFormats 날짜 포맷 목록 (keys와 순서 일치, 빈 문자열이면 포맷 미적용)
+     * @param codeMaps    공통코드 라벨 매핑표 (key → {코드값: 라벨}, FE가 다국어까지 반영해 생성, 없으면 빈 맵)
      * @param rows        데이터 목록
      * @return csv 바이트 배열 (BOM + UTF-8)
      */
   public byte[] buildCsv(List<String> headers, List<String> keys, List<String> dateFormats,
+                            Map<String, Map<String, String>> codeMaps,
                             List<Map<String, Object>> rows) {
     StringBuilder sb = new StringBuilder();
 
@@ -121,7 +127,9 @@ public class ExcelService {
       for (int i = 0; i < keys.size(); i++) {
         Object value = getNestedValue(row, keys.get(i));
         String fmt   = (dateFormats != null && i < dateFormats.size()) ? dateFormats.get(i) : "";
-        values.add(escapeCsv(applyDateFormat(value, fmt)));
+        String text  = applyDateFormat(value, fmt);
+        text = applyCodeMap(text, codeMaps != null ? codeMaps.get(keys.get(i)) : null);
+        values.add(escapeCsv(text));
       }
       sb.append(String.join(",", values));
       sb.append("\n");
@@ -173,6 +181,26 @@ public class ExcelService {
             // 파싱 실패 시 원본값 그대로 반환
       return raw;
     }
+  }
+
+    /**
+     * 공통코드 값을 라벨로 치환 (쉼표 구분 다중값 지원)
+     * - FE가 이미 다국어(nameMsgKey) 반영해 만든 매핑표를 그대로 기계적으로 치환만 함
+     * - 매핑표가 없거나 값이 매핑표에 없으면 원본 값 그대로 반환
+     *
+     * @param value   원본 값 (쉼표 구분 다중값 가능, 예: "Y,N")
+     * @param codeMap 코드값 → 라벨 매핑 (해당 컬럼에 매핑표가 없으면 null)
+     * @return 치환된 문자열
+     */
+  private String applyCodeMap(String value, Map<String, String> codeMap) {
+    if (codeMap == null || codeMap.isEmpty() || value == null || value.isEmpty()) return value;
+    String[] codes = value.split(",", -1);
+    List<String> labels = new java.util.ArrayList<>();
+    for (String code : codes) {
+      String trimmed = code.trim();
+      labels.add(codeMap.getOrDefault(trimmed, trimmed));
+    }
+    return String.join(",", labels);
   }
 
     /**
