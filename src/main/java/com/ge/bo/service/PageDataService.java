@@ -1160,18 +1160,37 @@ public class PageDataService {
         return content.stream().map(item -> {
             Map<String, Object> enriched = new LinkedHashMap<>(item.getDataJson());
             for (SlugRelation rel : fetchRelations) {
-                boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
+                boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
 
-                String masterValue = extractField(item.getDataJson(), rel.getMasterKey());
-                if (masterValue == null || masterValue.isBlank()) continue;
+                Object fetchedValue;
+                if (isArrayContains) {
+                    // ARRAY_CONTAINS: masterKey가 id 배열(multiSelect 등)인 경우 — CATEGORY는 미지원
+                    if ("CATEGORY".equals(rel.getSlaveType())) {
+                        log.warn("ARRAY_CONTAINS는 CATEGORY 타입을 지원하지 않습니다. relationId={}", rel.getId());
+                        continue;
+                    }
+                    List<String> masterValues = extractFieldAsList(item.getDataJson(), rel.getMasterKey());
+                    if (masterValues.isEmpty()) continue;
+                    // 반환값: 매칭된 slave 레코드 전체를 배열로 반환 — 표시 형식은 FE(빌더 Data 표현식)에서 결정
+                    fetchedValue = resolveArrayContainsFetch(rel, masterValues);
+                } else {
+                    boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
+                    String masterValue = extractField(item.getDataJson(), rel.getMasterKey());
+                    if (masterValue == null || masterValue.isBlank()) continue;
 
-                // 반환값: fetch_fields 있으면 문자열, 없으면 Map<String,Object> 전체 객체
-                Object fetchedValue = isCategory
-                    ? resolveCategoryFetch(rel, masterValue)
-                    : resolveTableFetch(rel, masterValue);
+                    // 반환값: fetch_fields 있으면 매칭 1건=String/2건 이상=List<String>, 없으면 Map<String,Object> 전체 객체
+                    fetchedValue = isCategory
+                        ? resolveCategoryFetch(rel, masterValue)
+                        : resolveTableFetch(rel, masterValue);
+                }
 
                 if (fetchedValue != null) {
                     enriched.put(buildFetchKey(rel.getId()), fetchedValue);
+                    // 다건 매칭(List<String>)일 때만 — FE가 합칠 구분자를 형제 키로 함께 전달 (ARRAY_CONTAINS는 fetchSeparator 미사용이라 제외)
+                    if (!isArrayContains && fetchedValue instanceof List) {
+                        String sep = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
+                        enriched.put(buildFetchKey(rel.getId()) + "_sep", sep);
+                    }
                 }
             }
             return enriched.size() > item.getDataJson().size() ? item.withDataJson(enriched) : item;
@@ -1179,8 +1198,49 @@ public class PageDataService {
     }
 
     /**
+     * ARRAY_CONTAINS 조인 전용 — masterKey 배열의 각 id와 slaveKey가 일치하는
+     * slave 레코드 전체를 조회해 배열로 반환한다.
+     * fetch_fields/fetch_separator는 사용하지 않음 — 표시 형식(1줄 합치기/행별 나열)은 FE 빌더에서 결정.
+     */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> resolveArrayContainsFetch(SlugRelation rel, List<String> masterValues) {
+        // 숫자 검증된 값만 IN 조건에 사용 (SQL Injection 방지)
+        String idList = masterValues.stream()
+            .filter(v -> v.matches("-?\\d+"))
+            .map(v -> "'" + v + "'")
+            .collect(java.util.stream.Collectors.joining(","));
+        if (idList.isBlank()) return null;
+
+        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        appendSlaveKeyInCondition(sql, rel.getSlaveKey(), idList);
+        Map<String, String> filterParams = new LinkedHashMap<>();
+        if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
+            appendSlaveFilter(sql, rel.getSlaveFilter(), filterParams);
+        }
+        sql.append(" LIMIT 200");
+
+        Query q = entityManager.createNativeQuery(sql.toString());
+        q.setParameter("slaveSlug", rel.getSlaveSlug());
+        filterParams.forEach(q::setParameter);
+
+        List<Object> results = q.getResultList();
+        if (results.isEmpty()) return null;
+
+        List<Map<String, Object>> records = new ArrayList<>();
+        for (Object row : results) {
+            try {
+                records.add(objectMapper.readValue(row.toString(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
+            } catch (Exception e) {
+                log.warn("ARRAY_CONTAINS FETCH dataJson 파싱 실패: {}", e.getMessage());
+            }
+        }
+        return records.isEmpty() ? null : records;
+    }
+
+    /**
      * TABLE 유형 FETCH
-     * - fetch_fields 있음: 해당 경로 값을 문자열로 추출 후 fetchSeparator로 합침 → String 반환
+     * - fetch_fields 있음: 해당 경로 값을 문자열로 추출 — 매칭 1건이면 String, 2건 이상이면 List<String> 반환(합치지 않음, FE에서 fetchSeparator로 합침)
      * - fetch_fields 없음: 첫 번째 slave 레코드 dataJson 전체를 Map으로 반환
      *   → FE에서 accessor "_fetchedRel{id}.form1.title" 등 dot notation으로 자유롭게 접근 가능
      */
@@ -1216,7 +1276,7 @@ public class PageDataService {
             }
         }
 
-        // fetch_fields 있음 → 해당 경로 값 문자열 추출 + separator 합침
+        // fetch_fields 있음 → 해당 경로 값 문자열 추출 (합치지 않음 — 매칭 건수에 따라 String 또는 List<String> 반환)
         List<String> values = new ArrayList<>();
         for (Object row : results) {
             try {
@@ -1228,8 +1288,7 @@ public class PageDataService {
             }
         }
         if (values.isEmpty()) return null;
-        String sep = rel.getFetchSeparator() != null ? rel.getFetchSeparator() : ",";
-        return String.join(sep, values);
+        return values.size() == 1 ? values.get(0) : values;
     }
 
     /**
@@ -1241,19 +1300,20 @@ public class PageDataService {
      *
      * depth=1 → 최상위(대분류) 이름만
      * depth=2 → "대분류 > 중분류"
-     * 다중 연결 레코드 → fetchSeparator로 합침 (예: "카테A, 카테B")
+     * 다중 연결 레코드 → 매칭 1건이면 String, 2건 이상이면 List<String> 반환 (합치지 않음, FE에서 fetchSeparator로 합침)
      */
     /**
      * CATEGORY 유형 FETCH
-     * - fetch_fields 있음: depth에 해당하는 이름(문자열)을 추출 → fetchSeparator로 합침
+     * - fetch_fields 있음: depth에 해당하는 이름(문자열)을 추출 — 매칭 1건이면 String, 2건 이상이면 List<String> 반환
      * - fetch_fields 없음: depth에 해당하는 카테고리 레코드 전체 Map 반환
      *   → FE에서 "_fetchedRel{id}.form1.title" 등 dot notation으로 원하는 필드 직접 접근
      */
     @SuppressWarnings("unchecked")
     private Object resolveCategoryFetch(SlugRelation rel, String masterValue) {
         int targetDepth = rel.getCategoryDepth() != null ? rel.getCategoryDepth() : 1;
+        // categoryDepthFrom 미설정 시 targetDepth와 동일 → 기존처럼 단일 depth만 표시 (하위 호환)
+        int fromDepth = rel.getCategoryDepthFrom() != null ? rel.getCategoryDepthFrom() : targetDepth;
         boolean hasFetchFields = StringUtils.hasText(rel.getFetchFields());
-        String sep = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
 
         // slaveKey 기반 linkParentKeyPath: "product.id" → "product.parentId"
         int lastDot = rel.getSlaveKey().lastIndexOf('.');
@@ -1289,7 +1349,7 @@ public class PageDataService {
             }
         }
 
-        // fetch_fields 있음 → 기존 방식: depth에 해당하는 이름 문자열 추출 + separator 합침
+        // fetch_fields 있음 → depth에 해당하는 이름 문자열 추출 (합치지 않음)
         String categoryParentKeyPath = deriveCategoryParentKeyPath(rel.getFetchFields());
         List<String> results = new ArrayList<>();
         for (Object row : r1) {
@@ -1303,11 +1363,17 @@ public class PageDataService {
             List<String> fullPath = collectFullCategoryPath(linkDataJson, rel, linkParentKeyPath, categoryParentKeyPath);
             if (fullPath.isEmpty()) continue;
             if (fullPath.size() >= targetDepth) {
-                results.add(fullPath.get(targetDepth - 1));
+                // fromDepth~targetDepth 범위의 이름을 계층 구분자(" > ", 고정)로 합침 — 레코드 간 구분자(sep)와 달라야 경계가 섞이지 않음
+                List<String> rangeNames = new ArrayList<>();
+                for (int d = Math.max(1, fromDepth); d <= targetDepth; d++) {
+                    if (fullPath.size() >= d) rangeNames.add(fullPath.get(d - 1));
+                }
+                if (!rangeNames.isEmpty()) results.add(String.join(" > ", rangeNames));
             }
         }
         if (results.isEmpty()) return null;
-        return String.join(sep, results);
+        // 매칭된 레코드(row)가 여러 건이면 List<String> 그대로 반환 — FE에서 fetchSeparator로 합침
+        return results.size() == 1 ? results.get(0) : results;
     }
 
     /**
@@ -1480,6 +1546,30 @@ public class PageDataService {
             }
         }
         return null;
+    }
+
+    /**
+     * dataJson에서 dot notation 경로로 배열 값 추출 (ARRAY_CONTAINS 전용)
+     * 경로 값이 배열이면 각 요소를 문자열로 변환한 리스트 반환, 배열이 아니면 단일 요소 리스트로 감싸 반환
+     */
+    @SuppressWarnings("unchecked")
+    private List<String> extractFieldAsList(Map<String, Object> dataJson, String fieldPath) {
+        if (dataJson == null || fieldPath == null || fieldPath.isBlank()) return List.of();
+        String[] segs = fieldPath.split("\\.");
+        Object current = dataJson;
+        for (String seg : segs) {
+            if (!(current instanceof Map)) return List.of();
+            current = ((Map<String, Object>) current).get(seg);
+        }
+        if (current instanceof List<?> list) {
+            return list.stream()
+                .filter(Objects::nonNull)
+                .map(Object::toString)
+                .filter(s -> !s.isBlank())
+                .toList();
+        }
+        if (current != null) return List.of(current.toString());
+        return List.of();
     }
 
     /** dataJson을 재귀 탐색해 fieldKey와 일치하는 모든 값을 matches에 수집 (extractField의 bare fieldKey 폴백용) */

@@ -10,7 +10,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
@@ -18,11 +17,11 @@ import java.time.OffsetDateTime;
 /**
  * 트랜잭션 로그 조회 REST API
  * - 조회 전용 (이력성 테이블이므로 수정/삭제 없음)
+ * - 인증된 사용자면 role 무관 접근 가능 (SecurityConfig의 anyRequest().authenticated()에 의존)
  */
 @RestController
 @RequestMapping("/api/v1/transaction-logs")
 @RequiredArgsConstructor
-@PreAuthorize("@securityService.isSystemAdmin(authentication)")
 public class TransactionLogController {
 
     private final TransactionLogService transactionLogService;

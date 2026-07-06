@@ -74,10 +74,14 @@ public class SlugRelation {
     @Builder.Default
     private String slaveType = "TABLE";
 
-    /** CATEGORY 유형 FETCH 시 표시할 계층 depth 수 (기본 1 = 직접 상위만, 2 = "대분류 > 중분류") */
+    /** CATEGORY 유형 FETCH 시 표시할 계층 depth (끝 depth, 기본 1) */
     @Column(name = "category_depth", nullable = false)
     @Builder.Default
     private Integer categoryDepth = 1;
+
+    /** CATEGORY 유형 FETCH 시 표시할 계층 시작 depth — null이면 categoryDepth와 동일(단일 depth만 표시), 값이 있으면 startDepth~categoryDepth 범위를 fetchSeparator로 합쳐 표시 */
+    @Column(name = "category_depth_from")
+    private Integer categoryDepthFrom;
 
     /** 설명 */
     @Column(columnDefinition = "TEXT")
