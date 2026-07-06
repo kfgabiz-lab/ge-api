@@ -76,6 +76,10 @@ public enum ErrorCode {
     SLUG_ENTITY_NOT_FOUND(HttpStatus.NOT_FOUND, "SLUG_ENTITY_NOT_FOUND", "해당 entity를 찾을 수 없습니다."),
     SLUG_ENTITY_SLUG_DUPLICATE(HttpStatus.CONFLICT, "SLUG_ENTITY_SLUG_DUPLICATE", "이미 사용 중인 slug입니다."),
 
+    /* 검색관리 */
+    SEARCH_MANAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "SEARCH_MANAGE_NOT_FOUND", "해당 검색관리 항목을 찾을 수 없습니다."),
+    SEARCH_MANAGE_TEXT_NOT_FOUND(HttpStatus.NOT_FOUND, "SEARCH_MANAGE_TEXT_NOT_FOUND", "해당 검색텍스트를 찾을 수 없습니다."),
+
     /* 파일 업로드 */
     FILE_REQUIRED(HttpStatus.BAD_REQUEST, "FILE_REQUIRED", "파일은 필수입니다."),
     FILE_EMPTY(HttpStatus.BAD_REQUEST, "FILE_EMPTY", "비어있는 파일은 업로드할 수 없습니다."),
