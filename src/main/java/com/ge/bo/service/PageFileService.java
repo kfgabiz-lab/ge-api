@@ -1,5 +1,6 @@
 package com.ge.bo.service;
 
+import com.ge.bo.common.file.FileStorageService;
 import com.ge.bo.dto.PageFileDataIdRequest;
 import com.ge.bo.dto.PageFileResponse;
 import com.ge.bo.entity.PageFile;
@@ -8,14 +9,17 @@ import com.ge.bo.repository.PageFileRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -34,6 +38,10 @@ import java.util.UUID;
 public class PageFileService {
 
   private final PageFileRepository pageFileRepository;
+  private final FileStorageService fileStorageService;
+
+  @Value("${ls.file-storage}")
+  private String fileStorage;
 
     /** application.yml: file.upload-root */
   @Value("${file.upload-root:/uploads}")
@@ -79,10 +87,17 @@ public class PageFileService {
                 + today.getYear() + "/"
                 + String.format("%02d", today.getMonthValue()) + "/";
 
-        // 파일시스템에 저장 (실패 시 FILE_UPLOAD_FAILED 예외 → 트랜잭션 롤백)
-    saveToFileSystem(file, dirPath, saveName);
+    // Azure Blob Storage에 저장.
+    String blobUrl = null;
+    if("blob".equals(fileStorage)){
+      // blob storage에 upload
+      blobUrl = fileStorageService.uploadFile(file, dirPath + saveName);
+    }else{
+      // 파일시스템에 저장 (실패 시 FILE_UPLOAD_FAILED 예외 → 트랜잭션 롤백)
+      saveToFileSystem(file, dirPath, saveName);
+    }
 
-        // DB에 파일 메타데이터 저장 (data_id = NULL: 폼 저장 전 임시 상태)
+    // DB에 파일 메타데이터 저장 (data_id = NULL: 폼 저장 전 임시 상태)
     PageFile pageFile = PageFile.builder()
                 .templateSlug(templateSlug)
                 .dataId(null)
@@ -90,6 +105,7 @@ public class PageFileService {
                 .origName(origName)
                 .saveName(saveName)
                 .filePath(dirPath)
+                .blobUrl(blobUrl)
                 .fileSize(file.getSize())
                 .mimeType(file.getContentType() != null ? file.getContentType() : "application/octet-stream")
                 .build();
@@ -124,22 +140,62 @@ public class PageFileService {
      * @return 파일 Resource (스트리밍)
      */
   @Transactional(readOnly = true)
-    public DownloadResult download(Long id) {
+  public DownloadResult download(Long id) {
+      if("blob".equals(fileStorage)){
+        return downloadToStorage(id);
+      }else {
         // DB에서 파일 메타데이터 조회
-    PageFile pageFile = pageFileRepository.findById(id)
+        PageFile pageFile = pageFileRepository.findById(id)
                 .orElseThrow(ErrorCode.FILE_NOT_FOUND::toException);
 
         // 실제 파일 경로 구성: filePath + saveName
-    Path filePath = Paths.get(pageFile.getFilePath(), pageFile.getSaveName());
+        Path filePath = Paths.get(pageFile.getFilePath(), pageFile.getSaveName());
+
+        try {
+          InputStream inputStream = Files.newInputStream(filePath);
+          Resource resource = new InputStreamResource(inputStream);
+          return new DownloadResult(resource, pageFile.getOrigName(), pageFile.getMimeType());
+        } catch (IOException e) {
+          log.error("[PageFileService] 파일 읽기 실패: id={}, path={}", id, filePath, e);
+          throw ErrorCode.FILE_NOT_FOUND.toException();
+        }
+      }
+  }
+
+
+  // ── 다운로드 ──────────────────────────────────────────────
+
+  /**
+   * 파일 다운로드 — InputStreamResource 스트리밍 방식
+   * 컨트롤러에서 Content-Disposition, Content-Type 헤더를 설정
+   *
+   * @param id page_file.id
+   * @return 파일 Resource (스트리밍)
+   */
+  @Transactional(readOnly = true)
+  public DownloadResult downloadToStorage(Long id) {
+    // DB에서 파일 메타데이터 조회
+    PageFile pageFile = pageFileRepository.findById(id)
+            .orElseThrow(ErrorCode.FILE_NOT_FOUND::toException);
+/*
+    // storage에 접속해서 가져오는 방식
+    String blobPath = pageFile.getFilePath() + pageFile.getSaveName();
+    // blobPath에 첫 / 제거
+    blobPath = blobPath.replaceAll("^/+", "");
+    byte[] fileBytes = fileStorageService.downloadFile(blobPath);
+
+    Resource resource = new ByteArrayResource(fileBytes);
+*/
+    // blobUrl로 직접 접근하는 방식
+    Resource resource;
 
     try {
-      InputStream inputStream = Files.newInputStream(filePath);
-      Resource resource = new InputStreamResource(inputStream);
-      return new DownloadResult(resource, pageFile.getOrigName(), pageFile.getMimeType());
-    } catch (IOException e) {
-      log.error("[PageFileService] 파일 읽기 실패: id={}, path={}", id, filePath, e);
-      throw ErrorCode.FILE_NOT_FOUND.toException();
+      resource = new UrlResource(URI.create(pageFile.getBlobUrl()));
+    }catch(Exception e){
+      throw new RuntimeException("Blob URL을 Resource로 변환할 수 없습니다.", e);
     }
+
+    return new DownloadResult(resource, pageFile.getOrigName(), pageFile.getMimeType());
   }
 
     /**

@@ -54,6 +54,10 @@ public class PageFile {
   @Column(name = "file_path", nullable = false, length = 500)
     private String filePath;
 
+  /** Azure blob storage 불러오기 url local에서는 null */
+  @Column(name = "blob_url", nullable = true, length = 500)
+  private String blobUrl;
+
     /** 파일 크기 (bytes) */
   @Column(name = "file_size", nullable = false)
     private Long fileSize;

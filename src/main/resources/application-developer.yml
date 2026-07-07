@@ -39,6 +39,7 @@ logging:
 
 ls:
   isApiLogin: false    # true = SSO API 활성화 / false = 비밀번호만으로 로그인
+  file-storage: blob   # local, blob
   totp:
     isUser: "LSE Admin"
     enabled: false    # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
@@ -49,3 +50,10 @@ ls:
     outApi:
       googleMapKey : "AIzaSyBkHvBn_MG-VWQd2C8-UA3PJBniWPy5QNk"
       recapchaKey : "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
+    # Azure Blob Storage 정보
+    azure:
+      blob-storage:
+        endpoint-url: "https://blobctpeus2.blob.core.windows.net"
+        container-name: "download-test"
+        sas-token: "sp=racwl&st=2026-07-02T05:54:10Z&se=2026-12-31T14:09:10Z&sv=2026-02-06&sr=c&sig=My8AJ4y8sV8uvLsU48lYIXM88xayA0MWRjAuxGmhStk%3D"
+
