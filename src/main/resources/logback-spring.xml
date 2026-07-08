@@ -28,6 +28,11 @@
   <!-- ===== dev / 기본(프로파일 미지정): JSON 포맷 (운영 로그 수집용) ===== -->
   <!-- PII 마스킹은 로그 수집 플랫폼(Logstash/Last9)의 제어 플레인에서 처리 -->
   <springProfile name="dev,!local">
+
+    <!-- Windows 서버 로그 저장 경로 -->
+    <property name="LOG_PATH" value="C:/app/logs"/>
+    <property name="LOG_FILE" value="bo-api"/>
+
     <appender name="CONSOLE_JSON" class="ch.qos.logback.core.ConsoleAppender">
       <!-- Logback 1.5.x 내장 JsonEncoder — 별도 의존성 없음 -->
       <encoder class="ch.qos.logback.classic.encoder.JsonEncoder"/>
@@ -37,8 +42,33 @@
       <discardingThreshold>0</discardingThreshold>
       <appender-ref ref="CONSOLE_JSON"/>
     </appender>
+
+    <!-- 파일 로그 -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+      <file>${LOG_PATH}/${LOG_FILE}.log</file>
+
+      <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+        <fileNamePattern>${LOG_PATH}/${LOG_FILE}.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+        <maxFileSize>100MB</maxFileSize>
+        <maxHistory>30</maxHistory>
+        <totalSizeCap>3GB</totalSizeCap>
+      </rollingPolicy>
+
+      <encoder>
+        <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{40} - %msg%n</pattern>
+        <charset>UTF-8</charset>
+      </encoder>
+    </appender>
+
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+      <queueSize>512</queueSize>
+      <discardingThreshold>0</discardingThreshold>
+      <appender-ref ref="FILE"/>
+    </appender>
+
     <root level="INFO">
       <appender-ref ref="ASYNC_CONSOLE"/>
+      <appender-ref ref="ASYNC_FILE"/>
     </root>
   </springProfile>
 
