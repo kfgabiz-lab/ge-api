@@ -25,7 +25,7 @@ public class HealthController {
 
     // 이메일 전송 테스트.
     mailService.sendMail(
-            "comgsu@ls-electric.com",
+            "abbgnog@gmail.com",
             "테스트 메일",
             "<h1>안녕하세요</h1><p>HTML 메일입니다.</p>"
     );
