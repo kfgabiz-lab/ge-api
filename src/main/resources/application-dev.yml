@@ -17,10 +17,12 @@ spring:
     password: Wels!12345
     properties:
       mail:
+        debug: true
         smtp:
           auth: true
-          starttls:
-            enable: true
+          connectiontimeout: 15000
+          timeout: 15000
+          writetimeout: 15000
 
 # CORS — 개발서버 FE 주소
 cors:

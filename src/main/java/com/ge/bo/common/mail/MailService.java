@@ -22,14 +22,15 @@ public class MailService {
             MimeMessage message = mailSender.createMimeMessage();
 
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
-            helper.setFrom("abbgnog@gmail.com");
+            helper.setFrom("comlbg@ls-electric.com");
             helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(content, true); // false = plain text
-
+            log.info("메일 세팅 완료");
             mailSender.send(message);
+            log.info("메일 전송 완료");
 
-        } catch (MessagingException e) {
+        } catch (Exception e) {
             log.info("메일 전송 실패");
             log.info(e.getMessage());
             throw new RuntimeException("메일 전송 실패", e);

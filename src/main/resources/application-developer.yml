@@ -14,14 +14,16 @@ spring:
   mail:
     host: 10.153.2.44
     port: 25
-    username: test
-    password: test
+    username: A003elesmtp
+    password: Wels!12345
     properties:
       mail:
+        debug: true
         smtp:
           auth: true
-          starttls:
-            enable: true
+          connectiontimeout: 15000
+          timeout: 15000
+          writetimeout: 15000
 
 # CORS — 로컬 FE 주소 (각자 로컬에서 FE 실행)
 cors:
