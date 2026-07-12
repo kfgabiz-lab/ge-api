@@ -19,12 +19,15 @@ public record SlugEntityFieldRequest(
 
     @NotBlank(message = "DB 타입을 선택해주세요.")
     @Pattern(
-        regexp = "^(VARCHAR|TEXT|BIGINT|INT|BOOLEAN|TIMESTAMPTZ|DATE|JSONB)$",
+        regexp = "^(VARCHAR|TEXT|BIGINT|INT|BOOLEAN|TIMESTAMPTZ|DATE|JSONB|FILE|ENTITY_REF)$",
         message = "올바른 DB 타입을 선택해주세요."
     )
     String columnType,
 
     Integer columnLength,
+
+    /** 연동 대상 Slug Entity id (선택, column_type=ENTITY_REF일 때만 의미) */
+    Long connectedEntityId,
 
     /** 빌더 필드 타입 (선택, 예: input, textarea, date, checkbox 등) */
     String fieldType,

@@ -12,4 +12,7 @@ public interface ApiInfoRepository extends JpaRepository<ApiInfo, Long>, JpaSpec
 
     /** method + urlPattern 조합 중복 여부 확인 (동기화 시 사용) */
   boolean existsByMethodAndUrlPattern(String method, String urlPattern);
+
+    /** 활성 API 목록 조회 (빌더 드롭다운용) — name 오름차순 */
+  java.util.List<ApiInfo> findAllByActiveTrueOrderByNameAsc();
 }

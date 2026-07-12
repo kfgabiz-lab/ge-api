@@ -6,6 +6,7 @@ import com.ge.bo.dto.SlugEntityResponse;
 import com.ge.bo.entity.SlugEntity;
 import com.ge.bo.entity.SlugEntityField;
 import com.ge.bo.exception.ErrorCode;
+import com.ge.bo.repository.SlugEntityFieldRepository;
 import com.ge.bo.repository.SlugEntityRepository;
 import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ import java.util.List;
 public class SlugEntityService {
 
     private final SlugEntityRepository slugEntityRepository;
+    private final SlugEntityFieldRepository slugEntityFieldRepository;
 
     /* ══════════ 목록 조회 (관리 페이지용 — 페이징) ══════════ */
 
@@ -78,6 +80,7 @@ public class SlugEntityService {
             .tableName(trimOrNull(request.tableName()))
             .description(trimOrNull(request.description()))
             .active(request.active() != null ? request.active() : true)
+            .parentEntity(resolveParent(request.parentEntityId(), null))
             .build();
 
         return SlugEntityResponse.from(slugEntityRepository.save(entity));
@@ -95,6 +98,7 @@ public class SlugEntityService {
         if (request.active() != null) {
             entity.setActive(request.active());
         }
+        entity.setParentEntity(resolveParent(request.parentEntityId(), id));
 
         return SlugEntityResponse.from(entity);
     }
@@ -103,7 +107,33 @@ public class SlugEntityService {
 
     @Transactional
     public void delete(Long id) {
+        /* 부모(마스터) 참조 가드 — 하위 entity가 이 entity를 마스터로 지정하고 있으면 삭제 차단 */
+        if (slugEntityRepository.existsByParentEntity_Id(id)) {
+            throw ErrorCode.SLUG_ENTITY_HAS_CHILDREN.toException();
+        }
+        /* 연동(ENTITY_REF) 참조 가드 — 다른 entity의 필드가 이 entity를 연동 대상으로 참조하고 있으면 삭제 차단.
+           DataIntegrityViolationException(FK 위반) 발생 전에 먼저 막고 친화적 에러 메시지를 반환한다. */
+        if (slugEntityFieldRepository.existsByConnectedEntity_Id(id)) {
+            throw ErrorCode.SLUG_ENTITY_REFERENCED.toException();
+        }
         slugEntityRepository.delete(findOrThrow(id));
+    }
+
+    /**
+     * 마스터(부모) Entity 참조 해석
+     * - parentEntityId가 없으면 null(독립 Entity)
+     * - selfId와 동일하면 자기참조 차단
+     * - 존재하지 않으면 SLUG_ENTITY_PARENT_NOT_FOUND
+     */
+    private SlugEntity resolveParent(Long parentEntityId, Long selfId) {
+        if (parentEntityId == null) {
+            return null;
+        }
+        if (parentEntityId.equals(selfId)) {
+            throw ErrorCode.SLUG_ENTITY_PARENT_SELF.toException();
+        }
+        return slugEntityRepository.findById(parentEntityId)
+            .orElseThrow(ErrorCode.SLUG_ENTITY_PARENT_NOT_FOUND::toException);
     }
 
     /* ══════════ 필드 목록 일괄 저장 ══════════ */
@@ -124,6 +154,7 @@ public class SlugEntityService {
                 .label(req.label().trim())
                 .columnType(req.columnType())
                 .columnLength(req.columnLength())
+                .connectedEntity(resolveConnectedEntity(req.connectedEntityId()))
                 .fieldType(trimOrNull(req.fieldType()))
                 .codeGroupCode(trimOrNull(req.codeGroupCode()))
                 .defaultValue(trimOrNull(req.defaultValue()))
@@ -135,6 +166,20 @@ public class SlugEntityService {
         }
 
         return SlugEntityResponse.from(slugEntityRepository.save(entity));
+    }
+
+    /**
+     * ENTITY_REF 필드의 연동 대상 Entity 참조 해석
+     * - connectedEntityId가 없으면 null(연동 없음)
+     * - 존재하지 않으면 SLUG_ENTITY_NOT_FOUND
+     * - entity_id(소속)와 달리 소유가 아닌 메타 참조이므로 자기참조 차단(selfId 비교)은 하지 않는다.
+     */
+    private SlugEntity resolveConnectedEntity(Long connectedEntityId) {
+        if (connectedEntityId == null) {
+            return null;
+        }
+        return slugEntityRepository.findById(connectedEntityId)
+            .orElseThrow(ErrorCode.SLUG_ENTITY_NOT_FOUND::toException);
     }
 
     /* ══════════ 헬퍼 ══════════ */

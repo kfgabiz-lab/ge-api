@@ -5,13 +5,18 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.validation.FieldError;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -75,6 +80,37 @@ public class GlobalExceptionHandler {
     for (FieldError error : ex.getBindingResult().getFieldErrors()) {
       fieldErrors.put(error.getField(), error.getDefaultMessage());
     }
+
+    String message = "입력값 유효성 검증에 실패했습니다.";
+
+    Map<String, Object> body = new HashMap<>();
+    body.put("status", 400);
+    body.put("error", "VALIDATION_FAILED");
+    body.put("message", message);
+    body.put("fieldErrors", fieldErrors);
+    body.put("timestamp", LocalDateTime.now().toString());
+
+    // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
+    errorLogService.saveAsync(request, 400, "VALIDATION_FAILED", message, null, extractLoginUser());
+
+    return ResponseEntity.badRequest().body(body);
+  }
+
+  /**
+   * 메서드 파라미터 유효성 검증 실패 (예: @Pattern 위반 — record/파라미터 레벨 검증)
+   */
+  @ExceptionHandler(HandlerMethodValidationException.class)
+  public ResponseEntity<Map<String, Object>> handleHandlerMethodValidationException(
+      HandlerMethodValidationException ex,
+      HttpServletRequest request) {
+    Map<String, String> fieldErrors = new HashMap<>();
+    ex.getAllValidationResults().forEach(result -> {
+      String field = result.getMethodParameter().getParameterName();
+      String msg = result.getResolvableErrors().isEmpty()
+          ? "유효하지 않은 값입니다."
+          : result.getResolvableErrors().get(0).getDefaultMessage();
+      fieldErrors.put(field != null ? field : "parameter", msg);
+    });
 
     String message = "입력값 유효성 검증에 실패했습니다.";
 
@@ -163,12 +199,71 @@ public class GlobalExceptionHandler {
   }
 
   /**
+   * 경로/쿼리 파라미터 타입 불일치 (예: @PathVariable Long id 에 숫자가 아닌 값 전달)
+   * MethodArgumentTypeMismatchException은 ErrorResponse를 구현하지 않으므로 별도 처리 필요
+   */
+  @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+  public ResponseEntity<Map<String, Object>> handleMethodArgumentTypeMismatch(
+      MethodArgumentTypeMismatchException ex,
+      HttpServletRequest request) {
+    log.warn("파라미터 타입 불일치: {}", ex.getMessage());
+
+    String message = String.format("'%s' 파라미터 값이 올바르지 않습니다.", ex.getName());
+
+    Map<String, Object> body = new HashMap<>();
+    body.put("status", 400);
+    body.put("error", "INVALID_PARAMETER_TYPE");
+    body.put("message", message);
+    body.put("timestamp", LocalDateTime.now().toString());
+
+    // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
+    errorLogService.saveAsync(request, 400, "INVALID_PARAMETER_TYPE", message, null, extractLoginUser());
+
+    return ResponseEntity.badRequest().body(body);
+  }
+
+  /**
    * 그 외 예상치 못한 서버 에러
+   * Spring MVC 표준 예외 중 ErrorResponse를 구현하는 것들
+   * (HttpRequestMethodNotSupportedException→405, MissingServletRequestParameterException→400,
+   *  NoResourceFoundException→404 등)은 프레임워크가 이미 올바른 HTTP 상태 코드를 담고 있으므로
+   * 이를 무시하고 무조건 500으로 응답하면 안 된다 — ErrorResponse 여부를 먼저 확인해 그대로 응답한다.
    */
   @ExceptionHandler(Exception.class)
   public ResponseEntity<Map<String, Object>> handleGeneralException(
       Exception ex,
       HttpServletRequest request) {
+
+    if (ex instanceof ErrorResponse errorResponse) {
+      HttpStatusCode statusCode = errorResponse.getStatusCode();
+      ProblemDetail problemDetail = errorResponse.getBody();
+      // 원문 상세 메시지 — 로그에만 사용, 클라이언트 응답에는 노출하지 않음
+      String originalDetail = (problemDetail != null && problemDetail.getDetail() != null)
+          ? problemDetail.getDetail() : ex.getMessage();
+      String errorCode = (statusCode instanceof HttpStatus httpStatus)
+          ? httpStatus.name() : "HTTP_" + statusCode.value();
+      // 클라이언트 응답용 한글 안내 메시지 (원문 영문 메시지 대신 상태코드별 매핑)
+      String message = resolveStandardExceptionMessage(statusCode);
+
+      Map<String, Object> body = new HashMap<>();
+      body.put("status", statusCode.value());
+      body.put("error", errorCode);
+      body.put("message", message);
+      body.put("timestamp", LocalDateTime.now().toString());
+
+      if (statusCode.value() >= 500) {
+        log.error("표준 웹 예외 발생 ({}): {}", statusCode.value(), originalDetail, ex);
+        // 오류로그 비동기 저장 (5xx — 스택트레이스 포함)
+        errorLogService.saveAsync(request, statusCode.value(), errorCode, message, ex, extractLoginUser());
+      } else {
+        log.warn("표준 웹 예외 발생 ({}): {}", statusCode.value(), originalDetail);
+        // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
+        errorLogService.saveAsync(request, statusCode.value(), errorCode, message, null, extractLoginUser());
+      }
+
+      return ResponseEntity.status(statusCode).body(body);
+    }
+
     log.error("서버 내부 오류 발생: ", ex);
 
     String message = "서버 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
@@ -183,5 +278,24 @@ public class GlobalExceptionHandler {
     errorLogService.saveAsync(request, 500, "INTERNAL_SERVER_ERROR", message, ex, extractLoginUser());
 
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+  }
+
+  /**
+   * Spring MVC 표준 웹 예외(ErrorResponse 구현체)의 상태코드를 한글 안내 메시지로 매핑
+   * 원문(영문) 메시지는 클라이언트에 노출하지 않고 로그에만 남긴다
+   */
+  private String resolveStandardExceptionMessage(HttpStatusCode statusCode) {
+    return switch (statusCode.value()) {
+      case 400 -> "잘못된 요청입니다.";
+      case 401 -> "인증이 필요합니다.";
+      case 403 -> "이 리소스에 접근할 권한이 없습니다.";
+      case 404 -> "요청한 리소스를 찾을 수 없습니다.";
+      case 405 -> "지원하지 않는 요청 방식입니다.";
+      case 406 -> "지원하지 않는 응답 형식입니다.";
+      case 415 -> "지원하지 않는 요청 데이터 형식입니다.";
+      default -> statusCode.is5xxServerError()
+          ? "서버 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+          : "잘못된 요청입니다.";
+    };
   }
 }

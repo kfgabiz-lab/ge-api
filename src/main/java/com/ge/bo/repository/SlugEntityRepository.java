@@ -17,4 +17,7 @@ public interface SlugEntityRepository
 
     /** 빌더용 — active=true 전체 목록, slug ASC 정렬 */
     List<SlugEntity> findAllByActiveTrueOrderBySlugAsc();
+
+    /** 하위(자식) entity 존재 여부 — 삭제 전 확인용 */
+    boolean existsByParentEntity_Id(Long parentEntityId);
 }

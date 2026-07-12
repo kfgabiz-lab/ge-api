@@ -3,7 +3,7 @@ package com.ge.bo.service;
 /**
  * [SLUG-ENTITY-CODEGEN-AUTO-GENERATED]
  * Service — 배너
- * 생성일시: 2026-07-11T14:32:07.519609300+09:00
+ * 생성일시: 2026-07-12T13:37:46.284663+09:00
  * 원본 Slug Entity: id=1, tableName=banner
  * 주의: 이 파일을 직접 수정한 뒤 다시 생성하면 수정 내용이 사라집니다.
  *       (재생성 시 기존 파일은 자동으로 *.bak.{timestamp} 로 백업됩니다.)
@@ -44,18 +44,19 @@ public class BannerDataService {
   @Transactional
   public BannerDataResponse create(BannerDataRequest request) {
     BannerData entity = BannerData.builder()
-        .banner_position(request.banner_position())
+        .bannerPosition(request.bannerPosition())
         .title(request.title())
-        .post_date(request.post_date())
+        .postDateFrom(request.postDateFrom())
         .prefix(request.prefix())
-        .main_title(request.main_title())
-        .bottom_text(request.bottom_text())
-        .sub_title(request.sub_title())
+        .mainTitle(request.mainTitle())
+        .bottomText(request.bottomText())
+        .subTitle(request.subTitle())
         .url(request.url())
-        .image(request.image())
-        .sort_order(request.sort_order())
-        .is_visible(request.is_visible())
-        .info_sort(request.info_sort())
+        .imageFileId(request.imageFileId())
+        .sortOrder(request.sortOrder())
+        .isVisible(request.isVisible())
+        .infoSort(request.infoSort())
+        .postDateTo(request.postDateTo())
         .build();
     return BannerDataResponse.from(bannerDataRepository.save(entity));
   }
@@ -64,18 +65,19 @@ public class BannerDataService {
   @Transactional
   public BannerDataResponse update(Long id, BannerDataRequest request) {
     BannerData entity = findOrThrow(id);
-    entity.setBanner_position(request.banner_position());
+    entity.setBannerPosition(request.bannerPosition());
     entity.setTitle(request.title());
-    entity.setPost_date(request.post_date());
+    entity.setPostDateFrom(request.postDateFrom());
     entity.setPrefix(request.prefix());
-    entity.setMain_title(request.main_title());
-    entity.setBottom_text(request.bottom_text());
-    entity.setSub_title(request.sub_title());
+    entity.setMainTitle(request.mainTitle());
+    entity.setBottomText(request.bottomText());
+    entity.setSubTitle(request.subTitle());
     entity.setUrl(request.url());
-    entity.setImage(request.image());
-    entity.setSort_order(request.sort_order());
-    entity.setIs_visible(request.is_visible());
-    entity.setInfo_sort(request.info_sort());
+    entity.setImageFileId(request.imageFileId());
+    entity.setSortOrder(request.sortOrder());
+    entity.setIsVisible(request.isVisible());
+    entity.setInfoSort(request.infoSort());
+    entity.setPostDateTo(request.postDateTo());
     return BannerDataResponse.from(entity);
   }
 

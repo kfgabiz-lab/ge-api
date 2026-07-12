@@ -200,6 +200,8 @@ public class SlugEntityCodeGenerator {
 
   private String buildEntity(SlugEntity slugEntity, String className, List<FieldMeta> fields) {
     boolean hasJsonb = fields.stream().anyMatch(f -> f.mapping().jsonb());
+    // FILE 등 배열(bigint[]) 매핑 필드가 있으면 @JdbcTypeCode(SqlTypes.ARRAY) + List import를 조건부로 추가한다.
+    boolean hasArray = fields.stream().anyMatch(f -> f.mapping().array());
     // audit 필드(createdAt/updatedAt)는 항상 OffsetDateTime을 사용하므로 고정으로 포함하고,
     // 필드 타입별로 필요한 java.time.* import를 같은 Set에 모아 중복 없이 한 번씩만 출력한다.
     Set<String> timeImports = collectExtraImports(fields);
@@ -214,11 +216,18 @@ public class SlugEntityCodeGenerator {
       sb.append("import io.hypersistence.utils.hibernate.type.json.JsonStringType;\n");
       sb.append("import org.hibernate.annotations.Type;\n");
     }
+    if (hasArray) {
+      sb.append("import org.hibernate.annotations.JdbcTypeCode;\n");
+      sb.append("import org.hibernate.type.SqlTypes;\n");
+    }
     sb.append("import org.springframework.data.annotation.CreatedBy;\n");
     sb.append("import org.springframework.data.annotation.CreatedDate;\n");
     sb.append("import org.springframework.data.annotation.LastModifiedBy;\n");
     sb.append("import org.springframework.data.annotation.LastModifiedDate;\n");
     sb.append("import org.springframework.data.jpa.domain.support.AuditingEntityListener;\n\n");
+    if (hasArray) {
+      sb.append("import java.util.List;\n");
+    }
     for (String imp : timeImports) {
       sb.append("import ").append(imp).append(";\n");
     }
@@ -250,6 +259,12 @@ public class SlugEntityCodeGenerator {
         sb.append("  @Column(name = \"").append(field.columnName())
             .append("\", nullable = ").append(field.nullable())
             .append(", columnDefinition = \"jsonb\")\n");
+      } else if (field.mapping().array()) {
+        // 배열 타입(FILE=file_meta.id 목록 / ENTITY_REF=연동 Entity 레코드 id 목록): bigint[] 배열 컬럼으로 저장 (Hibernate ARRAY 매핑)
+        sb.append("  @JdbcTypeCode(SqlTypes.ARRAY)\n");
+        sb.append("  @Column(name = \"").append(field.columnName())
+            .append("\", nullable = ").append(field.nullable())
+            .append(", columnDefinition = \"bigint[]\")\n");
       } else {
         sb.append("  @Column(name = \"").append(field.columnName()).append("\"");
         if (field.mapping().lengthApplicable() && field.columnLength() != null) {
@@ -286,11 +301,16 @@ public class SlugEntityCodeGenerator {
   private String buildRequest(SlugEntity slugEntity, String className, List<FieldMeta> fields) {
     // 필드 중 DATE/TIMESTAMPTZ 타입이 있으면 그에 맞는 java.time.* import가 추가로 필요하다.
     Set<String> timeImports = collectExtraImports(fields);
+    // FILE 등 배열 타입(List<Long>) 필드가 있으면 java.util.List import를 추가한다.
+    boolean hasArray = fields.stream().anyMatch(f -> f.mapping().array());
 
     StringBuilder sb = new StringBuilder();
     sb.append("package com.ge.bo.dto;\n\n");
     sb.append(buildFileHeader(slugEntity, "Request DTO — " + slugEntity.getName()));
     sb.append("import jakarta.validation.constraints.*;\n");
+    if (hasArray) {
+      sb.append("import java.util.List;\n");
+    }
     for (String imp : timeImports) {
       sb.append("import ").append(imp).append(";\n");
     }
@@ -327,11 +347,16 @@ public class SlugEntityCodeGenerator {
     // 필드 타입별로 필요한 java.time.* import를 같은 Set에 모아 중복 없이 한 번씩만 출력한다.
     Set<String> timeImports = collectExtraImports(fields);
     timeImports.add("java.time.OffsetDateTime");
+    // FILE 등 배열 타입(List<Long>) 필드가 있으면 java.util.List import를 추가한다.
+    boolean hasArray = fields.stream().anyMatch(f -> f.mapping().array());
 
     StringBuilder sb = new StringBuilder();
     sb.append("package com.ge.bo.dto;\n\n");
     sb.append(buildFileHeader(slugEntity, "Response DTO — " + slugEntity.getName()));
     sb.append("import com.ge.bo.entity.").append(className).append(";\n");
+    if (hasArray) {
+      sb.append("import java.util.List;\n");
+    }
     for (String imp : timeImports) {
       sb.append("import ").append(imp).append(";\n");
     }
@@ -471,7 +496,8 @@ public class SlugEntityCodeGenerator {
     sb.append("import org.springframework.http.HttpStatus;\n");
     sb.append("import org.springframework.http.ResponseEntity;\n");
     sb.append("import org.springframework.security.access.prepost.PreAuthorize;\n");
-    sb.append("import org.springframework.web.bind.annotation.*;\n\n");
+    sb.append("import org.springframework.web.bind.annotation.*;\n");
+    sb.append("\n");
     sb.append("/**\n * ").append(escapeJavadoc(slugEntity.getName())).append(" REST API\n */\n");
     sb.append("@RestController\n");
     sb.append("@RequestMapping(\"").append(basePath).append("\")\n");
@@ -479,7 +505,8 @@ public class SlugEntityCodeGenerator {
     sb.append("@PreAuthorize(\"@securityService.isSystemAdmin(authentication)\")\n");
     sb.append("@ApiLinkedEntity(\"").append(className).append("\")\n");
     sb.append("public class ").append(className).append("Controller {\n\n");
-    sb.append("  private final ").append(className).append("Service ").append(var).append("Service;\n\n");
+    sb.append("  private final ").append(className).append("Service ").append(var).append("Service;\n");
+    sb.append("\n");
 
     sb.append("  /** 목록 조회 (페이징) */\n");
     sb.append("  @GetMapping\n");

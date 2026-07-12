@@ -23,7 +23,6 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -78,7 +77,7 @@ public class PageFileService {
     }
 
         // UUID 기반 저장명 생성: {UUID}.{확장자소문자} (예: a3f2c1d4.pdf)
-    String ext = extractExtension(origName);
+    String ext = fileStorageService.extractExtension(origName);
     String saveName = UUID.randomUUID() + (ext.isEmpty() ? "" : "." + ext);
 
         // 연월 디렉토리 경로 생성: {upload-root}/page-files/{YYYY}/{MM}/
@@ -94,7 +93,7 @@ public class PageFileService {
       blobUrl = fileStorageService.uploadFile(file, dirPath + saveName);
     }else{
       // 파일시스템에 저장 (실패 시 FILE_UPLOAD_FAILED 예외 → 트랜잭션 롤백)
-      saveToFileSystem(file, dirPath, saveName);
+      fileStorageService.saveToLocal(file, dirPath, saveName);
     }
 
     // DB에 파일 메타데이터 저장 (data_id = NULL: 폼 저장 전 임시 상태)
@@ -287,28 +286,6 @@ public class PageFileService {
     // ── private 헬퍼 ──────────────────────────────────────────
 
     /**
-     * 파일시스템에 저장
-     * 디렉토리 자동 생성 → 파일 쓰기
-     * 실패 시 FILE_UPLOAD_FAILED 예외 발생 (트랜잭션 롤백 유발)
-     */
-  private void saveToFileSystem(MultipartFile file, String dirPath, String saveName) {
-    Path dir = Paths.get(dirPath);
-    Path dest = dir.resolve(saveName);
-    try {
-            // 연월 디렉토리 없으면 자동 생성
-      Files.createDirectories(dir);
-            // NIO InputStream 방식으로 저장 (Windows에서 File.isAbsolute() 오판 방지)
-      try (InputStream inputStream = file.getInputStream()) {
-        Files.copy(inputStream, dest, StandardCopyOption.REPLACE_EXISTING);
-      }
-      log.info("[PageFileService] 파일 저장 완료: {}", dest);
-    } catch (IOException e) {
-      log.error("[PageFileService] 파일 저장 실패: path={}", dest, e);
-      throw ErrorCode.FILE_UPLOAD_FAILED.toException();
-    }
-  }
-
-    /**
      * 파일시스템에서 파일 삭제
      * 실패해도 예외를 던지지 않음 — WARN 로그만 기록
      */
@@ -325,17 +302,5 @@ public class PageFileService {
             // 파일 삭제 실패는 로그만 기록 — 예외 비전파
       log.warn("[PageFileService] 파일 삭제 실패 (무시): path={}", filePath, e);
     }
-  }
-
-    /**
-     * 원본 파일명에서 확장자 추출 (소문자 변환)
-     * 예) "report.PDF" → "pdf", "noext" → ""
-     */
-  private String extractExtension(String fileName) {
-    int dotIndex = fileName.lastIndexOf('.');
-    if (dotIndex < 0 || dotIndex == fileName.length() - 1) {
-      return "";
-    }
-    return fileName.substring(dotIndex + 1).toLowerCase();
   }
 }

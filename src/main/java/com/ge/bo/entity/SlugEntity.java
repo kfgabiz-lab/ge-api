@@ -50,6 +50,11 @@ public class SlugEntity {
     @Builder.Default
     private Boolean active = true;
 
+    /** 마스터(부모) Entity — 이 Entity가 부모 Entity의 PK를 참조하는 자식임을 나타낸다 */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_entity_id")
+    private SlugEntity parentEntity;
+
     /** 필드 목록 — cascade ALL + orphanRemoval로 일괄 저장/삭제 처리 */
     @OneToMany(mappedBy = "entity", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("sortOrder ASC")

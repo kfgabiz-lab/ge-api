@@ -18,6 +18,10 @@ public record SlugEntityResponse(
     Boolean active,
     Integer fieldCount,
     List<SlugEntityFieldResponse> fields,
+    /** 마스터(부모) Entity ID — 없으면 독립 Entity */
+    Long parentEntityId,
+    /** 마스터(부모) Entity slug — 화면 표시용 */
+    String parentEntitySlug,
     String createdBy,
     OffsetDateTime createdAt,
     String updatedBy,
@@ -29,6 +33,8 @@ public record SlugEntityResponse(
             e.getId(), e.getSlug(), e.getName(), e.getTableName(),
             e.getDescription(), e.getActive(),
             e.getFields().size(), List.of(),
+            e.getParentEntity() != null ? e.getParentEntity().getId() : null,
+            e.getParentEntity() != null ? e.getParentEntity().getSlug() : null,
             e.getCreatedBy(), e.getCreatedAt(), e.getUpdatedBy(), e.getUpdatedAt()
         );
     }
@@ -42,6 +48,8 @@ public record SlugEntityResponse(
             e.getId(), e.getSlug(), e.getName(), e.getTableName(),
             e.getDescription(), e.getActive(),
             fieldList.size(), fieldList,
+            e.getParentEntity() != null ? e.getParentEntity().getId() : null,
+            e.getParentEntity() != null ? e.getParentEntity().getSlug() : null,
             e.getCreatedBy(), e.getCreatedAt(), e.getUpdatedBy(), e.getUpdatedAt()
         );
     }

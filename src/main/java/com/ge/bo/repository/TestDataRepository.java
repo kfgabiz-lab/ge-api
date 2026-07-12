@@ -2,19 +2,19 @@ package com.ge.bo.repository;
 
 /**
  * [SLUG-ENTITY-CODEGEN-AUTO-GENERATED]
- * Repository — 배너
- * 생성일시: 2026-07-12T13:37:46.284663+09:00
- * 원본 Slug Entity: id=1, tableName=banner
+ * Repository — 테스트데이터
+ * 생성일시: 2026-07-12T20:46:31.982769700+09:00
+ * 원본 Slug Entity: id=18, tableName=test_data
  * 주의: 이 파일을 직접 수정한 뒤 다시 생성하면 수정 내용이 사라집니다.
  *       (재생성 시 기존 파일은 자동으로 *.bak.{timestamp} 로 백업됩니다.)
  */
-import com.ge.bo.entity.BannerData;
+import com.ge.bo.entity.TestData;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 /**
- * 배너 Repository
+ * 테스트데이터 Repository
  */
-public interface BannerDataRepository
-    extends JpaRepository<BannerData, Long>, JpaSpecificationExecutor<BannerData> {
+public interface TestDataRepository
+    extends JpaRepository<TestData, Long>, JpaSpecificationExecutor<TestData> {
 }

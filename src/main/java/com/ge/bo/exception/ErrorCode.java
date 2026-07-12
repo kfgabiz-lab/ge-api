@@ -80,6 +80,10 @@ public enum ErrorCode {
     /* Slug Entity */
     SLUG_ENTITY_NOT_FOUND(HttpStatus.NOT_FOUND, "SLUG_ENTITY_NOT_FOUND", "해당 entity를 찾을 수 없습니다."),
     SLUG_ENTITY_SLUG_DUPLICATE(HttpStatus.CONFLICT, "SLUG_ENTITY_SLUG_DUPLICATE", "이미 사용 중인 slug입니다."),
+    SLUG_ENTITY_PARENT_NOT_FOUND(HttpStatus.NOT_FOUND, "SLUG_ENTITY_PARENT_NOT_FOUND", "마스터 entity를 찾을 수 없습니다."),
+    SLUG_ENTITY_PARENT_SELF(HttpStatus.BAD_REQUEST, "SLUG_ENTITY_PARENT_SELF", "자기 자신을 마스터 entity로 지정할 수 없습니다."),
+    SLUG_ENTITY_HAS_CHILDREN(HttpStatus.CONFLICT, "SLUG_ENTITY_HAS_CHILDREN", "하위 entity가 연결되어 있어 삭제할 수 없습니다."),
+    SLUG_ENTITY_REFERENCED(HttpStatus.CONFLICT, "SLUG_ENTITY_REFERENCED", "다른 entity가 이 entity를 연동 대상으로 참조하고 있어 삭제할 수 없습니다."),
 
     /* 검색관리 */
     SEARCH_MANAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "SEARCH_MANAGE_NOT_FOUND", "해당 검색관리 항목을 찾을 수 없습니다."),

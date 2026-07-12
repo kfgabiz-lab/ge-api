@@ -16,7 +16,8 @@ import java.time.OffsetDateTime;
 @Entity
 @Table(name = "slug_entity_field",
     indexes = {
-        @Index(name = "idx_slug_entity_field_entity", columnList = "entity_id")
+        @Index(name = "idx_slug_entity_field_entity", columnList = "entity_id"),
+        @Index(name = "idx_slug_entity_field_connected", columnList = "connected_entity_id")
     }
 )
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
@@ -55,6 +56,15 @@ public class SlugEntityField {
     /** 컬럼 길이 (VARCHAR 등 길이 있는 타입에만 사용) */
     @Column(name = "column_length")
     private Integer columnLength;
+
+    /**
+     * 연동 대상 Slug Entity — column_type=ENTITY_REF일 때 "이 필드가 어느 Entity를 연동 대상으로 삼는지"를 가리킨다.
+     * entity(소속, entity_id)와 달리 소유가 아닌 메타 참조이며 NULL 허용.
+     * SlugEntity.parentEntity(parent_entity_id) 자기참조 FK 선례와 동일하게 @ManyToOne으로 실제 FK를 건다.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "connected_entity_id")
+    private SlugEntity connectedEntity;
 
     /** PK 여부 — entity 생성 기능 추가 시 사용 */
     @Column(name = "is_pk")

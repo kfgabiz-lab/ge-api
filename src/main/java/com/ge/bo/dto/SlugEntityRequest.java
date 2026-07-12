@@ -23,5 +23,8 @@ public record SlugEntityRequest(
 
     String description,
 
-    Boolean active
+    Boolean active,
+
+    /** 마스터(부모) Entity ID — 없으면 독립 Entity */
+    Long parentEntityId
 ) {}

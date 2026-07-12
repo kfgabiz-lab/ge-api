@@ -55,6 +55,15 @@ public class ApiInfoService {
     return apiInfoRepository.findAll(spec, pageable).map(ApiInfoResponse::from);
   }
 
+    /* ══════════ 활성 전체 목록 (빌더 드롭다운용) ══════════ */
+
+    /** active=true만, name 오름차순 정렬, 페이징 없음 */
+  @Transactional(readOnly = true)
+    public List<ApiInfoResponse> getActiveList() {
+    return apiInfoRepository.findAllByActiveTrueOrderByNameAsc()
+                .stream().map(ApiInfoResponse::from).toList();
+  }
+
     /* ══════════ 단건 조회 ══════════ */
 
   @Transactional(readOnly = true)
