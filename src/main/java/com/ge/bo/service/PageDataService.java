@@ -979,6 +979,40 @@ public class PageDataService {
       // condval_ 접두사 → condexpr_의 동반 파라미터(선택된 옵션 값)일 뿐, 단독으로는 조건을 만들지 않음
       if (key.startsWith("condval_")) return;
 
+      // month_ 접두사 → 게시월(MM)만 비교, 연도 무관 (최상위 + 1단계 중첩 동시 탐색)
+      // 형식: month_{단순키}=01~12 (dot notation 불허 — |/_from/_to와 동일하게 단순 키만 top+nested 자동탐색)
+      if (key.startsWith("month_")) {
+        String fieldKey = key.substring(6);
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        if (!value.matches("0[1-9]|1[0-2]")) return; // SQL Injection 방지 겸 01~12 값 검증
+        String paramName = "p_" + key;
+        // regexp_replace로 숫자만 추출("YYYYMMDD...") 후 5~6번째 자리(월 2자리)만 비교
+        String topMonth = "substring(regexp_replace(data_json->>'" + fieldKey + "', '[^0-9]', '', 'g'), 5, 2)";
+        String nestedMonth = "substring(regexp_replace(kv.value->>'" + fieldKey + "', '[^0-9]', '', 'g'), 5, 2)";
+        whereClause.append(" AND (").append(topMonth).append(" = :").append(paramName)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND ").append(nestedMonth).append(" = :").append(paramName).append("))");
+        return;
+      }
+
+      // year_ 접두사 → 게시연도(YYYY)만 비교, month_와 동일 패턴 (최상위 + 1단계 중첩 동시 탐색)
+      // 형식: year_{단순키}=YYYY (dot notation 불허 — month_/|/_from/_to와 동일 규칙)
+      if (key.startsWith("year_")) {
+        String fieldKey = key.substring(5);
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        if (!value.matches("[0-9]{4}")) return; // SQL Injection 방지 겸 4자리 연도 값 검증
+        String paramName = "p_" + key;
+        // regexp_replace로 숫자만 추출("YYYYMMDD...") 후 앞 4자리(연도)만 비교
+        String topYear = "substring(regexp_replace(data_json->>'" + fieldKey + "', '[^0-9]', '', 'g'), 1, 4)";
+        String nestedYear = "substring(regexp_replace(kv.value->>'" + fieldKey + "', '[^0-9]', '', 'g'), 1, 4)";
+        whereClause.append(" AND (").append(topYear).append(" = :").append(paramName)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND ").append(nestedYear).append(" = :").append(paramName).append("))");
+        return;
+      }
+
       // condexpr_ 접두사 → 조건식(evalConditionExpr 문법 재사용) 기반 파생값 검색
       // 형식: condexpr_{fieldKey}="조건식?트루텍스트:펄스텍스트" (select 필드의 data 값 그대로) + condval_{fieldKey}=선택된 옵션 값
       // 필드명이 코드에 고정되지 않고 조건식 문자열 안의 값을 그대로 파싱해서 사용 — 화면마다 재사용 가능한 범용 로직
@@ -1312,6 +1346,24 @@ public class PageDataService {
 
       // condval_ 접두사 → condexpr_의 동반 파라미터일 뿐, 단독 바인딩 없음
       if (key.startsWith("condval_")) return;
+
+      // month_ 접두사 → 월 값(01~12) 그대로 바인딩 (appendWhereConditions와 동일 검증 거쳐야 파라미터명 일치)
+      if (key.startsWith("month_")) {
+        String fieldKey = key.substring(6);
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        if (!value.matches("0[1-9]|1[0-2]")) return;
+        query.setParameter("p_" + key, value);
+        return;
+      }
+
+      // year_ 접두사 → 연도 값(4자리) 그대로 바인딩 (appendWhereConditions와 동일 검증 거쳐야 파라미터명 일치)
+      if (key.startsWith("year_")) {
+        String fieldKey = key.substring(5);
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        if (!value.matches("[0-9]{4}")) return;
+        query.setParameter("p_" + key, value);
+        return;
+      }
 
       // condexpr_ 접두사 → 조건식(evalConditionExpr 문법)을 다시 파싱해 today() 아닌 값들만 파라미터 바인딩
       // (appendWhereConditions와 동일한 매칭 판단을 거쳐야 파라미터명이 일치함 — 매칭 안 되면 바인딩도 하지 않음)
