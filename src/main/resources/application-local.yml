@@ -70,5 +70,5 @@ ls:
       connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@
       connectPortalIv: IV($&*)2516($&*)
     outApi:
-      googleMapKey : abc
+      googleMapKey : "AIzaSyBkHvBn_MG-VWQd2C8-UA3PJBniWPy5QNk"
       recapchaKey : "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
