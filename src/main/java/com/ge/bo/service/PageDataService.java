@@ -63,12 +63,14 @@ public class PageDataService {
      */
   @Transactional(readOnly = true)
     public PageDataListResponse search(String slug, Map<String, String> allParams, int page, int size, Long siteId) {
-        // 검색 조건 파라미터 추출 — rel_ 접두사(FILTER slug_relation)와 일반 파라미터 분리
+        // 검색 조건 파라미터 추출 — rel_ 접두사(FILTER slug_relation), joinr_/joink_/joinv_ 접두사(조인 검색), 일반 파라미터 분리
     Map<String, String> relFilterParams = new LinkedHashMap<>();
+    Map<String, String> joinFilterParams = new LinkedHashMap<>();
     Map<String, String> searchParams = new LinkedHashMap<>();
     allParams.forEach((key, value) -> {
       if (RESERVED_PARAMS.contains(key) || value == null || value.isBlank()) return;
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
+      else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -86,6 +88,16 @@ public class PageDataService {
       if (filterIds != null) {
         if (filterIds.isEmpty()) return buildEmptyResponse(page, size);
         String idList = filterIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        whereClause.append(" AND id IN (").append(idList).append(")");
+      }
+    }
+
+        // 조인 검색 처리 — joinr_/joink_/joinv_{n} → 연동 slug의 필드 조건으로 master id IN (...) 조건 추가
+    if (!joinFilterParams.isEmpty()) {
+      Set<Long> joinIds = resolveJoinFilterIds(joinFilterParams);
+      if (joinIds != null) {
+        if (joinIds.isEmpty()) return buildEmptyResponse(page, size);
+        String idList = joinIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
         whereClause.append(" AND id IN (").append(idList).append(")");
       }
     }
@@ -1013,6 +1025,25 @@ public class PageDataService {
         return;
       }
 
+      // has_markets_ 접두사 → CSV(콤마구분) 다중값 필드에 특정 코드가 토큰으로 포함되는지 검색 (최상위 + 1단계 중첩 동시 탐색)
+      // 형식: has_markets_{단순키}={3자리코드} (dot notation 불허 — month_/year_와 동일하게 단순 키만 top+nested 자동탐색)
+      // WHY: markets는 "001,002" 처럼 콤마구분 CSV로 저장되어 eq_(정확일치)로는 매칭 불가.
+      //      값 양쪽을 콤마로 감싸(',001,002,') 검색 코드를 ',001,'로 매칭 → "001"이 "1001" 같은 부분값에 오매칭되는 것 방지
+      if (key.startsWith("has_markets_")) {
+        String fieldKey = key.substring("has_markets_".length());
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        if (!value.matches("[0-9]{3}")) return; // SQL Injection 방지 겸 3자리 숫자 코드 형식 검증
+        String paramName = "p_" + key;
+        // COALESCE로 NULL/빈값도 ',,' 형태가 되게 하여 안전하게 LIKE 매칭
+        String topLike = "(',' || COALESCE(data_json->>'" + fieldKey + "','') || ',') LIKE :" + paramName;
+        String nestedLike = "(',' || COALESCE(kv.value->>'" + fieldKey + "','') || ',') LIKE :" + paramName;
+        whereClause.append(" AND (").append(topLike)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND ").append(nestedLike).append("))");
+        return;
+      }
+
       // condexpr_ 접두사 → 조건식(evalConditionExpr 문법 재사용) 기반 파생값 검색
       // 형식: condexpr_{fieldKey}="조건식?트루텍스트:펄스텍스트" (select 필드의 data 값 그대로) + condval_{fieldKey}=선택된 옵션 값
       // 필드명이 코드에 고정되지 않고 조건식 문자열 안의 값을 그대로 파싱해서 사용 — 화면마다 재사용 가능한 범용 로직
@@ -1365,6 +1396,16 @@ public class PageDataService {
         return;
       }
 
+      // has_markets_ 접두사 → CSV 토큰 매칭용 LIKE 패턴(',{코드},')으로 바인딩 (appendWhereConditions와 동일 검증 거쳐야 파라미터명 일치)
+      if (key.startsWith("has_markets_")) {
+        String fieldKey = key.substring("has_markets_".length());
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        if (!value.matches("[0-9]{3}")) return;
+        // 양쪽을 콤마로 감싼 값에 대해 ',{코드},' 토큰이 있는지 매칭
+        query.setParameter("p_" + key, "%," + value + ",%");
+        return;
+      }
+
       // condexpr_ 접두사 → 조건식(evalConditionExpr 문법)을 다시 파싱해 today() 아닌 값들만 파라미터 바인딩
       // (appendWhereConditions와 동일한 매칭 판단을 거쳐야 파라미터명이 일치함 — 매칭 안 되면 바인딩도 하지 않음)
       if (key.startsWith("condexpr_")) {
@@ -1521,8 +1562,9 @@ public class PageDataService {
                 .collect(java.util.stream.Collectors.joining(","));
 
             // slave에서 parentKeyPath IN (catIds) + slaveFilter 조건인 연결 레코드 조회
+            // (자기참조 케이스에서 행 자신의 page_data.id가 필요하므로 id 컬럼도 함께 조회)
             StringBuilder sql = new StringBuilder(
-                "SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+                "SELECT id, data_json::text FROM page_data WHERE data_slug = :slaveSlug");
             appendSlaveKeyInCondition(sql, parentKeyPath, catIdList);
             Map<String, String> filterParams = new LinkedHashMap<>();
             if (StringUtils.hasText(rel.getSlaveFilter())) {
@@ -1533,16 +1575,28 @@ public class PageDataService {
             q.setParameter("slaveSlug", rel.getSlaveSlug());
             filterParams.forEach(q::setParameter);
 
-            List<Object> rows = q.getResultList();
+            // 자기참조(master_slug == slave_slug) 여부
+            // - 자기참조가 아니면: 기존 그대로 slaveKey(예: product.id) 경로의 값을 마스터 id로 사용
+            // - 자기참조이면: slaveKey는 계층 탐색(리프 판별용)에만 쓰고, 실제 마스터 id는
+            //   조회된 행 자신의 page_data.id(native 컬럼)를 사용한다
+            boolean selfReference = rel.getMasterSlug().equals(rel.getSlaveSlug());
+
+            List<Object[]> rows = q.getResultList();
             Set<Long> ids = new HashSet<>();
-            for (Object row : rows) {
+            for (Object[] row : rows) {
                 try {
-                    Map<String, Object> dataJson = objectMapper.readValue(
-                        row.toString(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
-                    // slaveKey(product.id)에서 master id 추출
-                    String masterVal = extractField(dataJson, rel.getSlaveKey());
-                    if (masterVal != null && !masterVal.isBlank()) {
-                        ids.add(Long.parseLong(masterVal.trim()));
+                    Long rowId = ((Number) row[0]).longValue();
+                    if (selfReference) {
+                        // 자기참조: 이 행 자신의 id가 곧 마스터 id
+                        ids.add(rowId);
+                    } else {
+                        Map<String, Object> dataJson = objectMapper.readValue(
+                            row[1].toString(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+                        // slaveKey(product.id)에서 master id 추출
+                        String masterVal = extractField(dataJson, rel.getSlaveKey());
+                        if (masterVal != null && !masterVal.isBlank()) {
+                            ids.add(Long.parseLong(masterVal.trim()));
+                        }
                     }
                 } catch (Exception e) {
                     log.warn("FILTER RELATION master id 추출 실패: {}", e.getMessage());
@@ -1550,6 +1604,118 @@ public class PageDataService {
             }
 
             // 복수 rel_ 파라미터: AND 교집합
+            if (resultIds == null) resultIds = new HashSet<>(ids);
+            else resultIds.retainAll(ids);
+        }
+
+        return resultIds;
+    }
+
+    /**
+     * 조인 검색 — 연동 slug(예: product-data)의 필드 값으로 현재 검색 대상(예: category-data)을 필터링
+     * (resolveFilterRelationIds와 별개의 신규 메서드. 카테고리 계층 순회는 하지 않고, 단순 조인 조건만 처리한다)
+     *
+     * 파라미터 형식: joinr_{n}=relationId, joink_{n}=연동 slug 필드 경로, joinv_{n}=검색값 (n은 그룹 묶음 키, fieldKey 사용)
+     * joink_{n} 값이 '~'로 시작하면 ILIKE(부분일치, input 필드), 아니면 EQ(정확일치, select 필드) — SelectField/InputField에서
+     * onChange 시점에 필드 타입으로 결정해 전달한다.
+     *
+     * 처리 흐름:
+     *  ① n(그룹 키)별로 relationId/연동 필드경로/검색값 묶기
+     *  ② relation을 조회해 연동 slug(slaveSlug)에서 joink_/joinv_ 조건에 맞는 레코드를 찾고, relation의 slave_key 경로로 연결값(linkValue) 추출
+     *  ③ relation의 master_key 경로가 linkValue와 일치하는 현재 검색 대상(masterSlug) 행의 id를 수집
+     *  ④ 여러 조인 필드가 동시에 검색되면 AND 교집합
+     */
+    private Set<Long> resolveJoinFilterIds(Map<String, String> joinFilterParams) {
+        // joinr_/joink_/joinv_{n} → n(그룹 키)별로 [relationId, 연동필드경로, 검색값] 묶기
+        Map<String, String[]> groups = new LinkedHashMap<>();
+        joinFilterParams.forEach((key, value) -> {
+            String n; int idx;
+            if (key.startsWith("joinr_")) { n = key.substring(6); idx = 0; }
+            else if (key.startsWith("joink_")) { n = key.substring(6); idx = 1; }
+            else if (key.startsWith("joinv_")) { n = key.substring(6); idx = 2; }
+            else return;
+            groups.computeIfAbsent(n, k -> new String[3])[idx] = value;
+        });
+
+        Set<Long> resultIds = null;
+
+        for (String[] g : groups.values()) {
+            String relIdStr = g[0];
+            String joinFieldKeyRaw = g[1]; // joink_ 값 — 연동 slug(slave)에서 검색할 필드 경로 (relation의 slave_key와는 다른 값)
+            String value = g[2];
+            if (relIdStr == null || joinFieldKeyRaw == null || value == null || value.isBlank()) continue;
+
+            Long relId;
+            try { relId = Long.parseLong(relIdStr.trim()); }
+            catch (NumberFormatException e) { continue; }
+
+            // joink_ 값 맨 앞 '~' 마커 → ILIKE(부분일치), 없으면 EQ(정확일치)
+            boolean ilike = joinFieldKeyRaw.startsWith("~");
+            String joinFieldKey = (ilike ? joinFieldKeyRaw.substring(1) : joinFieldKeyRaw).trim();
+            if (!joinFieldKey.matches("[a-zA-Z0-9_.]+")) continue; // SQL Injection 방지
+
+            SlugRelation rel = slugRelationRepository.findById(relId).orElse(null);
+            if (rel == null) continue;
+            if ("ARRAY_CONTAINS".equals(rel.getJoinType())) {
+                log.warn("조인 검색은 ARRAY_CONTAINS join_type을 지원하지 않습니다. relationId={}", relId);
+                continue;
+            }
+            if (!StringUtils.hasText(rel.getMasterKey())) continue;
+
+            // ① 연동 slug(slaveSlug)에서 joink_/joinv_ 조건 + relation 고정조건(slaveFilter)에 맞는 레코드 조회
+            StringBuilder slaveSql = new StringBuilder(
+                "SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+            Map<String, String> condParams = new LinkedHashMap<>();
+            String condExpr = joinFieldKey + (ilike ? "~" : "=") + value;
+            appendSlaveFilter(slaveSql, condExpr, condParams);
+            if (StringUtils.hasText(rel.getSlaveFilter())) {
+                appendSlaveFilter(slaveSql, rel.getSlaveFilter(), condParams);
+            }
+
+            Query slaveQuery = entityManager.createNativeQuery(slaveSql.toString());
+            slaveQuery.setParameter("slaveSlug", rel.getSlaveSlug());
+            condParams.forEach(slaveQuery::setParameter);
+
+            List<Object> slaveRows = slaveQuery.getResultList();
+            Set<String> linkValues = new HashSet<>();
+            for (Object row : slaveRows) {
+                try {
+                    Map<String, Object> dataJson = objectMapper.readValue(
+                        row.toString(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+                    // slaveKey(relation의 slave_key, 보통 id)로 연결값 추출
+                    String linkVal = extractField(dataJson, rel.getSlaveKey());
+                    if (linkVal != null && !linkVal.isBlank()) linkValues.add(linkVal.trim());
+                } catch (Exception e) {
+                    log.warn("JOIN FILTER 연동 slug 레코드 파싱 실패: {}", e.getMessage());
+                }
+            }
+
+            // 매칭된 연동 레코드가 하나도 없으면 이 조인 조건은 공집합 → 전체 결과도 공집합으로 확정
+            if (linkValues.isEmpty()) {
+                resultIds = new HashSet<>();
+                break;
+            }
+
+            // ② masterKey(relation의 master_key) 경로가 linkValues 중 하나와 일치하는 현재 검색 대상 행 id 수집
+            //    (appendSlaveKeyInCondition 재사용 — resolveFilterRelationIds와 동일한 "dot notation → IN 조건" 패턴)
+            String linkValueList = linkValues.stream()
+                .map(v -> "'" + v.replace("'", "''") + "'")
+                .collect(java.util.stream.Collectors.joining(","));
+
+            StringBuilder masterSql = new StringBuilder("SELECT id FROM page_data WHERE data_slug = :masterSlug");
+            appendSlaveKeyInCondition(masterSql, rel.getMasterKey(), linkValueList);
+
+            Query masterQuery = entityManager.createNativeQuery(masterSql.toString());
+            masterQuery.setParameter("masterSlug", rel.getMasterSlug());
+
+            List<Object> masterRows = masterQuery.getResultList();
+            Set<Long> ids = new HashSet<>();
+            for (Object row : masterRows) {
+                try { ids.add(((Number) row).longValue()); }
+                catch (Exception e) { /* skip */ }
+            }
+
+            // 복수 조인 필드 동시 검색: AND 교집합
             if (resultIds == null) resultIds = new HashSet<>(ids);
             else resultIds.retainAll(ids);
         }
@@ -1959,26 +2125,44 @@ public class PageDataService {
         }
     }
 
-    /** slave_filter 파싱: "depth=3&active=Y" → WHERE 조건 + 파라미터 맵 추가 */
+    /**
+     * slave_filter 파싱: "depth=3&active=Y" → WHERE 조건 + 파라미터 맵 추가
+     * "key=value"(EQ, 정확일치) 외에 "key~value"(ILIKE, 부분일치)도 지원한다 — 조인 검색(resolveJoinFilterIds)의
+     * input 필드 조건에서 사용. 기존 "key=value" 동작(EQ)은 그대로 유지된다.
+     */
     private void appendSlaveFilter(StringBuilder sql, String slaveFilter, Map<String, String> params) {
         for (String cond : slaveFilter.split("&")) {
-            String[] kv = cond.split("=", 2);
-            if (kv.length != 2) continue;
-            String k = kv[0].trim();
-            String v = kv[1].trim();
+            // '~' 구분자(ILIKE)가 '=' 구분자(EQ)보다 먼저 나오면 ILIKE 조건으로 판단
+            int eqIdx = cond.indexOf('=');
+            int tildeIdx = cond.indexOf('~');
+            boolean ilike = tildeIdx >= 0 && (eqIdx < 0 || tildeIdx < eqIdx);
+
+            String k;
+            String v;
+            if (ilike) {
+                k = cond.substring(0, tildeIdx).trim();
+                v = cond.substring(tildeIdx + 1).trim();
+            } else {
+                String[] kv = cond.split("=", 2);
+                if (kv.length != 2) continue;
+                k = kv[0].trim();
+                v = kv[1].trim();
+            }
             if (!k.matches("[a-zA-Z0-9_.]+")) continue;
-            String paramName = "sf_" + k.replace(".", "_");
+
+            String paramName = "sf_" + k.replace(".", "_") + (ilike ? "_ilike" : "");
+            String op = ilike ? "ILIKE" : "=";
             if (k.contains(".")) {
                 String[] segs = k.split("\\.");
                 if (!isValidSegments(segs)) continue;
-                sql.append(" AND ").append(buildJsonPath(segs)).append(" = :").append(paramName);
+                sql.append(" AND ").append(buildJsonPath(segs)).append(" ").append(op).append(" :").append(paramName);
             } else {
                 // 최상위 + 1단계 중첩 모두 탐색
-                sql.append(" AND (data_json->>'").append(k).append("' = :").append(paramName)
+                sql.append(" AND (data_json->>'").append(k).append("' ").append(op).append(" :").append(paramName)
                    .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-                   .append(" WHERE jsonb_typeof(kv.value) = 'object' AND kv.value->>'").append(k).append("' = :").append(paramName).append("))");
+                   .append(" WHERE jsonb_typeof(kv.value) = 'object' AND kv.value->>'").append(k).append("' ").append(op).append(" :").append(paramName).append("))");
             }
-            params.put(paramName, v);
+            params.put(paramName, ilike ? "%" + v + "%" : v);
         }
     }
 
