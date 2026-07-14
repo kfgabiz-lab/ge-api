@@ -23,6 +23,14 @@ spring:
           connectiontimeout: 15000
           timeout: 15000
           writetimeout: 15000
+  data:
+    redis:
+      host: redis-lse-kc-dev-nahp-01.redis.cache.windows.net
+      port: 6380
+      password: ${AZURE_REDIS_ACCESS_KEY:}
+      ssl:
+        enabled: true
+      timeout: 5s
 
 # CORS — 개발서버 FE 주소
 cors:
@@ -56,6 +64,7 @@ logging:
 ls:
   isApiLogin: true
   file-storage: blob   # local, blob
+  redis-test-enabled: true
   lse:
     inApi:
       connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@

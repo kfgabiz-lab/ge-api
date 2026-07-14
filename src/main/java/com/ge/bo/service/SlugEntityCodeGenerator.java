@@ -407,20 +407,25 @@ public class SlugEntityCodeGenerator {
     StringBuilder sb = new StringBuilder();
     sb.append("package com.ge.bo.service;\n\n");
     sb.append(buildFileHeader(slugEntity, "Service — " + slugEntity.getName()));
+    sb.append("import com.ge.bo.common.excel.EntityExcelExportService;\n");
     sb.append("import com.ge.bo.dto.").append(className).append("Request;\n");
     sb.append("import com.ge.bo.dto.").append(className).append("Response;\n");
     sb.append("import com.ge.bo.entity.").append(className).append(";\n");
     sb.append("import com.ge.bo.exception.BusinessException;\n");
     sb.append("import com.ge.bo.repository.").append(className).append("Repository;\n");
+    sb.append("import jakarta.servlet.http.HttpServletRequest;\n");
     sb.append("import lombok.RequiredArgsConstructor;\n");
     sb.append("import org.springframework.data.domain.Page;\n");
     sb.append("import org.springframework.data.domain.Pageable;\n");
+    sb.append("import org.springframework.http.ResponseEntity;\n");
     sb.append("import org.springframework.stereotype.Service;\n");
     sb.append("import org.springframework.transaction.annotation.Transactional;\n\n");
+    sb.append("import java.util.Map;\n\n");
     sb.append("/**\n * ").append(escapeJavadoc(slugEntity.getName())).append(" 서비스\n */\n");
     sb.append("@Service\n@RequiredArgsConstructor\n");
     sb.append("public class ").append(className).append("Service {\n\n");
-    sb.append("  private final ").append(className).append("Repository ").append(var).append("Repository;\n\n");
+    sb.append("  private final ").append(className).append("Repository ").append(var).append("Repository;\n");
+    sb.append("  private final EntityExcelExportService entityExcelExportService;\n\n");
 
     sb.append("  /** 목록 조회 (페이징) */\n");
     sb.append("  @Transactional(readOnly = true)\n");
@@ -466,6 +471,15 @@ public class SlugEntityCodeGenerator {
     sb.append("    ").append(var).append("Repository.delete(findOrThrow(id));\n");
     sb.append("  }\n\n");
 
+    sb.append("  /** 전체 데이터 CSV 다운로드 — 동적 필터/변환/이력 로깅은 공통 EntityExcelExportService에 위임 */\n");
+    sb.append("  @Transactional(readOnly = true)\n");
+    sb.append("  public ResponseEntity<byte[]> exportCsv(Map<String, String> allParams, String headers,\n");
+    sb.append("      String keys, String dateFormats, String codeMaps, String reason, HttpServletRequest request) {\n");
+    sb.append("    return entityExcelExportService.export(").append(var).append("Repository, ")
+        .append(className).append(".class, \"").append(slugEntity.getSlug()).append("\", allParams,\n");
+    sb.append("        headers, keys, dateFormats, codeMaps, reason, request);\n");
+    sb.append("  }\n\n");
+
     sb.append("  /** id로 조회, 없으면 예외 */\n");
     sb.append("  private ").append(className).append(" findOrThrow(Long id) {\n");
     sb.append("    return ").append(var).append("Repository.findById(id)\n");
@@ -487,6 +501,7 @@ public class SlugEntityCodeGenerator {
     sb.append("import com.ge.bo.dto.").append(className).append("Request;\n");
     sb.append("import com.ge.bo.dto.").append(className).append("Response;\n");
     sb.append("import com.ge.bo.service.").append(className).append("Service;\n");
+    sb.append("import jakarta.servlet.http.HttpServletRequest;\n");
     sb.append("import jakarta.validation.Valid;\n");
     sb.append("import lombok.RequiredArgsConstructor;\n");
     sb.append("import org.springframework.data.domain.Page;\n");
@@ -497,6 +512,8 @@ public class SlugEntityCodeGenerator {
     sb.append("import org.springframework.http.ResponseEntity;\n");
     sb.append("import org.springframework.security.access.prepost.PreAuthorize;\n");
     sb.append("import org.springframework.web.bind.annotation.*;\n");
+    sb.append("\n");
+    sb.append("import java.util.Map;\n");
     sb.append("\n");
     sb.append("/**\n * ").append(escapeJavadoc(slugEntity.getName())).append(" REST API\n */\n");
     sb.append("@RestController\n");
@@ -542,6 +559,20 @@ public class SlugEntityCodeGenerator {
     sb.append("  public ResponseEntity<Void> delete(@PathVariable Long id) {\n");
     sb.append("    ").append(var).append("Service.delete(id);\n");
     sb.append("    return ResponseEntity.noContent().build();\n");
+    sb.append("  }\n\n");
+
+    sb.append("  /** 전체 데이터 CSV 다운로드 — 동적 필터 + 공통코드/날짜포맷 변환은 공통 서비스에서 처리 */\n");
+    sb.append("  @GetMapping(\"/export\")\n");
+    sb.append("  public ResponseEntity<byte[]> export(\n");
+    sb.append("      @RequestParam(required = false) String headers,\n");
+    sb.append("      @RequestParam(required = false) String keys,\n");
+    sb.append("      @RequestParam(required = false) String dateFormats,\n");
+    sb.append("      @RequestParam(required = false) String codeMaps,\n");
+    sb.append("      @RequestParam(required = false) String reason,\n");
+    sb.append("      @RequestParam Map<String, String> allParams,\n");
+    sb.append("      HttpServletRequest request) {\n");
+    sb.append("    return ").append(var)
+        .append("Service.exportCsv(allParams, headers, keys, dateFormats, codeMaps, reason, request);\n");
     sb.append("  }\n");
     sb.append("}\n");
     return sb.toString();

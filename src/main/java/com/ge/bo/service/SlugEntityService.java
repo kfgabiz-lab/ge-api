@@ -152,6 +152,7 @@ public class SlugEntityService {
                 .entity(entity)
                 .key(trimOrNull(req.key()))
                 .label(req.label().trim())
+                .columnName(deriveColumnName(req.key()))
                 .columnType(req.columnType())
                 .columnLength(req.columnLength())
                 .connectedEntity(resolveConnectedEntity(req.connectedEntityId()))
@@ -191,6 +192,18 @@ public class SlugEntityService {
 
     private String trimOrNull(String value) {
         return (value == null || value.trim().isEmpty()) ? null : value.trim();
+    }
+
+    /**
+     * 필드 key(camelCase 가능) → DB 컬럼명(snake_case) 파생. SlugEntityCodeGenerator의 정규화 규칙과 동일하게 맞춘다.
+     * (EntityExportFieldResolver가 slug_entity_field.column_name으로 FILE/ENTITY_REF 필드를 식별하는 데 사용)
+     */
+    private String deriveColumnName(String key) {
+        String trimmed = trimOrNull(key);
+        if (trimmed == null) {
+            return null;
+        }
+        return SlugEntityCodeGenerator.toSnakeCase(SlugEntityCodeGenerator.toCamelCase(trimmed));
     }
 
     /**

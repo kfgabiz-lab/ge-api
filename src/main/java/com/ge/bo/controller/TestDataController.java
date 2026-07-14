@@ -3,7 +3,7 @@ package com.ge.bo.controller;
 /**
  * [SLUG-ENTITY-CODEGEN-AUTO-GENERATED]
  * Controller — 테스트데이터
- * 생성일시: 2026-07-12T20:46:31.983774900+09:00
+ * 생성일시: 2026-07-13T13:30:49.157417100+09:00
  * 원본 Slug Entity: id=18, tableName=test_data
  * 주의: 이 파일을 직접 수정한 뒤 다시 생성하면 수정 내용이 사라집니다.
  *       (재생성 시 기존 파일은 자동으로 *.bak.{timestamp} 로 백업됩니다.)
@@ -12,6 +12,7 @@ import com.ge.bo.annotation.ApiLinkedEntity;
 import com.ge.bo.dto.TestDataRequest;
 import com.ge.bo.dto.TestDataResponse;
 import com.ge.bo.service.TestDataService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -22,6 +23,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 /**
  * 테스트데이터 REST API
@@ -68,5 +71,18 @@ public class TestDataController {
   public ResponseEntity<Void> delete(@PathVariable Long id) {
     testDataService.delete(id);
     return ResponseEntity.noContent().build();
+  }
+
+  /** 전체 데이터 CSV 다운로드 — 동적 필터 + 공통코드/날짜포맷 변환은 공통 서비스에서 처리 */
+  @GetMapping("/export")
+  public ResponseEntity<byte[]> export(
+      @RequestParam(required = false) String headers,
+      @RequestParam(required = false) String keys,
+      @RequestParam(required = false) String dateFormats,
+      @RequestParam(required = false) String codeMaps,
+      @RequestParam(required = false) String reason,
+      @RequestParam Map<String, String> allParams,
+      HttpServletRequest request) {
+    return testDataService.exportCsv(allParams, headers, keys, dateFormats, codeMaps, reason, request);
   }
 }

@@ -24,6 +24,14 @@ spring:
           connectiontimeout: 15000
           timeout: 15000
           writetimeout: 15000
+  data:
+    redis:
+      host: redis-lse-kc-dev-nahp-01.redis.cache.windows.net
+      port: 6380
+      password: ${AZURE_REDIS_ACCESS_KEY:}
+      ssl:
+        enabled: true
+      timeout: 5s
 
 # CORS — 로컬 FE 주소 (각자 로컬에서 FE 실행)
 cors:
@@ -63,6 +71,7 @@ logging:
 ls:
   isApiLogin: false    # true = SSO API 활성화 / false = 비밀번호만으로 로그인
   file-storage: blob   # local, blob
+  redis-test-enabled: false
   totp:
     isUser: "LSE Admin"
     enabled: false    # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
