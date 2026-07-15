@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 @Service
@@ -44,8 +45,15 @@ public class CodeService {
      */
   @Transactional(readOnly = true)
     public List<FoCodeResponse> getFoCodes(String groupCode) {
-    return detailRepository.findAllByGroup_GroupCodeAndActiveTrueOrderBySortOrderAsc(groupCode)
-                .stream().map(FoCodeResponse::from).toList();
+    List<CodeDetail> details = detailRepository.findAllByGroup_GroupCodeAndActiveTrueOrderBySortOrderAsc(groupCode);
+
+        /* nameMsgKey 수집 → en 배치 조회(단일 호출) 후 name 값만 en으로 치환 */
+    Map<String, String> enMap = messageResourceService.resolveEnMap(
+                details.stream().map(CodeDetail::getNameMsgKey).toList());
+
+    return details.stream()
+                .map(d -> FoCodeResponse.from(d, enMap))
+                .toList();
   }
 
     /* ══════════ 그룹 생성 ══════════ */

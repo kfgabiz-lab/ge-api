@@ -19,6 +19,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -109,10 +111,26 @@ public class MenuService {
      */
   @Transactional(readOnly = true)
     public List<FoGnbMenuResponse> getFoGnbMenus() {
-    return menuRepository.findFoGnbRootMenus()
-                .stream()
-                .map(FoGnbMenuResponse::from)
+    List<Menu> rootMenus = menuRepository.findFoGnbRootMenus();
+
+        /* 트리 전체를 재귀 순회하여 name/description msgKey를 수집 → en 배치 조회(단일 호출) */
+    List<String> msgKeys = new ArrayList<>();
+    rootMenus.forEach(m -> collectMsgKeys(m, msgKeys));
+    Map<String, String> enMap = messageResourceService.resolveEnMap(msgKeys);
+
+        /* 수집한 en 맵으로 트리 전체 치환 (children 재귀 치환은 DTO에서 처리) */
+    return rootMenus.stream()
+                .map(m -> FoGnbMenuResponse.from(m, enMap))
                 .toList();
+  }
+
+    /** 메뉴 트리를 재귀 순회하며 name/description msgKey를 수집 (visible=true 자식만) */
+  private void collectMsgKeys(Menu menu, List<String> keys) {
+    if (menu.getNameMsgKey() != null && !menu.getNameMsgKey().isBlank()) keys.add(menu.getNameMsgKey());
+    if (menu.getDescriptionMsgKey() != null && !menu.getDescriptionMsgKey().isBlank()) keys.add(menu.getDescriptionMsgKey());
+    menu.getChildren().stream()
+                .filter(c -> Boolean.TRUE.equals(c.getVisible()))
+                .forEach(c -> collectMsgKeys(c, keys));
   }
 
     /** 메뉴 단건 조회 */

@@ -11,6 +11,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
+import java.util.Map;
+import java.util.stream.Collectors;
+
 @Service
 @RequiredArgsConstructor
 public class MessageResourceService {
@@ -119,6 +123,30 @@ public class MessageResourceService {
     return messageResourceRepository.findByKey(msgKey)
                 .map(r -> r.getKo() != null ? r.getKo() : "")
                 .orElse("");
+  }
+
+    /**
+     * msgKey 목록 → en 텍스트 배치 조회 (공통 헬퍼)
+     * - findByKeyIn 1회로 배치 조회하여 N+1 방지
+     * - 반환 맵: key → (en이 비어있지 않으면 en, 아니면 ko 폴백)
+     * - null/blank key는 맵에서 제외 (호출부가 원래값으로 폴백하도록)
+     * FO 공개 API에서 다국어(en) 치환 시 사용
+     */
+  @Transactional(readOnly = true)
+    public Map<String, String> resolveEnMap(Collection<String> keys) {
+    if (keys == null || keys.isEmpty()) return Map.of();
+        /* null/blank 제거 + 중복 제거 */
+    var distinctKeys = keys.stream()
+                .filter(k -> k != null && !k.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+    if (distinctKeys.isEmpty()) return Map.of();
+    return messageResourceRepository.findByKeyIn(distinctKeys).stream()
+                .collect(Collectors.toMap(
+                    MessageResource::getKey,
+                    r -> (r.getEn() != null && !r.getEn().isBlank()) ? r.getEn()
+                            : (r.getKo() != null ? r.getKo() : "")
+                ));
   }
 
     /** Entity → Response DTO 변환 */
