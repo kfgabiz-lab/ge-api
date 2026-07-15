@@ -300,7 +300,9 @@ public class PageDataService {
      *
      * @param slug     페이지 식별자
      * @param id       데이터 PK
-     * @param fieldKey data_json 내 필드 키 (점 표기법 미지원, 최상위 키만)
+     * @param fieldKey data_json 내 필드 키 — 점(.) 표기법으로 중첩 경로 지정 가능
+     *                 (예: "productDataForm.trainingYn" → dataJson.productDataForm.trainingYn에 저장.
+     *                 점이 없으면 기존과 동일하게 최상위 키에 저장)
      * @param value    변경할 값
      */
   @Transactional
@@ -316,7 +318,26 @@ public class PageDataService {
     } catch (Exception e) {
       dataJson = new LinkedHashMap<>();
     }
-    dataJson.put(fieldKey, value);
+    // fieldKey를 점(.) 기준으로 분리 — 중첩 경로면 하위 Map을 따라 내려가며(없으면 새로 생성) 마지막 세그먼트에 값 저장
+    String[] segments = fieldKey.split("\\.");
+    if (segments.length == 1) {
+      // 점이 없는 경우 — 기존과 완전히 동일하게 최상위 키에 저장
+      dataJson.put(fieldKey, value);
+    } else {
+      Map<String, Object> cursor = dataJson;
+      for (int i = 0; i < segments.length - 1; i++) {
+        Object next = cursor.get(segments[i]);
+        if (!(next instanceof Map)) {
+          // 중간 경로가 없거나 Map이 아니면 새로 생성해서 이어붙임
+          next = new LinkedHashMap<String, Object>();
+          cursor.put(segments[i], next);
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> nextMap = (Map<String, Object>) next;
+        cursor = nextMap;
+      }
+      cursor.put(segments[segments.length - 1], value);
+    }
     dataJson.put("id", id);
     String dataJsonStr = serializeDataJson(dataJson);
     String currentUser = getCurrentUserId();
