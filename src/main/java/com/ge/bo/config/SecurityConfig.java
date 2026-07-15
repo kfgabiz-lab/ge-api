@@ -51,6 +51,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/auth/**").permitAll() // 로그인, TOTP 2FA 엔드포인트 — 인증 없이 허용
                         .requestMatchers("/api/v1/health").permitAll() // 헬스 체크 허용
                         .requestMatchers("/api/v1/redisTest/**").permitAll() // redis 체크 허용
+                        .requestMatchers("/api/v1/cryptoTest/**").permitAll() // 암복호화 테스트 허용
                         .requestMatchers("/api/v1/public/**").permitAll() // 공개 API — 인증 없이 허용
                         .requestMatchers("/api/v1/fo/**").permitAll() // FO API — 비로그인 전체 허용
                         // 다국어 리소스 — 비로그인 조회 허용
