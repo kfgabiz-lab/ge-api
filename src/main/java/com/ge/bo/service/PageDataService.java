@@ -424,15 +424,16 @@ public class PageDataService {
      * 전체 데이터 조회 — LIMIT/OFFSET 없이 전체 조회 (엑셀 다운로드 전용)
      * 검색 조건은 search()와 동일하게 적용
      *
-     * @param slug      페이지 식별자
-     * @param allParams 검색 조건 (export/format/headers/keys 등 예약어는 제외됨)
+     * @param slug        페이지 식별자
+     * @param allParams   검색 조건 (export/format/headers/keys 등 예약어는 제외됨)
+     * @param relationIds 배치로 FETCH 적용할 slug_relation id 목록 (TABLE/ARRAY_CONTAINS 타입만 지원, N+1 방지를 위해 relation당 쿼리 1건)
      * @return 전체 데이터 목록 (Map<키, 값> 형태)
      */
   @Transactional(readOnly = true)
-    public List<Map<String, Object>> exportAll(String slug, Map<String, String> allParams, Long siteId) {
+    public List<Map<String, Object>> exportAll(String slug, Map<String, String> allParams, Long siteId, List<Long> relationIds) {
         // 예약 파라미터 확장 (export 전용 파라미터 추가)
     Set<String> reservedForExport = new HashSet<>(RESERVED_PARAMS);
-    reservedForExport.addAll(Set.of("format", "headers", "keys", "dateFormats", "codeMaps", "reason"));
+    reservedForExport.addAll(Set.of("format", "headers", "keys", "dateFormats", "codeMaps", "reason", "relationIds"));
 
         // 검색 조건 파라미터 추출
     Map<String, String> searchParams = new LinkedHashMap<>();
@@ -463,28 +464,38 @@ public class PageDataService {
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
 
-        // Map<키, 값> 형태로 변환 + FE buildTableRow와 동일한 플래트닝 적용
-    return rows.stream()
-                .map(row -> {
-                  Map<String, Object> dataMap = new LinkedHashMap<>();
-                  try {
-                    if (row[2] != null) {
-                      dataMap = objectMapper.readValue(row[2].toString(),
+        // dataJson 파싱 (raw, flatten 적용 전) — slug_relation 배치 FETCH 조회에 원본 구조 그대로 사용
+    List<Map<String, Object>> dataJsonList = new ArrayList<>();
+    for (Object[] row : rows) {
+      Map<String, Object> dataMap = new LinkedHashMap<>();
+      try {
+        if (row[2] != null) {
+          dataMap = objectMapper.readValue(row[2].toString(),
                         new com.fasterxml.jackson.core.type.TypeReference<>() {
                         });
-                    }
-                  } catch (Exception e) {
-                    log.warn("exportAll dataJson 파싱 실패: {}", e.getMessage());
-                  }
-                  // FE buildTableRow와 동일하게 메타 필드 추가
-                  Map<String, Object> result = flattenDataJson(dataMap);
-                  result.put("createdBy",  row[3]);
-                  result.put("createdAt",  row[4] != null ? row[4].toString() : null);
-                  result.put("updatedBy",  row[5]);
-                  result.put("updatedAt",  row[6] != null ? row[6].toString() : null);
-                  return result;
-                })
-                .toList();
+        }
+      } catch (Exception e) {
+        log.warn("exportAll dataJson 파싱 실패: {}", e.getMessage());
+      }
+      dataJsonList.add(dataMap);
+    }
+
+        // slug_relation 기반 FETCH 배치 적용 — relation당 쿼리 1건(N+1 방지), TABLE/ARRAY_CONTAINS만 지원
+    applyFetchBatch(slug, dataJsonList, relationIds);
+
+        // Map<키, 값> 형태로 변환 + FE buildTableRow와 동일한 플래트닝 적용
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (int i = 0; i < rows.size(); i++) {
+      Object[] row = rows.get(i);
+      // FE buildTableRow와 동일하게 메타 필드 추가
+      Map<String, Object> flattened = flattenDataJson(dataJsonList.get(i));
+      flattened.put("createdBy",  row[3]);
+      flattened.put("createdAt",  row[4] != null ? row[4].toString() : null);
+      flattened.put("updatedBy",  row[5]);
+      flattened.put("updatedAt",  row[6] != null ? row[6].toString() : null);
+      result.add(flattened);
+    }
+    return result;
   }
 
     /**
@@ -1799,7 +1810,6 @@ public class PageDataService {
     }
 
     /** FETCH 관계 적용 — FETCH 방향 slug_relation으로 slave 데이터를 master content에 병합 */
-    @SuppressWarnings("unchecked")
     private List<PageDataResponse> applyFetch(String slug, List<PageDataResponse> content) {
         List<SlugRelation> fetchRelations = slugRelationRepository.findByMasterSlugAndRelationDir(slug, "FETCH");
         if (fetchRelations.isEmpty()) return content;
@@ -1842,6 +1852,191 @@ public class PageDataService {
             }
             return enriched.size() > item.getDataJson().size() ? item.withDataJson(enriched) : item;
         }).toList();
+    }
+
+    /**
+     * FETCH 관계 배치 적용 — 엑셀 export 전용, relation당 쿼리 1건(N+1 방지)
+     * search()/getById()가 사용하는 row당 조회 방식의 applyFetch()는 그대로 유지되며, 이 메서드와는 독립적으로 동작한다.
+     * 이번 범위는 TABLE/ARRAY_CONTAINS 타입만 지원하며, CATEGORY 타입은 배치 대상에서 제외(후속 개발 예정)한다.
+     *
+     * @param slug        마스터 slug
+     * @param rows        exportAll에서 파싱한 원본 dataJson 목록 (flatten 적용 전) — 각 row에 직접 _fetchedRel{id} 키를 주입한다
+     * @param relationIds 배치 적용할 slug_relation id 목록 (비어있으면 아무 것도 하지 않음)
+     */
+    private void applyFetchBatch(String slug, List<Map<String, Object>> rows, List<Long> relationIds) {
+        if (relationIds == null || relationIds.isEmpty() || rows.isEmpty()) return;
+
+        for (Long relationId : relationIds) {
+            SlugRelation rel = slugRelationRepository.findById(relationId).orElse(null);
+            if (rel == null) {
+                log.warn("applyFetchBatch: relationId={} 조회 실패, 건너뜀", relationId);
+                continue;
+            }
+            if (!"FETCH".equals(rel.getRelationDir())) {
+                log.warn("applyFetchBatch: relationId={}는 FETCH 방향이 아니므로 건너뜀 (relationDir={})", relationId, rel.getRelationDir());
+                continue;
+            }
+            if ("CATEGORY".equals(rel.getSlaveType())) {
+                // CATEGORY 배치 조회는 이번 범위에서 제외(후속 개발 예정) — 개별 조회 방식(applyFetch)만 지원
+                log.warn("applyFetchBatch: relationId={}는 CATEGORY 타입이라 배치 처리 대상이 아니므로 건너뜀", relationId);
+                continue;
+            }
+
+            boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
+            if (isArrayContains) {
+                applyArrayContainsFetchBatch(rel, rows);
+            } else {
+                applyTableFetchBatch(rel, rows);
+            }
+        }
+    }
+
+    /**
+     * TABLE 유형 FETCH 배치 조회
+     * - rows 전체에서 masterKey 값을 모아 slave를 IN 조건 1건으로 조회 후 slaveKey 값 기준으로 그룹핑
+     * - fetch_fields 있으면 매칭 값을 fetch_separator로 합친 문자열, 없으면 첫 매칭 레코드 전체를 Map으로 각 row에 주입
+     */
+    @SuppressWarnings("unchecked")
+    private void applyTableFetchBatch(SlugRelation rel, List<Map<String, Object>> rows) {
+        // row별 masterValue 추출 (숫자 검증된 값만 IN 조건 대상 — SQL Injection 방지)
+        List<String> masterValues = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            String v = extractField(row, rel.getMasterKey());
+            if (v != null && v.matches("-?\\d+")) masterValues.add(v);
+        }
+        if (masterValues.isEmpty()) return;
+
+        String idList = masterValues.stream().distinct()
+            .map(v -> "'" + v + "'")
+            .collect(java.util.stream.Collectors.joining(","));
+
+        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        appendSlaveKeyInCondition(sql, rel.getSlaveKey(), idList);
+        Map<String, String> filterParams = new LinkedHashMap<>();
+        if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
+            appendSlaveFilter(sql, rel.getSlaveFilter(), filterParams);
+        }
+
+        Query q = entityManager.createNativeQuery(sql.toString());
+        q.setParameter("slaveSlug", rel.getSlaveSlug());
+        filterParams.forEach(q::setParameter);
+
+        List<Object> results = q.getResultList();
+        if (results.isEmpty()) return;
+
+        // slaveKey 값 기준 그룹핑 (다건 매칭 가능)
+        Map<String, List<Map<String, Object>>> grouped = groupSlaveRecordsByKey(results, rel.getSlaveKey());
+        if (grouped.isEmpty()) return;
+
+        boolean hasFetchFields = StringUtils.hasText(rel.getFetchFields());
+        String separator = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
+        String fetchKey = buildFetchKey(rel.getId());
+
+        for (Map<String, Object> row : rows) {
+            String masterValue = extractField(row, rel.getMasterKey());
+            if (masterValue == null) continue;
+            List<Map<String, Object>> matched = grouped.get(masterValue);
+            if (matched == null || matched.isEmpty()) continue;
+
+            Object fetchedValue = buildFetchedValue(matched, hasFetchFields, rel.getFetchFields(), separator);
+            if (fetchedValue != null) row.put(fetchKey, fetchedValue);
+        }
+    }
+
+    /**
+     * ARRAY_CONTAINS 유형 FETCH 배치 조회
+     * - masterKey가 id 배열(multiSelect 등)인 경우 — CATEGORY는 미지원(applyFetchBatch에서 이미 제외)
+     * - row별 배열의 모든 id를 모아 slave를 IN 조건 1건으로 조회 후 slaveKey 값 기준으로 그룹핑
+     * - row는 자신의 배열에 포함된 각 id에 매칭된 slave 레코드들을 모두 합쳐서 매핑값을 구성한다
+     * - fetch_fields 있으면 매칭 값을 fetch_separator로 합친 문자열, 없으면 첫 매칭 레코드 전체를 Map으로 주입
+     */
+    @SuppressWarnings("unchecked")
+    private void applyArrayContainsFetchBatch(SlugRelation rel, List<Map<String, Object>> rows) {
+        // row(index)별 masterValues(배열) 추출 — HashMap 키로 mutable Map(row)을 직접 사용하지 않기 위해 인덱스 정렬 리스트로 관리
+        List<List<String>> rowMasterValues = new ArrayList<>(rows.size());
+        List<String> allValues = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            List<String> values = extractFieldAsList(row, rel.getMasterKey()).stream()
+                .filter(v -> v.matches("-?\\d+"))
+                .toList();
+            rowMasterValues.add(values);
+            allValues.addAll(values);
+        }
+        if (allValues.isEmpty()) return;
+
+        String idList = allValues.stream().distinct()
+            .map(v -> "'" + v + "'")
+            .collect(java.util.stream.Collectors.joining(","));
+
+        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        appendSlaveKeyInCondition(sql, rel.getSlaveKey(), idList);
+        Map<String, String> filterParams = new LinkedHashMap<>();
+        if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
+            appendSlaveFilter(sql, rel.getSlaveFilter(), filterParams);
+        }
+
+        Query q = entityManager.createNativeQuery(sql.toString());
+        q.setParameter("slaveSlug", rel.getSlaveSlug());
+        filterParams.forEach(q::setParameter);
+
+        List<Object> results = q.getResultList();
+        if (results.isEmpty()) return;
+
+        Map<String, List<Map<String, Object>>> grouped = groupSlaveRecordsByKey(results, rel.getSlaveKey());
+        if (grouped.isEmpty()) return;
+
+        boolean hasFetchFields = StringUtils.hasText(rel.getFetchFields());
+        String separator = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
+        String fetchKey = buildFetchKey(rel.getId());
+
+        for (int i = 0; i < rows.size(); i++) {
+            List<String> values = rowMasterValues.get(i);
+            if (values.isEmpty()) continue;
+
+            List<Map<String, Object>> matched = new ArrayList<>();
+            for (String v : values) {
+                List<Map<String, Object>> g = grouped.get(v);
+                if (g != null) matched.addAll(g);
+            }
+            if (matched.isEmpty()) continue;
+
+            Object fetchedValue = buildFetchedValue(matched, hasFetchFields, rel.getFetchFields(), separator);
+            if (fetchedValue != null) rows.get(i).put(fetchKey, fetchedValue);
+        }
+    }
+
+    /** 조회된 slave dataJson(native query 결과) 목록을 slaveKey(dot notation 가능) 값 기준으로 그룹핑 — 하나의 값에 여러 레코드가 매칭될 수 있음(다건 매칭) */
+    private Map<String, List<Map<String, Object>>> groupSlaveRecordsByKey(List<Object> results, String slaveKey) {
+        Map<String, List<Map<String, Object>>> grouped = new LinkedHashMap<>();
+        for (Object row : results) {
+            try {
+                Map<String, Object> dataJson = objectMapper.readValue(row.toString(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                String key = extractField(dataJson, slaveKey);
+                if (key == null) continue;
+                grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(dataJson);
+            } catch (Exception e) {
+                log.warn("applyFetchBatch slave dataJson 파싱 실패: {}", e.getMessage());
+            }
+        }
+        return grouped;
+    }
+
+    /**
+     * 배치 FETCH 매칭 결과로 export용 값 생성
+     * - fetch_fields 있으면 각 매칭 레코드에서 해당 경로 값을 추출해 fetch_separator로 합친 문자열 반환 (기존 resolveTableFetch와 달리 export는 스칼라 셀 값이 필요하므로 서버에서 직접 합침)
+     * - fetch_fields 없으면 첫 번째 매칭 레코드 전체를 Map으로 반환 (ExcelService.getNestedValue의 dot notation으로 자유롭게 접근 가능)
+     */
+    private Object buildFetchedValue(List<Map<String, Object>> matched, boolean hasFetchFields, String fetchFields, String separator) {
+        if (!hasFetchFields) {
+            return matched.get(0);
+        }
+        List<String> values = new ArrayList<>();
+        for (Map<String, Object> m : matched) {
+            String v = extractField(m, fetchFields);
+            if (v != null) values.add(v);
+        }
+        return values.isEmpty() ? null : String.join(separator, values);
     }
 
     /**
