@@ -22,7 +22,7 @@ server:
 app:
   jwt:
     secret: "bo-backoffice-ge-america-secret-key-256bit-secure-2026"
-    expiration: 3600        # 1시간 (초)
+    expiration: 86400        # 1시간 (초)
     refresh-expiration: 604800  # 7일 (초)
 
 # 로깅 기본 수준 (각 환경 yml에서 override 가능)
