@@ -49,12 +49,12 @@ public class FoProductGroupService {
      */
     @Transactional(readOnly = true)
     public List<FoProductGroupResponse> getProductGroups() {
-        // 1) 공개(isVisible=001) 그룹 목록 조회 — prdGrpForm1.prdGrpOrd 오름차순(NULL/빈값은 마지막), 동률 시 id 오름차순
-        //    구버전(테스트) 스키마는 isVisible 경로가 prdGrpForm1 이 아니므로 이 WHERE 에 자동 제외됨
+        // 1) 공개(is_visible=001) 그룹 목록 조회 — product_group.group_order 오름차순(NULL/빈값은 마지막), 동률 시 id 오름차순
+        //    구버전(테스트) 스키마는 is_visible 경로가 신 key(product_group) 아래에 없으므로 이 WHERE 에 자동 제외됨
         String groupSql = "SELECT id, data_json::text FROM page_data"
                 + " WHERE data_slug = :slug"
-                + " AND data_json->'prdGrpForm1'->>'isVisible' = '001'"
-                + " ORDER BY NULLIF(data_json->'prdGrpForm1'->>'prdGrpOrd','')::numeric ASC NULLS LAST, id ASC";
+                + " AND data_json->'product_group'->>'is_visible' = '001'"
+                + " ORDER BY NULLIF(data_json->'product_group'->>'group_order','')::numeric ASC NULLS LAST, id ASC";
         Query groupQuery = entityManager.createNativeQuery(groupSql);
         groupQuery.setParameter("slug", GROUP_SLUG);
 
@@ -70,12 +70,12 @@ public class FoProductGroupService {
         for (Object[] row : groupRows) {
             Long groupId = ((Number) row[0]).longValue();
             Map<String, Object> dataJson = parseJson(row[1]);
-            Map<String, Object> form1 = asMap(dataJson.get("prdGrpForm1"));
+            Map<String, Object> form1 = asMap(dataJson.get("product_group"));
 
             GroupRaw g = new GroupRaw();
             g.id = groupId;
-            g.prdGrpNm = asString(form1.get("prdGrpNm"));
-            g.prdGrpOrd = asString(form1.get("prdGrpOrd"));
+            g.prdGrpNm = asString(form1.get("group_name"));
+            g.prdGrpOrd = asString(form1.get("group_order"));
             // ms = [{id, sortOrder}] — id/sortOrder 원본 추출
             for (Object item : asList(dataJson.get("ms"))) {
                 Map<String, Object> ms = asMap(item);
@@ -83,7 +83,7 @@ public class FoProductGroupService {
                 if (pid == null) continue;
                 MsRef ref = new MsRef();
                 ref.productId = pid;
-                ref.sortOrder = asString(ms.get("sortOrder"));
+                ref.sortOrder = asString(ms.get("sort_order"));
                 g.msRefs.add(ref);
                 productIds.add(pid);
             }
@@ -149,15 +149,16 @@ public class FoProductGroupService {
             Map<String, Object> dataJson = parseJson(row);
             Long pid = asLong(dataJson.get("id"));
             if (pid == null) continue;
-            Map<String, Object> form = asMap(dataJson.get("productDataForm"));
-            Map<String, Object> info = asMap(dataJson.get("info")); // 대부분 미입력 → 빈 맵
-            Map<String, Object> seo = asMap(dataJson.get("seo"));   // 대부분 미입력 → 빈 맵
+            Map<String, Object> form = asMap(dataJson.get("product"));
+            Map<String, Object> info = asMap(dataJson.get("product_info")); // 대부분 미입력 → 빈 맵
+            Map<String, Object> seo = asMap(dataJson.get("seo"));           // 대부분 미입력 → 빈 맵
 
             ProductRaw p = new ProductRaw();
-            p.productNm = asString(form.get("productNm"));
-            p.prdSubDesc = asString(form.get("prdSubDesc"));
+            p.productNm = asString(form.get("product_name"));
+            p.prdSubDesc = asString(form.get("product_description"));
             p.awards = asString(form.get("awards"));
-            p.image = asString(info.get("image"));
+            // product_info.image 는 미디어 ID 배열 → 첫 요소(미디어 ID)를 hero/banner 와 동일한 프록시 경로로 변환
+            p.image = resolveFirstImageUrl(info.get("image"));
             p.slug = asString(seo.get("slug"));
             map.put(pid, p);
         }
@@ -206,6 +207,19 @@ public class FoProductGroupService {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /**
+     * product_info.image(미디어 ID 배열)의 첫 요소를 FO 프록시 이미지 URL 로 변환
+     * - hero/banner(BannerSwiper/VideoSwiper)가 쓰는 기존 프록시 경로 "/api/v1/fo/page-files/{id}" 재사용
+     * - 배열이 없거나 비어있거나 첫 요소가 숫자로 파싱 안 되면 null (기존처럼 FE 플레이스홀더 폴백)
+     */
+    private String resolveFirstImageUrl(Object imageValue) {
+        List<?> ids = asList(imageValue);
+        if (ids.isEmpty()) return null;
+        Long mediaId = asLong(ids.get(0));
+        if (mediaId == null) return null;
+        return "/api/v1/fo/page-files/" + mediaId;
     }
 
     /** sortOrder 문자열 → 정렬용 숫자 (빈값/파싱실패는 맨 뒤로) */
