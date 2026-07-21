@@ -8,7 +8,7 @@ import java.time.Duration;
 @RestController
 @RequestMapping("/api/v1/redisTest")
 @ConditionalOnProperty(
-        name = "ls.redis-test-enabled",
+        name = "ls.redis-enabled",
         havingValue = "true"
 )
 public class RedisTestController {

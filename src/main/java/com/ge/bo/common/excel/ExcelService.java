@@ -230,6 +230,12 @@ public class ExcelService {
      *   getNestedValue(row, "form1.제목")     → row→"form1"→"제목"        [2단계]
      *   getNestedValue(row, "tab1.form1.제목") → row→"tab1"→"form1"→"제목" [3단계]
      *
+     * ⚠️ _fetchedRel{id} 축약키 폴백 — FE 화면(flattenPageDataItem)은 "_fetchedRel8.currMgmtTitle"처럼
+     * 중간 contentKey를 생략한 축약키도 보여주지만, 실제 저장 구조는 "_fetchedRel8.currMgmtForm.currMgmtTitle"로
+     * 한 단계 더 깊다. 정확한 경로 탐색이 실패했고 최상위 키가 "_fetchedRel"로 시작하면, 그 섹션 안에서
+     * 마지막 segment와 이름이 같은 leaf를 재귀 스캔해 유일하게(1곳만) 존재할 때만 반환한다 — 이렇게 하면
+     * 빌더에서 전체 경로를 입력하든, 화면에 보이는 축약키를 그대로 입력하든 둘 다 정상 동작한다.
+     *
      * @param map 현재 탐색 중인 Map
      * @param key 단순 키 또는 도트 표기식 키 (예: "tab1.form1.제목")
      * @return 찾은 값, 없으면 null
@@ -242,9 +248,37 @@ public class ExcelService {
     String[] parts = key.split("\\.", 2);
     Object nested = map.get(parts[0]);
     if (nested instanceof Map<?, ?>) {
-      return getNestedValue((Map<String, Object>) nested, parts[1]);
+      Object value = getNestedValue((Map<String, Object>) nested, parts[1]);
+      if (value != null) return value;
+      if (parts[0].startsWith("_fetchedRel")) {
+        String leaf = parts[1].contains(".") ? parts[1].substring(parts[1].lastIndexOf('.') + 1) : parts[1];
+        return findUniqueFetchedRelLeaf((Map<String, Object>) nested, leaf);
+      }
+      return null;
     }
     return null;
+  }
+
+    /**
+     * _fetchedRel{id} 섹션 내부를 재귀 스캔해 leaf 키 이름과 일치하는 값을 찾되,
+     * 같은 이름이 여러 경로에 있으면 모호하므로 유일하게(1곳만) 존재할 때만 반환한다.
+     */
+  private Object findUniqueFetchedRelLeaf(Map<String, Object> map, String leaf) {
+    List<Object> matches = new java.util.ArrayList<>();
+    collectLeafMatches(map, leaf, matches);
+    return matches.size() == 1 ? matches.get(0) : null;
+  }
+
+  @SuppressWarnings("unchecked")
+  private void collectLeafMatches(Map<String, Object> map, String leaf, List<Object> matches) {
+    for (Map.Entry<String, Object> entry : map.entrySet()) {
+      if (entry.getKey().equals(leaf)) {
+        matches.add(entry.getValue());
+      }
+      if (entry.getValue() instanceof Map<?, ?>) {
+        collectLeafMatches((Map<String, Object>) entry.getValue(), leaf, matches);
+      }
+    }
   }
 
     /**

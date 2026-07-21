@@ -14,6 +14,10 @@ import dev.samstevens.totp.qr.QrData;
 import dev.samstevens.totp.secret.DefaultSecretGenerator;
 import dev.samstevens.totp.time.SystemTimeProvider;
 import java.time.OffsetDateTime;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,6 +40,9 @@ public class TotpService {
   @Value("${ls.totp.isUser}")
   private String totpIssuer;
 
+  @Value("${ls.redis-enabled:false}")
+  private boolean redisEnabled;
+
   /**
    * TOTP 설정 시작 — 비밀키 생성 + QR 코드 URI 반환
    * tempToken 검증 후 DB에 비밀키 저장, FE는 QR 코드를 렌더링해 앱에 등록
@@ -44,8 +51,8 @@ public class TotpService {
    * @return QR 코드 URI 및 Base32 비밀키
    */
   @Transactional
-  public TotpDto.SetupResponse setup(TotpDto.SetupRequest request) {
-    String email = extractEmailFromTempToken(request.getTempToken());
+  public TotpDto.SetupResponse setup(TotpDto.SetupRequest request, HttpServletRequest req) {
+    String email = getEmail(req, request.getTempToken());
     AdminUser admin = findAdmin(email);
 
     if (admin.isTotpEnabled()) {
@@ -73,6 +80,48 @@ public class TotpService {
   }
 
   /**
+   * TOTP 등록 확인 — 6자리 코드 검증 후 복구코드 발급
+   * 최초 QR 등록 완료 단계
+   *
+   * @param request 6자리 코드
+   * @return accessToken + 복구코드 10개 (1회성)
+   */
+  @Transactional
+  public TotpDto.VerifyResponse confirm(TotpDto.ConfirmRequest request, HttpServletRequest req) {
+    HttpSession session = req.getSession(false);
+
+    if (session == null) {
+      throw BusinessException.unauthorized("세션이 만료되었습니다.");
+    }
+
+    String email = (String) session.getAttribute("MFA_EMAIL");
+
+    if (email == null) {
+      throw BusinessException.unauthorized("세션에 이메일 정보가 없습니다.");
+    }
+
+    AdminUser admin = findAdmin(email);
+
+    if (admin.getTotpSecret() == null) {
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "TOTP_SETUP_REQUIRED",
+              "TOTP 설정을 먼저 시작해주세요.");
+    }
+
+    // 6자리 코드 검증
+    verifyTotpCode(admin.getTotpSecret(), request.getTotpCode());
+
+    admin.setTotpEnabled(true);
+    admin.setLastLoginAt(OffsetDateTime.now());
+    admin.setFailedLoginAttempts(0);
+    admin.setLockedUntil(null);
+
+    return TotpDto.VerifyResponse.builder()
+            .accessToken("SUCCESS")
+            .adminInfo(buildAdminInfo(admin))
+            .build();
+  }
+
+  /**
    * TOTP 등록 확인 — 6자리 코드 검증 후 복구코드 발급 + JWT 발급
    * 최초 QR 등록 완료 단계
    *
@@ -80,13 +129,13 @@ public class TotpService {
    * @return accessToken + 복구코드 10개 (1회성)
    */
   @Transactional
-  public TotpDto.VerifyResponse confirm(TotpDto.ConfirmRequest request) {
+  public TotpDto.VerifyResponse confirmWithJwt(TotpDto.ConfirmRequest request) {
     String email = extractEmailFromTempToken(request.getTempToken());
     AdminUser admin = findAdmin(email);
 
     if (admin.getTotpSecret() == null) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "TOTP_SETUP_REQUIRED",
-          "TOTP 설정을 먼저 시작해주세요.");
+              "TOTP 설정을 먼저 시작해주세요.");
     }
 
     // 6자리 코드 검증
@@ -100,10 +149,10 @@ public class TotpService {
     String accessToken = jwtTokenProvider.generateAccessToken(email, admin.getRole());
 
     return TotpDto.VerifyResponse.builder()
-        .accessToken(accessToken)
-        .expiresIn(ACCESS_TOKEN_EXPIRES_IN)
-        .adminInfo(buildAdminInfo(admin))
-        .build();
+            .accessToken(accessToken)
+            .expiresIn(ACCESS_TOKEN_EXPIRES_IN)
+            .adminInfo(buildAdminInfo(admin))
+            .build();
   }
 
   /**
@@ -113,18 +162,61 @@ public class TotpService {
    * @return accessToken
    */
   @Transactional
-  public TotpDto.VerifyResponse verify(TotpDto.VerifyRequest request) {
+  public TotpDto.VerifyResponse verify(TotpDto.VerifyRequest request, HttpServletRequest req) {
+    HttpSession session = req.getSession(false);
+
+    if (session == null) {
+      throw BusinessException.unauthorized("세션이 만료되었습니다.");
+    }
+
+    String email = (String) session.getAttribute("MFA_EMAIL");
+
+    if (email == null) {
+      throw BusinessException.unauthorized("세션에 이메일 정보가 없습니다.");
+    }
+
+    AdminUser admin = findAdmin(email);
+
+    if (!admin.isTotpEnabled()) {
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "TOTP_NOT_ENABLED",
+              "2FA가 등록되지 않은 계정입니다. QR 등록을 먼저 진행해주세요.");
+    }
+
+    if (request.getTotpCode() == null || request.getTotpCode().isBlank()) {
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "TOTP_CODE_REQUIRED",
+              "OTP 코드를 입력해주세요.");
+    }
+    verifyTotpCode(admin.getTotpSecret(), request.getTotpCode());
+
+    admin.setLastLoginAt(OffsetDateTime.now());
+    admin.setFailedLoginAttempts(0);
+    admin.setLockedUntil(null);
+
+    return TotpDto.VerifyResponse.builder()
+            .accessToken("SUCCESS")
+            .adminInfo(buildAdminInfo(admin))
+            .build();
+  }
+
+  /**
+   * TOTP 로그인 검증 — OTP 코드 또는 복구코드로 2차 인증 후 JWT 발급
+   *
+   * @param request tempToken + totpCode (또는 recoveryCode)
+   * @return accessToken
+   */
+  @Transactional
+  public TotpDto.VerifyResponse verifyWithJwt(TotpDto.VerifyRequest request) {
     String email = extractEmailFromTempToken(request.getTempToken());
     AdminUser admin = findAdmin(email);
 
     if (!admin.isTotpEnabled()) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "TOTP_NOT_ENABLED",
-          "2FA가 등록되지 않은 계정입니다. QR 등록을 먼저 진행해주세요.");
+              "2FA가 등록되지 않은 계정입니다. QR 등록을 먼저 진행해주세요.");
     }
 
     if (request.getTotpCode() == null || request.getTotpCode().isBlank()) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "TOTP_CODE_REQUIRED",
-          "OTP 코드를 입력해주세요.");
+              "OTP 코드를 입력해주세요.");
     }
     verifyTotpCode(admin.getTotpSecret(), request.getTotpCode());
 
@@ -135,10 +227,10 @@ public class TotpService {
     String accessToken = jwtTokenProvider.generateAccessToken(email, admin.getRole());
 
     return TotpDto.VerifyResponse.builder()
-        .accessToken(accessToken)
-        .expiresIn(ACCESS_TOKEN_EXPIRES_IN)
-        .adminInfo(buildAdminInfo(admin))
-        .build();
+            .accessToken(accessToken)
+            .expiresIn(ACCESS_TOKEN_EXPIRES_IN)
+            .adminInfo(buildAdminInfo(admin))
+            .build();
   }
 
   /** tempToken 파싱 + 이메일 추출 */
@@ -183,5 +275,24 @@ public class TotpService {
         .role(admin.getRole())
         .isSystem(isSystem)
         .build();
+  }
+
+  /** jwtToken 또는 redis Session에서 email 가져오기 **/
+  private String getEmail(HttpServletRequest req, String tempToken){
+    String email = null;
+
+    if(redisEnabled){
+      HttpSession session = req.getSession(false);
+
+      if (session == null) {
+        throw BusinessException.unauthorized("세션이 만료되었습니다.");
+      }
+
+      email = (String) session.getAttribute("MFA_EMAIL");
+    }else {
+      email = extractEmailFromTempToken(tempToken);
+    }
+
+    return email;
   }
 }

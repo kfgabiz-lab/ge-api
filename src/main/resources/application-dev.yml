@@ -31,6 +31,14 @@ spring:
       ssl:
         enabled: true
       timeout: 5s
+  session:
+    timeout: 1d
+
+server:
+  servlet:
+    session:
+      cookie:
+        secure: true
 
 # CORS — 개발서버 FE 주소
 cors:
@@ -64,7 +72,7 @@ logging:
 ls:
   isApiLogin: true
   file-storage: blob   # local, blob
-  redis-test-enabled: true
+  redis-enabled: true
   lse:
     inApi:
       connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@

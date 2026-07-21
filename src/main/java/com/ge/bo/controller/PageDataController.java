@@ -148,9 +148,10 @@ public class PageDataController {
          * GET
          * /api/v1/page-data/{slug}/export?format=xlsx&headers=이름,이메일&keys=name,email&검색조건...
          *
-         * @param format  파일 형식 (xlsx | csv, 기본값: xlsx)
-         * @param headers 컬럼 헤더 목록 (쉼표 구분, 예: "이름,이메일,상태")
-         * @param keys    data_json 키 목록 (헤더와 순서 일치, 예: "name,email,status")
+         * @param format      파일 형식 (xlsx | csv, 기본값: xlsx)
+         * @param headers     컬럼 헤더 목록 (쉼표 구분, 예: "이름,이메일,상태")
+         * @param keys        data_json 키 목록 (헤더와 순서 일치, 예: "name,email,status")
+         * @param relationIds 배치로 FETCH 적용할 slug_relation id 목록 (쉼표 구분, 예: "3,5" — TABLE/ARRAY_CONTAINS 타입만 지원)
          */
   @GetMapping("/export")
         public ResponseEntity<byte[]> export(
@@ -161,6 +162,7 @@ public class PageDataController {
                         @RequestParam(required = false) String dateFormats,
                         @RequestParam(required = false) String codeMaps,
                         @RequestParam(required = false) String reason,
+                        @RequestParam(required = false) String relationIds,
                         @RequestParam Map<String, String> allParams,
                         @RequestHeader(value = "X-Site-Id", required = false) Long siteId,
                         HttpServletRequest request) {
@@ -176,6 +178,14 @@ public class PageDataController {
                                 ? Arrays.asList(dateFormats.split(",", -1))
                                 : Collections.emptyList();
 
+                // relation id 목록 파싱 — 배치 FETCH 조인 대상 (빈 문자열 필터링 후 숫자 변환)
+    List<Long> relationIdList = (relationIds != null && !relationIds.isBlank())
+                                ? Arrays.stream(relationIds.split(",", -1))
+                                                .filter(s -> !s.isBlank())
+                                                .map(Long::parseLong)
+                                                .toList()
+                                : Collections.emptyList();
+
                 // 공통코드 라벨 매핑표 파싱 — FE가 다국어까지 반영해 만든 { key: { code: label } } (없으면 빈 맵)
     Map<String, Map<String, String>> codeMapData = Collections.emptyMap();
     if (codeMaps != null && !codeMaps.isBlank()) {
@@ -187,7 +197,7 @@ public class PageDataController {
     }
 
                 // 전체 데이터 조회 (search()와 동일한 사이트 ID 필터 적용)
-    List<Map<String, Object>> rows = pageDataService.exportAll(slug, allParams, siteId);
+    List<Map<String, Object>> rows = pageDataService.exportAll(slug, allParams, siteId, relationIdList);
 
                 // 파일명: {slug}_{yyyyMMdd}.xlsx or .csv
     String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));

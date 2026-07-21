@@ -30,7 +30,7 @@ public class FoPageDataController {
     /**
      * 목록 조회 — 페이지네이션 + 동적 JSONB 검색 (관리자 API 와 동일)
      * GET /api/v1/fo/page-data/{slug}
-     * Query Params: page(기본 0), size(기본 20), sort, 그 외는 검색 조건
+     * Query Params: page(기본 0), size(기본 20), sort, unpaged(기본 false — true면 size 무시하고 조건에 맞는 전체 반환), 그 외는 검색 조건
      */
     @GetMapping
     public ResponseEntity<PageDataListResponse> search(
@@ -38,8 +38,9 @@ public class FoPageDataController {
             @RequestParam Map<String, String> allParams,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "false") boolean unpaged,
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
-        return ResponseEntity.ok(pageDataService.search(slug, allParams, page, size, siteId));
+        return ResponseEntity.ok(pageDataService.search(slug, allParams, page, size, siteId, unpaged));
     }
 
     /**
