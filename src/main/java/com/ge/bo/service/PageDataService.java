@@ -51,7 +51,7 @@ public class PageDataService {
     private EntityManager entityManager;
 
     /** 예약 파라미터 — 검색 조건에서 제외 */
-  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort");
+  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged");
 
     /**
      * 목록 조회 — 동적 JSONB 검색 + 페이지네이션
@@ -63,6 +63,16 @@ public class PageDataService {
      */
   @Transactional(readOnly = true)
     public PageDataListResponse search(String slug, Map<String, String> allParams, int page, int size, Long siteId) {
+    return search(slug, allParams, page, size, siteId, false);
+  }
+
+    /**
+     * 목록 조회 — 동적 JSONB 검색 + 페이지네이션 (unpaged 분기 포함)
+     *
+     * @param unpaged true면 LIMIT/OFFSET 없이 조건에 맞는 전체 행을 한 번에 반환(size 무시)
+     */
+  @Transactional(readOnly = true)
+    public PageDataListResponse search(String slug, Map<String, String> allParams, int page, int size, Long siteId, boolean unpaged) {
         // 검색 조건 파라미터 추출 — rel_ 접두사(FILTER slug_relation), joinr_/joink_/joinv_ 접두사(조인 검색), 일반 파라미터 분리
     Map<String, String> relFilterParams = new LinkedHashMap<>();
     Map<String, String> joinFilterParams = new LinkedHashMap<>();
@@ -140,16 +150,18 @@ public class PageDataService {
       }
     }
 
-        // 데이터 조회
+        // 데이터 조회 — unpaged면 LIMIT/OFFSET 없이 조건에 맞는 전체 행 반환
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
                 + " created_by, created_at, updated_by, updated_at "
                 + "FROM page_data " + whereClause
                 + orderBy
-                + " LIMIT :size OFFSET :offset";
+                + (unpaged ? "" : " LIMIT :size OFFSET :offset");
     Query dataQuery = entityManager.createNativeQuery(dataSql);
     dataQuery.setParameter("slug", slug);
-    dataQuery.setParameter("size", size);
-    dataQuery.setParameter("offset", (long) page * size);
+    if (!unpaged) {
+      dataQuery.setParameter("size", size);
+      dataQuery.setParameter("offset", (long) page * size);
+    }
     if (siteId != null) {
       dataQuery.setParameter("siteId", siteId);
     }
@@ -167,6 +179,18 @@ public class PageDataService {
 
     // FETCH 관계 적용 — slave 데이터를 master 응답에 병합
     content = applyFetch(slug, content);
+
+    if (unpaged) {
+      return PageDataListResponse.builder()
+                    .content(content)
+                    .totalElements(totalElements)
+                    .totalPages(1)
+                    .page(0)
+                    .size((int) totalElements)
+                    .last(true)
+                    .first(true)
+                    .build();
+    }
 
     int totalPages = (int) Math.ceil((double) totalElements / size);
     return PageDataListResponse.builder()
@@ -1150,6 +1174,17 @@ public class PageDataService {
         return;
       }
 
+      // ne_ 접두사 → 부정 일치(최상위 전용, 중첩 탐색 안 함)
+      // WHY: eq_처럼 중첩 자동탐색을 부정(!=)하면 PostgreSQL 3치논리로 NULL != x = NULL(제외)이 되어
+      //      값 없는 중첩 위치까지 오탐한다. id는 최상위 단독 필드이므로 최상위 값만 IS DISTINCT FROM으로 NULL-safe 비교.
+      //      (Featured로 뽑힌 글 id를 목록에서 제외하는 ne_id 용도 — press-data.md 10-F)
+      if (key.startsWith("ne_")) {
+        String fieldKey = key.substring(3);
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        whereClause.append(" AND data_json->>'").append(fieldKey).append("' IS DISTINCT FROM :p_").append(key);
+        return;
+      }
+
       // dot notation 파라미터 → 경로 기반 직접 검색 (ex: form1.title / tab1.form1.title)
       if (key.contains(".")) {
         String[] segments = key.split("\\.");
@@ -1468,6 +1503,14 @@ public class PageDataService {
           if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
           query.setParameter("p_" + key, value);
         }
+        return;
+      }
+
+      // ne_ 접두사 → 부정 일치 값 그대로 바인딩 (appendWhereConditions와 동일 검증으로 파라미터명 일치)
+      if (key.startsWith("ne_")) {
+        String fieldKey = key.substring(3);
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        query.setParameter("p_" + key, value);
         return;
       }
 
