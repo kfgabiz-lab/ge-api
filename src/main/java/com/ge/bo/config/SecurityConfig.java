@@ -11,7 +11,9 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.core.session.SessionRegistry;
+import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -171,8 +173,17 @@ public class SecurityConfig {
   }
 
   @Bean
+  @ConditionalOnProperty(name = "ls.redis-enabled", havingValue = "true")
   SessionRegistry sessionRegistry(FindByIndexNameSessionRepository<? extends Session> sessionRepository){
       return new SpringSessionBackedSessionRegistry<>(sessionRepository);
+  }
+
+  // ls.redis-enabled=false(local/developer, JWT 방식)일 때 대체 — filterChain의 redis 분기에서는 사용되지 않지만
+  // Spring이 @Bean 메서드를 항상 인스턴스화하려 하므로, Redis 없이도 SessionRegistry 타입 빈 자체는 존재해야 부팅됨.
+  @Bean
+  @ConditionalOnProperty(name = "ls.redis-enabled", havingValue = "false", matchIfMissing = true)
+  SessionRegistry sessionRegistryInMemory(){
+      return new SessionRegistryImpl();
   }
 
     @Bean

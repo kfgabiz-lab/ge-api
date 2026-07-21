@@ -52,8 +52,8 @@ public class PageDataService {
   @PersistenceContext
     private EntityManager entityManager;
 
-    /** 예약 파라미터 — 검색 조건에서 제외 */
-  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged");
+    /** 예약 파라미터 — 검색 조건에서 제외 (exclude는 응답 경량화용 필드제외 지시라 WHERE 조건이 아님) */
+  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude");
 
     /**
      * 목록 조회 — 동적 JSONB 검색 + 페이지네이션
@@ -178,6 +178,11 @@ public class PageDataService {
     List<PageDataResponse> content = rows.stream()
                 .map(row -> mapRowToResponse(row, userNameMap))
                 .toList();
+
+    // exclude 파라미터 — 목록 응답에서 지정 필드(예: content)를 섹션 깊이와 무관하게 제거하여 페이로드 경량화
+    // (base64 인라인 이미지가 박힌 content 등 무거운 필드 제외용). 성능 최적화 장치일 뿐 slugkey 매핑(flatten)
+    // 메커니즘은 건드리지 않으며, 남은 필드는 기존과 100% 동일하게 매핑됨. exclude가 없으면 전체 필드 그대로 반환(하위호환)
+    applyExclude(content, allParams.get("exclude"));
 
     // FETCH 관계 적용 — slave 데이터를 master 응답에 병합
     content = applyFetch(slug, content);
@@ -686,6 +691,49 @@ public class PageDataService {
   }
 
     // ── private 헬퍼 ──────────────────────────────────────────
+
+    /**
+     * exclude 파라미터 처리 — 콤마구분 필드명(예: "content" 또는 "content,foo")을 각 응답 dataJson에서 재귀 제거
+     * 섹션(폼 wrapper) 깊이와 무관하게 해당 leaf 키를 찾아 삭제하여, 대용량 필드(base64 인라인 이미지 등)로 인한
+     * 응답 페이로드 비대화를 방지한다. excludeParam이 비어있으면 아무 것도 하지 않음(기존과 100% 동일, 하위호환).
+     *
+     * @param content     응답 목록 (각 항목의 dataJson을 제자리 수정)
+     * @param excludeParam 콤마구분 제외 필드명 문자열 (null/blank면 무시)
+     */
+  private void applyExclude(List<PageDataResponse> content, String excludeParam) {
+    if (excludeParam == null || excludeParam.isBlank()) return;
+    Set<String> excludeKeys = new HashSet<>();
+    for (String k : excludeParam.split(",")) {
+      String trimmed = k.trim();
+      if (!trimmed.isEmpty()) excludeKeys.add(trimmed);
+    }
+    if (excludeKeys.isEmpty()) return;
+    for (PageDataResponse r : content) {
+      removeExcludedKeys(r.getDataJson(), excludeKeys);
+    }
+  }
+
+    /**
+     * dataJson 트리를 재귀 순회하며 excludeKeys에 해당하는 키를 모든 깊이에서 제거 (Map/List 중첩 모두 대응)
+     * 남은 필드의 구조/키는 전혀 손대지 않으므로 FE의 flatten 기반 slugkey 매핑에 영향이 없다.
+     */
+    @SuppressWarnings("unchecked")
+  private void removeExcludedKeys(Object node, Set<String> excludeKeys) {
+    if (node instanceof Map) {
+      Map<String, Object> map = (Map<String, Object>) node;
+      if (map.isEmpty()) return; // Collections.emptyMap 등 불변 빈 맵에 대한 remove 호출 회피
+      // 현재 레벨에서 제외 대상 키 제거
+      for (String k : excludeKeys) map.remove(k);
+      // 남은 값 중 중첩 구조(Map/List)만 재귀 순회
+      for (Object v : map.values()) {
+        if (v instanceof Map || v instanceof List) removeExcludedKeys(v, excludeKeys);
+      }
+    } else if (node instanceof List) {
+      for (Object item : (List<Object>) node) {
+        if (item instanceof Map || item instanceof List) removeExcludedKeys(item, excludeKeys);
+      }
+    }
+  }
 
     /**
      * PK 중복 체크 — pkKeys에 해당하는 필드 값이 동일한 레코드가 이미 존재하면 예외 발생
