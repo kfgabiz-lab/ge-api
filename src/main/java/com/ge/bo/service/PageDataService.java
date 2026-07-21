@@ -1,9 +1,11 @@
 package com.ge.bo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ge.bo.dto.AdjacentResponse;
 import com.ge.bo.dto.PageDataListResponse;
 import com.ge.bo.dto.PageDataRequest;
 import com.ge.bo.dto.PageDataResponse;
+import com.ge.bo.exception.BusinessException;
 import com.ge.bo.entity.AdminUser;
 import com.ge.bo.entity.PageData;
 import com.ge.bo.entity.SlugRelation;
@@ -178,6 +180,98 @@ public class PageDataService {
                 .last((page + 1) >= totalPages)
                 .first(page == 0)
                 .build();
+  }
+
+    /**
+     * FO 공개 상세 단건 조회 — search()의 content[0]과 동일 형태의 단건을 반환
+     * 상태 게이트(statusParams) 조건을 통과하지 못하거나 데이터가 없으면 null 반환(컨트롤러에서 404 처리)
+     * 성능 최적화를 위해 applyFetch/사용자명 조회는 생략 — createdBy/updatedBy는 원본 id 문자열 그대로 전달
+     *
+     * @param slug      페이지 식별자(data_slug)
+     * @param id        데이터 PK
+     * @param allParams 요청 Query Params 전체 (상태 게이트 조건 포함)
+     * @param siteId    사이트 스코프 (없으면 전체 대상)
+     */
+  @Transactional(readOnly = true)
+    public PageDataResponse findPublicDetail(String slug, Long id, Map<String, String> allParams, Long siteId) {
+        // 상태 게이트 조건 추출 — search()와 동일하게 예약 파라미터/빈 값 제외
+    Map<String, String> statusParams = extractStatusParams(allParams);
+
+        // WHERE 절 동적 생성 — slug + id 고정, 사이트 스코프 + 상태 게이트 조건 추가
+    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug AND id = :id");
+    if (siteId != null) {
+      whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
+    }
+    appendWhereConditions(whereClause, statusParams);
+
+    String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
+                + " created_by, created_at, updated_by, updated_at "
+                + "FROM page_data " + whereClause
+                + " LIMIT 1";
+    Query dataQuery = entityManager.createNativeQuery(dataSql);
+    dataQuery.setParameter("slug", slug);
+    dataQuery.setParameter("id", id);
+    if (siteId != null) {
+      dataQuery.setParameter("siteId", siteId);
+    }
+    bindSearchParams(dataQuery, statusParams);
+
+    @SuppressWarnings("unchecked")
+        List<Object[]> rows = dataQuery.getResultList();
+    if (rows.isEmpty()) {
+      return null;
+    }
+        // 사용자명 조회/FETCH 병합 없이 원본 그대로 매핑 (createdBy/updatedBy는 id 문자열 그대로)
+    return mapRowToResponse(rows.get(0), Collections.emptyMap());
+  }
+
+    /**
+     * FO 공개 인접글(이전/다음) 조회 — 정렬 기준(sortField)으로 튜플 비교하여 prev/next를 각 1건씩 반환
+     * sortField/titleField는 data_json 경로 또는 감사 컬럼으로 화이트리스트 검증 후 SQL 표현식으로 조립(SQL Injection 방지)
+     * 기준 레코드(자기 자신)는 (sortExpr, id) 튜플 비교로 자동 제외됨
+     *
+     * @param slug       페이지 식별자(data_slug)
+     * @param id         기준 데이터 PK
+     * @param sortField  정렬 기준 필드 (단순 키 / dot notation / 감사 컬럼)
+     * @param titleField 제목 표시 필드 (단순 키 / dot notation)
+     * @param allParams  요청 Query Params 전체 (상태 게이트 조건 포함)
+     * @param siteId     사이트 스코프
+     */
+  @Transactional(readOnly = true)
+    public AdjacentResponse findAdjacent(String slug, Long id, String sortField, String titleField,
+                                         Map<String, String> allParams, Long siteId) {
+        // 상태 게이트 조건 추출 — sortField/titleField는 WHERE 조건이 아니므로 제외(page/size/sort는 RESERVED_PARAMS로 이미 제외)
+    Map<String, String> statusParams = extractStatusParams(allParams, "sortField", "titleField");
+
+        // 정렬/제목 표현식 해석 — 화이트리스트 검증 후 안전한 SQL 경로로 조립 (정렬만 감사 컬럼 허용)
+    String sortExpr = resolveFieldExpr(sortField, true);
+    String titleExpr = resolveFieldExpr(titleField, false);
+
+        // 기준 WHERE — slug + 사이트 스코프 + 상태 게이트 (self 제외는 아래 튜플 비교로 처리)
+    StringBuilder baseWhere = new StringBuilder("WHERE data_slug = :slug");
+    if (siteId != null) {
+      baseWhere.append(" AND (site_id = :siteId OR site_id IS NULL)");
+    }
+    appendWhereConditions(baseWhere, statusParams);
+
+        // 기준 레코드의 정렬값 서브쿼리
+    String curVal = "(SELECT " + sortExpr + " FROM page_data WHERE data_slug = :slug AND id = :id)";
+
+        // 이전글 — 정렬 오름차순 기준으로 (값이 크거나, 값이 같고 id가 큰) 첫 레코드
+    String prevSql = "SELECT id, " + titleExpr + " AS title FROM page_data " + baseWhere
+                + " AND (" + sortExpr + " > " + curVal
+                + " OR (" + sortExpr + " = " + curVal + " AND id > :id))"
+                + " ORDER BY " + sortExpr + " ASC, id ASC LIMIT 1";
+
+        // 다음글 — 정렬 내림차순 기준으로 (값이 작거나, 값이 같고 id가 작은) 첫 레코드
+    String nextSql = "SELECT id, " + titleExpr + " AS title FROM page_data " + baseWhere
+                + " AND (" + sortExpr + " < " + curVal
+                + " OR (" + sortExpr + " = " + curVal + " AND id < :id))"
+                + " ORDER BY " + sortExpr + " DESC, id DESC LIMIT 1";
+
+    AdjacentResponse.AdjacentItem prev = queryAdjacentItem(prevSql, slug, id, siteId, statusParams);
+    AdjacentResponse.AdjacentItem next = queryAdjacentItem(nextSql, slug, id, siteId, statusParams);
+    return new AdjacentResponse(prev, next);
   }
 
     /**
@@ -1336,6 +1430,78 @@ public class PageDataService {
     }
     path.append("->>'").append(segments[segments.length - 1]).append("'");
     return path.toString();
+  }
+
+  /**
+   * 상태 게이트 조건 파라미터 추출 — search()와 동일하게 예약 파라미터(page/size/sort)/빈 값 제외
+   * extraExcludeKeys: 추가로 제외할 키 (인접글의 sortField/titleField처럼 WHERE 조건이 아닌 파라미터)
+   */
+  private Map<String, String> extractStatusParams(Map<String, String> allParams, String... extraExcludeKeys) {
+    Set<String> excludes = new HashSet<>(RESERVED_PARAMS);
+    excludes.addAll(Arrays.asList(extraExcludeKeys));
+    Map<String, String> statusParams = new LinkedHashMap<>();
+    allParams.forEach((key, value) -> {
+      if (excludes.contains(key) || value == null || value.isBlank()) return;
+      statusParams.put(key, value);
+    });
+    return statusParams;
+  }
+
+  /**
+   * 인접글 정렬/제목 필드를 안전한 SQL 표현식으로 해석 — 화이트리스트 검증으로 SQL Injection 차단
+   * - dot notation("blog.title"): 세그먼트 검증 후 buildJsonPath (data_json->'blog'->>'title')
+   * - 단순 키: allowAudit=true이고 감사 컬럼이면 실제 컬럼(created_at 등), 아니면 [a-zA-Z0-9_]+ 검증 후 data_json->>'key'
+   * 검증 실패 시 400(BusinessException.badRequest)
+   *
+   * @param field      필드 표현(sortField/titleField)
+   * @param allowAudit 감사 컬럼 매핑 허용 여부 (정렬은 허용, 제목은 불허)
+   */
+  private String resolveFieldExpr(String field, boolean allowAudit) {
+    if (field == null || field.isBlank()) {
+      throw BusinessException.badRequest("필드값이 필요합니다.");
+    }
+    if (field.contains(".")) {
+      String[] segs = field.split("\\.");
+      if (!isValidSegments(segs)) {
+        throw BusinessException.badRequest("올바르지 않은 필드 경로입니다: " + field);
+      }
+      return buildJsonPath(segs);
+    }
+    if (allowAudit) {
+      String auditCol = toAuditColumn(field);
+      if (auditCol != null) {
+        return auditCol;
+      }
+    }
+    if (!field.matches("[a-zA-Z0-9_]+")) {
+      throw BusinessException.badRequest("올바르지 않은 필드명입니다: " + field);
+    }
+    return "data_json->>'" + field + "'";
+  }
+
+  /**
+   * 인접글 단건 쿼리 실행 — slug/id/(siteId)/상태 게이트 바인딩 후 [id, title] → AdjacentItem 변환
+   * 결과가 없으면 null 반환
+   */
+  private AdjacentResponse.AdjacentItem queryAdjacentItem(String sql, String slug, Long id, Long siteId,
+                                                          Map<String, String> statusParams) {
+    Query query = entityManager.createNativeQuery(sql);
+    query.setParameter("slug", slug);
+    query.setParameter("id", id);
+    if (siteId != null) {
+      query.setParameter("siteId", siteId);
+    }
+    bindSearchParams(query, statusParams);
+
+    @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+    if (rows.isEmpty()) {
+      return null;
+    }
+    Object[] row = rows.get(0);
+    Long rowId = ((Number) row[0]).longValue();
+    String title = row[1] != null ? row[1].toString() : null;
+    return new AdjacentResponse.AdjacentItem(rowId, title);
   }
 
   /** 조건식(evalConditionExpr 문법 재사용) 토큰 — key OP value, value가 today()면 날짜 비교(isToday=true, value=null) */

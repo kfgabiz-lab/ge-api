@@ -1,6 +1,8 @@
 package com.ge.bo.controller;
 
+import com.ge.bo.dto.AdjacentResponse;
 import com.ge.bo.dto.PageDataListResponse;
+import com.ge.bo.dto.PageDataResponse;
 import com.ge.bo.service.PageDataService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -38,5 +40,38 @@ public class FoPageDataController {
             @RequestParam(defaultValue = "20") int size,
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
         return ResponseEntity.ok(pageDataService.search(slug, allParams, page, size, siteId));
+    }
+
+    /**
+     * 상세 단건 조회 — 목록(search) content[0]과 동일한 PageDataResponse 반환
+     * GET /api/v1/fo/page-data/{slug}/{id}
+     * 데이터가 없거나 상태 게이트 조건을 통과하지 못하면 404
+     * (id는 Long이므로 숫자 경로만 매칭 — 비숫자 경로는 타입 변환 실패로 400)
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<PageDataResponse> detail(
+            @PathVariable String slug,
+            @PathVariable Long id,
+            @RequestParam Map<String, String> allParams,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        PageDataResponse response = pageDataService.findPublicDetail(slug, id, allParams, siteId);
+        return response != null ? ResponseEntity.ok(response) : ResponseEntity.notFound().build();
+    }
+
+    /**
+     * 인접글(이전/다음) 조회 — 정렬 기준으로 prev/next를 각 1건씩 반환
+     * GET /api/v1/fo/page-data/{slug}/{id}/adjacent?sortField=...&titleField=...
+     * 응답: {"prev":{"id","title"}|null, "next":{"id","title"}|null}
+     */
+    @GetMapping("/{id}/adjacent")
+    public ResponseEntity<AdjacentResponse> adjacent(
+            @PathVariable String slug,
+            @PathVariable Long id,
+            @RequestParam String sortField,
+            @RequestParam String titleField,
+            @RequestParam Map<String, String> allParams,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.ok(
+                pageDataService.findAdjacent(slug, id, sortField, titleField, allParams, siteId));
     }
 }
