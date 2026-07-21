@@ -14,9 +14,24 @@ spring:
       max-request-size: 200MB   # 요청 전체 최대 크기
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
+  session:
+    store-type: redis
+    timeout: 30m
+    redis:
+      namespace: nahpdev:session
+      flush-mode: on-save
+      save-mode: on-set-attribute
+      repository-type: indexed
 
 server:
   port: 8080
+  servlet:
+    session:
+      cookie:
+        name: SESSION
+        http-only: true
+        same-site: lax
+        path: /
 
 # JWT 설정
 app:

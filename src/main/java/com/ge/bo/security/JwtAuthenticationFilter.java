@@ -20,7 +20,6 @@ import java.util.List;
  * 모든 요청에서 JWT 토큰을 추출하고 인증 처리하는 필터
  */
 @Slf4j
-@Component
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 

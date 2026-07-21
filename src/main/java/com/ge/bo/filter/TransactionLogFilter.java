@@ -9,6 +9,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingRequestWrapper;
@@ -35,6 +38,9 @@ public class TransactionLogFilter extends OncePerRequestFilter {
   /** 로그 저장 제외 URL 접두사 (로그인·인증 관련 민감 요청) */
   private static final String EXCLUDE_AUTH_PREFIX = "/api/v1/auth/";
 
+  @Value("${ls.redis-enabled:false}")
+  private boolean redisEnabled;
+
   @Override
   protected void doFilterInternal(HttpServletRequest request,
       HttpServletResponse response,
@@ -53,8 +59,17 @@ public class TransactionLogFilter extends OncePerRequestFilter {
     ContentCachingRequestWrapper wrappedRequest = new ContentCachingRequestWrapper(request);
     long startTime = System.currentTimeMillis();
 
-    // JWT 토큰에서 직접 추출 — SecurityContextHolder 순서 문제를 우회
-    String loginUser = extractLoginUserFromToken(request);
+    String loginUser = null;
+    if(redisEnabled){
+      Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+
+      if (authentication != null && authentication.isAuthenticated()) {
+        loginUser = authentication.getName();
+      }
+    }else {
+      // JWT 토큰에서 직접 추출 — SecurityContextHolder 순서 문제를 우회
+      loginUser = extractLoginUserFromToken(request);
+    }
 
     try {
       filterChain.doFilter(wrappedRequest, response);

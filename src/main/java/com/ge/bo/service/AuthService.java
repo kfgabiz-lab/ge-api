@@ -1,14 +1,24 @@
 package com.ge.bo.service;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +36,7 @@ import com.ge.bo.sso.SsoResultCode;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -36,6 +47,9 @@ public class AuthService {
 
   private static final long REFRESH_TOKEN_DAYS = 7L;
   private static final String PENDING_ROLE = "PENDING_ADMIN";
+
+  private final SessionAuthenticationStrategy sessionAuthenticationStrategy;
+  private final SecurityContextRepository securityContextRepository;
 
   /** 공통코드 LOGIN_LOCK_MAX_ATTEMPTS.name 에서 로드, 기본값 5 */
   private int maxFailedAttempts = 5;
@@ -51,12 +65,19 @@ public class AuthService {
   @Value("${ls.isApiLogin:false}")
   private boolean isApiLogin;
 
+  @Value("${ls.redis-enabled:false}")
+  private boolean redisEnabled;
+
   @Value("${ls.lse.sso.sysName:NAHP}")
   private String ssoSysName;
 
   /** SSO 자동 생성 계정의 기본 역할 코드 */
   @Value("${ls.lse.sso.defaultRole:USER}")
   private String ssoDefaultRole;
+
+  /** session 만료 시간 **/
+  @Value("${spring.session.timeout}")
+  private Duration sessionTimeout;
 
   private final AdminRepository adminRepository;
   private final RoleRepository roleRepository;
@@ -99,16 +120,16 @@ public class AuthService {
    * @return LoginResponse
    */
   @Transactional
-  public LoginResponse login(LoginRequest request, String clientIp, String userAgent) {
+  public LoginResponse login(LoginRequest request, String clientIp, String userAgent, HttpServletRequest req) {
     if (request.getEmail() == null || request.getEmail().isBlank()
-        || request.getPassword() == null || request.getPassword().isBlank()) {
+            || request.getPassword() == null || request.getPassword().isBlank()) {
       loginLogService.saveAsync(null, request.getEmail(), "FAIL", "INVALID_CREDENTIALS", clientIp, userAgent);
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
-          "ID or password가 일치하지 않습니다.");
+              "ID or password가 일치하지 않습니다.");
     }
 
     if (isApiLogin) {
-      return ssoLogin(request, clientIp, userAgent);
+      return ssoLogin(request, clientIp, userAgent, req);
     }
 
     // reCAPTCHA 토큰 검증
@@ -119,7 +140,7 @@ public class AuthService {
     if (adminOpt.isEmpty()) {
       loginLogService.saveAsync(null, request.getEmail(), "FAIL", "USER_NOT_FOUND", clientIp, userAgent);
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
-          "ID or password가 일치하지 않습니다.");
+              "ID or password가 일치하지 않습니다.");
     }
     AdminUser admin = adminOpt.get();
 
@@ -139,11 +160,11 @@ public class AuthService {
         }
         loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent);
         throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
-            "비밀번호 " + attempts + "회 실패 하셨습니다. " + maxFailedAttempts + "회 실패 시 계정 비활성화됩니다.");
+                "비밀번호 " + attempts + "회 실패 하셨습니다. " + maxFailedAttempts + "회 실패 시 계정 비활성화됩니다.");
       }
       loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent);
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
-          "ID or password가 일치하지 않습니다.");
+              "ID or password가 일치하지 않습니다.");
     }
 
     // 비밀번호 검증 성공 — 실패 카운터 초기화 + lastLoginAt 갱신
@@ -160,41 +181,10 @@ public class AuthService {
 
     // 2차인증 비활성화 시 바로 accessToken 발급
     if (!totpEnabled) {
-      boolean isSystem = roleRepository.findByCode(admin.getRole())
-          .map(role -> role.isSystem())
-          .orElse(false);
-      String accessToken = jwtTokenProvider.generateAccessToken(admin.getEmail(), admin.getRole());
-      return LoginResponse.builder()
-          .accessToken(accessToken)
-          .expiresIn(3600L)
-          .adminInfo(LoginResponse.AdminInfo.builder()
-              .id(admin.getId())
-              .name(admin.getName())
-              .email(admin.getEmail())
-              .role(admin.getRole())
-              .isSystem(isSystem)
-              .build())
-          .build();
+      return directLoginResponse(admin);
+    }else{
+      return tempLoginResponse(req, admin);
     }
-
-    // 2FA 미완료 상태 임시 토큰 발급 (10분 유효)
-    String tempToken = jwtTokenProvider.generateTotpPendingToken(admin.getEmail());
-
-    if (!admin.isTotpEnabled()) {
-      // 2FA 미등록 → QR 등록 화면으로
-      return LoginResponse.builder()
-          .tempToken(tempToken)
-          .requireTotpSetup(true)
-          .requireTotpVerify(false)
-          .build();
-    }
-
-    // 2FA 등록 완료 → OTP 입력 화면으로
-    return LoginResponse.builder()
-        .tempToken(tempToken)
-        .requireTotpSetup(false)
-        .requireTotpVerify(true)
-        .build();
   }
 
   /**
@@ -204,7 +194,7 @@ public class AuthService {
    * @return 새 액세스 토큰 및 관리자 정보 응답 DTO
    */
   @Transactional(readOnly = true)
-  public LoginResponse refresh(String refreshToken) {
+  public LoginResponse refreshWithJwt(String refreshToken) {
     if (refreshToken == null || !jwtTokenProvider.validateToken(refreshToken)) {
       throw BusinessException.unauthorized("유효하지 않은 Refresh Token입니다.");
     }
@@ -236,11 +226,20 @@ public class AuthService {
   }
 
   /**
+   * 로그아웃 처리 (session 삭제)
+   *
+   * @param request HTTP 응답 객체 (쿠키 만료 설정용)
+   */
+  public void logout(HttpServletRequest request) {
+    invalidateLoginSession(request);
+  }
+
+  /**
    * 로그아웃 처리 (Refresh Token 쿠키 만료)
    *
    * @param response HTTP 응답 객체 (쿠키 만료 설정용)
    */
-  public void logout(HttpServletResponse response) {
+  public void logoutWithJwt(HttpServletResponse response) {
     clearRefreshTokenCookie(response);
   }
 
@@ -280,7 +279,7 @@ public class AuthService {
    * FAIL  → 실패 누적 없이 SSO 메시지 반환 (퇴사자/휴직자 등)
    * ERROR → 실패횟수 +1 후 오류 메시지 반환
    */
-  private LoginResponse ssoLogin(LoginRequest request, String clientIp, String userAgent) {
+  private LoginResponse ssoLogin(LoginRequest request, String clientIp, String userAgent, HttpServletRequest req) {
     Optional<AdminUser> existing = adminRepository.findByEmail(request.getEmail());
     if (existing.isPresent()) {
       AdminUser a = existing.get();
@@ -360,36 +359,10 @@ public class AuthService {
 
     // 기존 TOTP 흐름과 동일
     if (!totpEnabled) {
-      boolean isSystem = roleRepository.findByCode(admin.getRole())
-          .map(role -> role.isSystem())
-          .orElse(false);
-      String accessToken = jwtTokenProvider.generateAccessToken(admin.getEmail(), admin.getRole());
-      return LoginResponse.builder()
-          .accessToken(accessToken)
-          .expiresIn(3600L)
-          .adminInfo(LoginResponse.AdminInfo.builder()
-              .id(admin.getId())
-              .name(admin.getName())
-              .email(admin.getEmail())
-              .role(admin.getRole())
-              .isSystem(isSystem)
-              .build())
-          .build();
+      return directLoginResponse(admin);
+    }else{
+      return tempLoginResponse(req, admin);
     }
-
-    String tempToken = jwtTokenProvider.generateTotpPendingToken(admin.getEmail());
-    if (!admin.isTotpEnabled()) {
-      return LoginResponse.builder()
-          .tempToken(tempToken)
-          .requireTotpSetup(true)
-          .requireTotpVerify(false)
-          .build();
-    }
-    return LoginResponse.builder()
-        .tempToken(tempToken)
-        .requireTotpSetup(false)
-        .requireTotpVerify(true)
-        .build();
   }
 
   /** SSO 최초 로그인 유저 엔티티 빌드 */
@@ -404,5 +377,190 @@ public class AuthService {
         .isActive(false)
         .lastLoginAt(OffsetDateTime.now())
         .build();
+  }
+
+  /* 2차 로그인 사용 안함(로컬용) */
+  private LoginResponse directLoginResponse(AdminUser admin){
+    boolean isSystem = roleRepository.findByCode(admin.getRole())
+            .map(role -> role.isSystem())
+            .orElse(false);
+    if(redisEnabled){
+      return LoginResponse.builder()
+              .accessToken("SUCCESS")
+              .adminInfo(LoginResponse.AdminInfo.builder()
+                      .id(admin.getId())
+                      .name(admin.getName())
+                      .email(admin.getEmail())
+                      .role(admin.getRole())
+                      .isSystem(isSystem)
+                      .build())
+              .build();
+    }else {
+      String accessToken = jwtTokenProvider.generateAccessToken(admin.getEmail(), admin.getRole());
+      return LoginResponse.builder()
+              .accessToken(accessToken)
+              .expiresIn(3600L)
+              .adminInfo(LoginResponse.AdminInfo.builder()
+                      .id(admin.getId())
+                      .name(admin.getName())
+                      .email(admin.getEmail())
+                      .role(admin.getRole())
+                      .isSystem(isSystem)
+                      .build())
+              .build();
+    }
+  }
+
+  /* 1차 로그인 임시 로그인(2차 로그인 사용 시) */
+  private LoginResponse tempLoginResponse(HttpServletRequest req, AdminUser admin){
+    String tempToken = null;
+    if(redisEnabled){
+      startMfa(req, admin.getEmail());
+    }else {
+      // 2FA 미완료 상태 임시 토큰 발급 (10분 유효)
+      tempToken = jwtTokenProvider.generateTotpPendingToken(admin.getEmail());
+    }
+    if (!admin.isTotpEnabled()) {
+      // 2FA 미등록 → QR 등록 화면으로
+      return LoginResponse.builder()
+              .tempToken(tempToken)
+              .requireTotpSetup(true)
+              .requireTotpVerify(false)
+              .build();
+    } else {
+      // 2FA 등록 완료 → OTP 입력 화면으로
+      return LoginResponse.builder()
+              .tempToken(tempToken)
+              .requireTotpSetup(false)
+              .requireTotpVerify(true)
+              .build();
+    }
+  }
+
+  // 임시 session 발급(
+  public void startMfa(
+          HttpServletRequest request,
+          String email
+  ) {
+    HttpSession session = request.getSession(true);
+
+    session.setAttribute("MFA_EMAIL", email);
+    session.setAttribute("MFA_VERIFIED", false);
+    session.setMaxInactiveInterval(600); // 2차 인증 제한 10분
+
+  }
+
+  // session 생성 및 로그인 처리
+  public void makeSessionAndAuth(
+          HttpServletRequest request,
+          HttpServletResponse response,
+          String email,
+          String role
+  ) {
+    String authority = role.startsWith("ROLE_") ? role : "ROLE_" + role;
+
+    Authentication authentication =
+        UsernamePasswordAuthenticationToken.authenticated(
+                    email,
+                    null,
+                    List.of(new SimpleGrantedAuthority(authority))
+            );
+
+    // 중복 세션 검사 및 세션 등록
+    sessionAuthenticationStrategy.onAuthentication(
+            authentication,
+            request,
+            response
+    );
+
+    SecurityContext context = SecurityContextHolder.createEmptyContext();
+    context.setAuthentication(authentication);
+
+    SecurityContextHolder.setContext(context);
+
+//    HttpSession session = request.getSession(true);
+//    session.setAttribute(
+//            HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
+//            context
+//    );
+
+    securityContextRepository.saveContext(
+            context,
+            request,
+            response
+    );
+
+  }
+
+  public void createLoginSession(
+          HttpServletRequest request,
+          HttpServletResponse response,
+          LoginResponse.AdminInfo adminInfo
+  ) {
+    HttpSession session = request.getSession(true);
+
+    String email = adminInfo.getEmail();
+    String role = adminInfo.getRole();
+
+    session.setAttribute("email", email);
+    session.setAttribute("role", role);
+    session.setMaxInactiveInterval(
+            Math.toIntExact(
+                    sessionTimeout.toSeconds()
+            )
+    );
+    makeSessionAndAuth(request, response, email, role);
+  }
+
+  /**
+   * Refresh Session
+   */
+  @Transactional(readOnly = true)
+  public LoginResponse refresh(HttpServletRequest request, Authentication authentication) {
+    if (authentication == null || !authentication.isAuthenticated()) {
+      throw BusinessException.unauthorized("인증이 필요합니다.");
+    }
+
+    HttpSession session = request.getSession(false);
+    if (session == null) {
+      throw BusinessException.unauthorized("세션이 만료되었습니다.");
+    }
+
+    String email = authentication.getName();
+
+    AdminUser admin = adminRepository.findByEmail(email)
+            .orElseThrow(() -> BusinessException.unauthorized("사용자를 찾을 수 없습니다."));
+
+    if (!admin.isActive()) {
+      throw new BusinessException(
+              HttpStatus.FORBIDDEN,
+              "ACCOUNT_LOCKED",
+              "잠긴 계정입니다. 관리자에게 문의하세요."
+      );
+    }
+
+    boolean isSystem = roleRepository.findByCode(admin.getRole())
+            .map(role -> role.isSystem())
+            .orElse(false);
+
+    return LoginResponse.builder()
+            .accessToken("SUCCESS") // 세션 방식에서는 accessToken 발급 안 함
+            .adminInfo(LoginResponse.AdminInfo.builder()
+                    .id(admin.getId())
+                    .name(admin.getName())
+                    .email(admin.getEmail())
+                    .role(admin.getRole())
+                    .isSystem(isSystem)
+                    .build())
+            .build();
+  }
+
+  public void invalidateLoginSession(HttpServletRequest request)
+  {
+    HttpSession session = request.getSession(false);
+
+    if (session != null) {
+      session.invalidate();
+    }
   }
 }
