@@ -110,8 +110,8 @@ public class MenuService {
      * visible=true 루트 메뉴 + visible=true 자식 메뉴만 반환
      */
   @Transactional(readOnly = true)
-    public List<FoGnbMenuResponse> getFoGnbMenus() {
-    List<Menu> rootMenus = menuRepository.findFoGnbRootMenus();
+    public List<FoGnbMenuResponse> getFoGnbMenus(Long siteId) {
+    List<Menu> rootMenus = menuRepository.findFoGnbRootMenus(siteId);
 
         /* 트리 전체를 재귀 순회하여 name/description msgKey를 수집 → en 배치 조회(단일 호출) */
     List<String> msgKeys = new ArrayList<>();
@@ -408,9 +408,12 @@ public class MenuService {
         // URL이 있는 경우에만 형식 검증은 validateUrlFormat에서 수행
   }
 
-    /** URL 형식 검증 */
+    /** URL 형식 검증 — 외부 링크(http/https)는 연속 슬래시 제한 대상에서 제외 */
   private void validateUrlFormat(String url) {
-    if (url != null && !url.isEmpty() && url.contains("//")) {
+    if (url == null || url.isEmpty() || url.startsWith("http://") || url.startsWith("https://")) {
+      return;
+    }
+    if (url.contains("//")) {
       throw ErrorCode.MENU_URL_INVALID.toException();
     }
   }

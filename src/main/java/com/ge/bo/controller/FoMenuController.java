@@ -5,6 +5,7 @@ import com.ge.bo.service.MenuService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -26,7 +27,8 @@ public class FoMenuController {
      * visible=true 루트 메뉴 + 자식 메뉴 트리 반환
      */
     @GetMapping("/gnb")
-    public ResponseEntity<List<FoGnbMenuResponse>> getGnbMenus() {
-        return ResponseEntity.ok(menuService.getFoGnbMenus());
+    public ResponseEntity<List<FoGnbMenuResponse>> getGnbMenus(
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.ok(menuService.getFoGnbMenus(siteId));
     }
 }

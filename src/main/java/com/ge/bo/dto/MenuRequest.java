@@ -24,9 +24,10 @@ public record MenuRequest(
     /** 메뉴 설명 다국어 키 — message_resource.key (WORD/SENTENCE 타입, 선택) */
     String descriptionMsgKey,
 
+    /** 내부 상대경로(영문/숫자/-_/?=&) 또는 외부 링크(http/https, 공백·XSS 문자만 아니면 허용) */
     @Size(max = 200, message = "URL은 200자 이하로 입력해주세요.")
-    @Pattern(regexp = "^$|^/[a-zA-Z0-9\\-_/?=&]*$",
-             message = "URL은 /로 시작하는 경로를 입력해주세요.")
+    @Pattern(regexp = "^$|^https?://[^\\s<>\"']+$|^[a-zA-Z0-9\\-_/?=&]*$",
+             message = "URL 형식이 올바르지 않습니다.")
     String url,
 
     @Size(max = 30, message = "아이콘명은 30자 이하여야 합니다.")

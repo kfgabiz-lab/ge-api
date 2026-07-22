@@ -5,6 +5,7 @@ import com.ge.bo.service.FoProductGroupService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -27,7 +28,8 @@ public class FoProductGroupController {
      * 공개(isVisible=001) 그룹 + 각 그룹 내 제품(ms) 상세를 정렬해 반환
      */
     @GetMapping
-    public ResponseEntity<List<FoProductGroupResponse>> getProductGroups() {
-        return ResponseEntity.ok(foProductGroupService.getProductGroups());
+    public ResponseEntity<List<FoProductGroupResponse>> getProductGroups(
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.ok(foProductGroupService.getProductGroups(siteId));
     }
 }

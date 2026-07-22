@@ -45,18 +45,24 @@ public class FoProductGroupService {
 
     /**
      * Discover Our Products — 공개 그룹 + 각 그룹 내 제품 목록 조회
+     * @param siteId 사이트 스코프(FoMenuController/PageDataService와 동일 패턴) — null이면 사이트 필터 미적용
      * @return 그룹 목록 (prdGrpOrd ASC, tie-breaker id ASC / 그룹 내 제품은 sortOrder ASC, tie-breaker id ASC)
      */
     @Transactional(readOnly = true)
-    public List<FoProductGroupResponse> getProductGroups() {
+    public List<FoProductGroupResponse> getProductGroups(Long siteId) {
         // 1) 공개(is_visible=001) 그룹 목록 조회 — product_group.group_order 오름차순(NULL/빈값은 마지막), 동률 시 id 오름차순
         //    구버전(테스트) 스키마는 is_visible 경로가 신 key(product_group) 아래에 없으므로 이 WHERE 에 자동 제외됨
+        //    site_id = :siteId OR site_id IS NULL — PageDataService/FoMenuController와 동일한 사이트 스코프 패턴
         String groupSql = "SELECT id, data_json::text FROM page_data"
                 + " WHERE data_slug = :slug"
                 + " AND data_json->'product_group'->>'is_visible' = '001'"
+                + (siteId != null ? " AND (site_id = :siteId OR site_id IS NULL)" : "")
                 + " ORDER BY NULLIF(data_json->'product_group'->>'group_order','')::numeric ASC NULLS LAST, id ASC";
         Query groupQuery = entityManager.createNativeQuery(groupSql);
         groupQuery.setParameter("slug", GROUP_SLUG);
+        if (siteId != null) {
+            groupQuery.setParameter("siteId", siteId);
+        }
 
         @SuppressWarnings("unchecked")
         List<Object[]> groupRows = groupQuery.getResultList();
