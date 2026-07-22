@@ -2,6 +2,7 @@ package com.ge.bo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.dto.AdjacentResponse;
+import com.ge.bo.dto.DevicesTreeRowResponse;
 import com.ge.bo.dto.PageDataListResponse;
 import com.ge.bo.dto.PageDataRequest;
 import com.ge.bo.dto.PageDataResponse;
@@ -189,8 +190,8 @@ public class PageDataService {
     // 메커니즘은 건드리지 않으며, 남은 필드는 기존과 100% 동일하게 매핑됨. exclude가 없으면 전체 필드 그대로 반환(하위호환)
     applyExclude(content, allParams.get("exclude"));
 
-    // FETCH 관계 적용 — slave 데이터를 master 응답에 병합
-    content = applyFetch(slug, content);
+    // FETCH 관계 적용 — slave 데이터를 master 응답에 병합 (TABLE 타입 배치조회에도 사이트 스코프 적용)
+    content = applyFetch(slug, content, siteId);
 
     if (unpaged) {
       // COUNT를 생략했으므로(totalElements=-1) SELECT로 실제 받은 건수를 그대로 사용한다.
@@ -338,6 +339,92 @@ public class PageDataService {
   }
 
     /**
+     * FO GNB "Devices & Systems" 메가메뉴 트리 데이터 — category-data 의 depth1(대분류) + depth2(하위분류)
+     * + depth3(제품 연결) 를 단일 네이티브 쿼리로 한 번에 조회한다.
+     * (기존: depth1/depth2/depth3 를 각각 개별 API 호출로 조립하던 방식 — N+1 제거가 목적)
+     * <p>
+     * - category-data 의 depth1/2 행은 data_json 에 "category" 섹션이 있고, depth3(제품 연결 junction) 행은
+     *   "category" 섹션이 없이 "product" 섹션만 존재한다 — CASE 분기로 depth/parentId 를 통일된 컬럼으로 추출.
+     * - depth3 의 product.id 는 product-data(PK) 를 가리키는 FK 이며, LEFT JOIN 으로 제품 표시 정보(slug/title/설명/이미지)를
+     *   함께 반환한다. product_title 은 junction(c) 이 아닌 조인된 product-data(p) 기준 — junction 의 product_name 필드는
+     *   추후 삭제 예정이라 참조하지 않는다.
+     * - 응답은 트리로 조립하지 않고 평평한(flat) 행 리스트 그대로 반환 — 부모-자식 조립은 FE 책임.
+     * - 정렬: depth1/2 는 sort_order 를 숫자로 캐스팅해 오름차순 정렬(문자열 정렬 시 "10"이 "9"보다 앞서는 기존 FE 버그 회피,
+     *   참고: fo/src/app/()/products-systems/data/productsSystemsData.ts:121-122). depth3(제품) 의 정렬 기준은
+     *   sort_order 값 자체가 없어 확인되지 않았으므로 row_id(등록 순서)로만 안정 정렬(fallback) — 확정 기준 아님.
+     *
+     * @param siteId 사이트 스코프(없으면 전체 대상) — 헤더(X-Site-Id) 로 전달, null 허용
+     */
+  @Transactional(readOnly = true)
+    public List<DevicesTreeRowResponse> findDevicesTree(Long siteId) {
+        // 주의: JSONB 존재연산자 '?' 는 Hibernate 네이티브 쿼리 파서가 JDBC 위치 파라미터(?)로 오인해
+        // named 파라미터(:siteId)와 섞이면 ParameterRecognitionException 이 발생한다('??' 이스케이프도 Hibernate 6 파서가
+        // 인식하지 못해 동일 오류 재발 확인됨) — 완전히 동일한 의미의 함수 jsonb_exists(json, key) 로 대체해 충돌 자체를 제거
+    String sql = "SELECT"
+        + "  c.id AS row_id,"
+        + "  CASE WHEN jsonb_exists(c.data_json, 'category')"
+        + "       THEN c.data_json->'category'->>'depth'"
+        + "       ELSE c.data_json->'product'->>'depth'"
+        + "  END AS depth,"
+        + "  CASE WHEN jsonb_exists(c.data_json, 'category')"
+        + "       THEN c.data_json->'category'->>'parentId'"
+        + "       ELSE c.data_json->'product'->>'parentId'"
+        + "  END AS parent_id,"
+        + "  c.data_json->'category'->>'title'                 AS category_title,"
+        + "  c.data_json->'device_systems'->>'description'     AS category_description,"
+        + "  c.data_json->'seo'->>'slug'                        AS category_slug,"
+        + "  c.data_json->>'sortOrder'                          AS sort_order,"
+        + "  (c.data_json->'product'->>'id')::bigint            AS product_id,"
+        + "  p.data_json->'seo'->>'slug'                        AS product_slug,"
+        + "  p.data_json->'product'->>'product_name'            AS product_title,"
+        + "  p.data_json->'product_info'->>'info_description'   AS product_description,"
+        + "  p.data_json->'product_info'->>'image'              AS product_image"
+        + " FROM page_data c"
+        + " LEFT JOIN page_data p"
+        + "  ON p.data_slug = 'product-data'"
+        + " AND p.id = (c.data_json->'product'->>'id')::bigint"
+        + " AND p.data_json->'product'->>'is_visible' = '001'"
+        + " AND (p.site_id = :siteId OR p.site_id IS NULL)"
+        + " WHERE c.data_slug = 'category-data'"
+        + "  AND CASE WHEN jsonb_exists(c.data_json, 'category')"
+        + "           THEN c.data_json->'category'->>'is_visible' = '001'"
+        + "           ELSE true"
+        + "      END"
+        + "  AND (c.site_id = :siteId OR c.site_id IS NULL)"
+            // 정렬은 확정 SQL 에 없던 절이나, sort_order 텍스트 정렬 버그 회피 위해 추가(WHERE/SELECT/JOIN 구조는 변경 없음)
+        + " ORDER BY"
+        + "  CASE WHEN jsonb_exists(c.data_json, 'category') THEN c.data_json->'category'->>'depth' ELSE c.data_json->'product'->>'depth' END ASC,"
+        + "  CASE WHEN c.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (c.data_json->>'sortOrder')::int END ASC NULLS LAST,"
+        + "  c.id ASC";
+
+    Query query = entityManager.createNativeQuery(sql);
+    query.setParameter("siteId", siteId);
+
+    @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+    List<DevicesTreeRowResponse> result = new ArrayList<>();
+    for (Object[] row : rows) {
+      result.add(new DevicesTreeRowResponse(
+          row[0] != null ? ((Number) row[0]).longValue() : null,
+          row[1] != null ? row[1].toString() : null,
+          row[2] != null ? row[2].toString() : null,
+          row[3] != null ? row[3].toString() : null,
+          // category_description 컬럼 추가로 이후 인덱스 전부 +1
+          row[4] != null ? row[4].toString() : null,
+          row[5] != null ? row[5].toString() : null,
+          row[6] != null ? row[6].toString() : null,
+          row[7] != null ? ((Number) row[7]).longValue() : null,
+          row[8] != null ? row[8].toString() : null,
+          row[9] != null ? row[9].toString() : null,
+          row[10] != null ? row[10].toString() : null,
+          row[11] != null ? row[11].toString() : null
+      ));
+    }
+    return result;
+  }
+
+    /**
      * 단건 조회
      *
      * @param slug 페이지 식별자
@@ -349,7 +436,8 @@ public class PageDataService {
                 .orElseThrow(ErrorCode.PAGE_DATA_NOT_FOUND::toException);
     PageDataResponse response = PageDataResponse.from(pageData);
     // _fetchedRel{id} 포함 — 검색 API와 동일한 FETCH 관계 적용
-    List<PageDataResponse> enriched = applyFetch(slug, List.of(response));
+    // getById()는 BO 단건 조회 전용(siteId 파라미터 없음)이라 사이트 스코프 없이 기존과 동일하게 조회
+    List<PageDataResponse> enriched = applyFetch(slug, List.of(response), null);
     PageDataResponse enrichedResponse = enriched.get(0);
     // createdBy/updatedBy id → name 변환
     return enrichedResponse.withUserNames(
@@ -2100,8 +2188,12 @@ public class PageDataService {
         }
     }
 
-    /** FETCH 관계 적용 — FETCH 방향 slug_relation으로 slave 데이터를 master content에 병합 */
-    private List<PageDataResponse> applyFetch(String slug, List<PageDataResponse> content) {
+    /**
+     * FETCH 관계 적용 — FETCH 방향 slug_relation으로 slave 데이터를 master content에 병합
+     * @param siteId 사이트 스코프 — TABLE 타입 배치조회(batchResolveTableFetch)에 그대로 전달되어
+     *               (site_id = :siteId OR site_id IS NULL) 조건으로 반영된다. null이면 조건 미적용(전체 대상, 기존 관례와 동일)
+     */
+    private List<PageDataResponse> applyFetch(String slug, List<PageDataResponse> content, Long siteId) {
         List<SlugRelation> fetchRelations = slugRelationRepository.findByMasterSlugAndRelationDir(slug, "FETCH");
         if (fetchRelations.isEmpty()) return content;
 
@@ -2118,7 +2210,7 @@ public class PageDataService {
                 .filter(v -> v != null && !v.isBlank())
                 .distinct()
                 .toList();
-            tableFetchCache.put(rel.getId(), batchResolveTableFetch(rel, masterValues));
+            tableFetchCache.put(rel.getId(), batchResolveTableFetch(rel, masterValues, siteId));
         }
 
         return content.stream().map(item -> {
@@ -2170,9 +2262,11 @@ public class PageDataService {
      *
      * @param rel          FETCH 관계(TABLE 타입, ARRAY_CONTAINS 아님)
      * @param masterValues 이번 배치에서 실제 사용된 masterValue 목록(중복 제거된 값)
+     * @param siteId       사이트 스코프 — search()/findPublicDetail()/exportAll()과 동일하게
+     *                     (site_id = :siteId OR site_id IS NULL) 조건으로 반영. null이면 조건 미적용(전체 대상)
      * @return masterValue → fetchedValue 매핑 (매칭 없으면 빈 Map)
      */
-    private Map<String, Object> batchResolveTableFetch(SlugRelation rel, List<String> masterValues) {
+    private Map<String, Object> batchResolveTableFetch(SlugRelation rel, List<String> masterValues, Long siteId) {
         if (masterValues.isEmpty()) return Collections.emptyMap();
 
         String idList = masterValues.stream().distinct()
@@ -2181,6 +2275,10 @@ public class PageDataService {
 
         StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
         appendSlaveKeyInCondition(sql, rel.getSlaveKey(), idList);
+        if (siteId != null) {
+            // 사이트 스코프 데이터 + 공통(NULL) 데이터 함께 조회 — search() 등 기존 메서드와 동일한 패턴 재사용
+            sql.append(" AND (site_id = :siteId OR site_id IS NULL)");
+        }
         Map<String, String> filterParams = new LinkedHashMap<>();
         if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
             appendSlaveFilter(sql, rel.getSlaveFilter(), filterParams);
@@ -2188,6 +2286,9 @@ public class PageDataService {
 
         Query q = entityManager.createNativeQuery(sql.toString());
         q.setParameter("slaveSlug", rel.getSlaveSlug());
+        if (siteId != null) {
+            q.setParameter("siteId", siteId);
+        }
         filterParams.forEach(q::setParameter);
 
         List<Object> results = q.getResultList();
