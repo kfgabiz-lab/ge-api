@@ -30,9 +30,18 @@ spring:
       password: ${AZURE_REDIS_ACCESS_KEY:}
       ssl:
         enabled: true
-      timeout: 5s
+      connect-timeout: 5s
+      timeout: 3s
   session:
+    store-type: redis
     timeout: 1d
+    redis:
+      namespace: nahpdev:session
+      flush-mode: on-save
+      save-mode: on-set-attribute
+      repository-type: indexed
+  cache:
+    type: redis
 
 server:
   servlet:

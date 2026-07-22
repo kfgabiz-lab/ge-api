@@ -215,6 +215,7 @@ public class SecurityConfig {
     }
 
     @Bean
+    @ConditionalOnProperty(name = "ls.redis-enabled", havingValue = "true")
     public ConfigureRedisAction configureRedisAction() {
         return ConfigureRedisAction.NO_OP;
     }
