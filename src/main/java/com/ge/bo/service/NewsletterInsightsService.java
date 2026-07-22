@@ -1,0 +1,101 @@
+package com.ge.bo.service;
+
+import com.ge.bo.common.mail.MailService;
+import com.ge.bo.dto.NewsletterInsightsRequest;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.web.util.HtmlUtils;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+@Service
+@RequiredArgsConstructor
+public class NewsletterInsightsService {
+	
+	//hub-spot 메일 미정으로 테스트
+    private static final String RECIPIENT_EMAIL = "comwjj@ls-electric.com";
+    private static final DateTimeFormatter SUBJECT_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    private final MailService mailService;
+    //page_data 저장용
+    private final EntityManager entityManager;
+    private final ObjectMapper objectMapper;
+    
+    @Transactional
+    public void send(NewsletterInsightsRequest request) {
+    	// 사용자 접속 위치에 따른 timezone 설정 (FE에서 받아옴)
+    	ZoneId KST = ZoneId.of(request.userTimeZone()); 	
+    	OffsetDateTime now = OffsetDateTime.now(KST);
+
+        String subject = "New Newsletter Subscriber (%s)".formatted(now.format(SUBJECT_DATE_FORMAT));
+        String content = buildMailContent(request);
+        
+        //1. hubspot 이메일 발송 후 발송상태 반환
+        String sendStatus = mailService.sendMail(RECIPIENT_EMAIL, subject, content);
+        //2. 이메일 발송 내역 저장 호출
+        saveEmailSendHistory(now, sendStatus);
+    }
+    
+    //메일 내용 세팅
+    private String buildMailContent(NewsletterInsightsRequest request) {
+        String email           = HtmlUtils.htmlEscape(request.email());
+        String areasOfInterest = HtmlUtils.htmlEscape(request.areasOfInterest());
+
+        return """
+                <div style="font-family: Arial, sans-serif; font-size: 14px; color: #222;">
+                    <p>- email : %s</p>
+                    <p>- Areas of interest : %s</p>
+                </div>
+                """.formatted(email, areasOfInterest);
+    }
+    
+    //이메일 발송 내역 저장
+    private void saveEmailSendHistory(OffsetDateTime sentAt, String sendStatus) {
+        Map<String, Object> dataJson = new LinkedHashMap<>();
+        dataJson.put("emailSendHis", Map.of(
+                     "emailSendType", "01",						  //분류(공통코드 EMAILSENDTYPE)
+                     "recipientEmail", "NEWSLETTER", 			  //수신Email(공통코드 EMAIL_RECIPIENT)
+                     "sendStatus", sendStatus,					  //발송상태(공통코드 SENDSTATUS)
+                     "sentAt", sentAt.format(SUBJECT_DATE_FORMAT) //발송일시
+        ));
+
+        try {
+            String dataJsonStr = objectMapper.writeValueAsString(dataJson);
+
+            Query insertQuery = entityManager.createNativeQuery("""
+                    INSERT INTO page_data
+                      (template_slug, data_slug, data_json, site_id, created_by, created_at, updated_by, updated_at)
+                    VALUES
+                      (:templateSlug, :dataSlug, CAST(:dataJson AS jsonb), :siteId, NULL, NOW(), NULL, NOW())
+                    RETURNING id
+                    """);
+            insertQuery.setParameter("templateSlug", "emailSendHis-list");
+            insertQuery.setParameter("dataSlug"    , "emailSendHis-data");
+            insertQuery.setParameter("dataJson"    , dataJsonStr);
+            insertQuery.setParameter("siteId"      , 1L);
+
+            Long newId = ((Number) insertQuery.getSingleResult()).longValue();
+
+            dataJson.put("id", newId);
+
+            Query updateQuery = entityManager.createNativeQuery("""
+                    UPDATE page_data
+                    SET data_json = CAST(:dataJson AS jsonb)
+                    WHERE id = :id
+                    """);
+            updateQuery.setParameter("dataJson", objectMapper.writeValueAsString(dataJson));
+            updateQuery.setParameter("id"      , newId);
+            updateQuery.executeUpdate();
+        } catch (Exception e) {
+            throw new IllegalStateException("이메일 발송 이력 저장 실패", e);
+        }
+    }
+}
