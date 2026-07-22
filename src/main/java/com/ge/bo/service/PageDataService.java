@@ -255,6 +255,33 @@ public class PageDataService {
   }
 
     /**
+     * FO 공개 상세 진입 시 조회수(count) 원자적 +1 — 상세조회(findPublicDetail) 트랜잭션과 완전히 별개인 write 전용
+     * 단일 SQL(SET "count" = "count" + 1)로 DB가 원자적으로 증가시켜 동시 요청에도 lost update 없음(별도 락 불필요)
+     * 존재하지 않는 slug/id 조합이면 0건 UPDATE로 예외 없이 통과 — 반환값(영향 row 수)은 검사하지 않음(fire-and-forget)
+     *
+     * @param slug   페이지 식별자(data_slug)
+     * @param id     데이터 PK
+     * @param siteId 사이트 스코프 (없으면 전체 대상)
+     */
+  @Transactional
+    public void incrementViewCount(String slug, Long id, Long siteId) {
+        // WHERE 절 동적 조립 — slug + id 고정, 사이트 스코프 있으면 추가 (findPublicDetail과 동일 패턴)
+    StringBuilder where = new StringBuilder("WHERE data_slug = :slug AND id = :id");
+    if (siteId != null) {
+      where.append(" AND (site_id = :siteId OR site_id IS NULL)");
+    }
+        // count는 PostgreSQL 예약어라 큰따옴표로 인용
+    Query q = entityManager.createNativeQuery(
+                "UPDATE page_data SET \"count\" = \"count\" + 1 " + where);
+    q.setParameter("slug", slug);
+    q.setParameter("id", id);
+    if (siteId != null) {
+      q.setParameter("siteId", siteId);
+    }
+    q.executeUpdate();
+  }
+
+    /**
      * FO 공개 인접글(이전/다음) 조회 — 정렬 기준(sortField)으로 튜플 비교하여 prev/next를 각 1건씩 반환
      * sortField/titleField는 data_json 경로 또는 감사 컬럼으로 화이트리스트 검증 후 SQL 표현식으로 조립(SQL Injection 방지)
      * 기준 레코드(자기 자신)는 (sortExpr, id) 튜플 비교로 자동 제외됨

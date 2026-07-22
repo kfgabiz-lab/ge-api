@@ -55,6 +55,10 @@ public class PageData {
   @Column(name = "group_id", length = 36)
     private String groupId;
 
+    /** 조회수 — DB DEFAULT 0으로 채워지며 일반 CRUD(save)로는 변경되지 않고 조회수 증가 네이티브 UPDATE로만 증가 */
+  @Column(name = "count", nullable = false, insertable = false, updatable = false)
+    private Long count;
+
   @CreatedBy
     @Column(name = "created_by", updatable = false, length = 100)
     private String createdBy;

@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -57,6 +58,21 @@ public class FoPageDataController {
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
         PageDataResponse response = pageDataService.findPublicDetail(slug, id, allParams, siteId);
         return response != null ? ResponseEntity.ok(response) : ResponseEntity.notFound().build();
+    }
+
+    /**
+     * 조회수 증가 — 상세 페이지 진입 시 count를 원자적으로 +1 (fire-and-forget, 바디 없음)
+     * POST /api/v1/fo/page-data/{slug}/{id}/view-count
+     * 존재/미존재 무관하게 항상 204 반환(열거 공격 방지) — 상세조회(detail)와 완전히 분리된 write 전용
+     * (id는 Long이므로 숫자 경로만 매칭 — 비숫자 경로는 타입 변환 실패로 400)
+     */
+    @PostMapping("/{id}/view-count")
+    public ResponseEntity<Void> incrementViewCount(
+            @PathVariable String slug,
+            @PathVariable Long id,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        pageDataService.incrementViewCount(slug, id, siteId);
+        return ResponseEntity.noContent().build();
     }
 
     /**
