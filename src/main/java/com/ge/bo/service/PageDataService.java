@@ -114,18 +114,23 @@ public class PageDataService {
       }
     }
 
-        // 전체 건수 조회
-    String countSql = "SELECT COUNT(*) FROM page_data " + whereClause;
-    Query countQuery = entityManager.createNativeQuery(countSql);
-    countQuery.setParameter("slug", slug);
-    if (siteId != null) {
-      countQuery.setParameter("siteId", siteId);
-    }
-    bindSearchParams(countQuery, searchParams);
-    long totalElements = ((Number) countQuery.getSingleResult()).longValue();
+        // 전체 건수 조회 — unpaged(페이지네이션 메타 미사용)면 COUNT를 생략하고 SELECT 결과 건수로 대체한다.
+        // (예: GNB 메가메뉴처럼 전체 목록을 한 번에 가져오는 호출은 totalElements/totalPages를 안 쓰는데도
+        //  COUNT가 매번 같이 실행되던 낭비를 없앤다)
+    long totalElements = -1; // unpaged일 때만 -1 유지, 아래 SELECT 이후 rows.size()로 대체
+    if (!unpaged) {
+      String countSql = "SELECT COUNT(*) FROM page_data " + whereClause;
+      Query countQuery = entityManager.createNativeQuery(countSql);
+      countQuery.setParameter("slug", slug);
+      if (siteId != null) {
+        countQuery.setParameter("siteId", siteId);
+      }
+      bindSearchParams(countQuery, searchParams);
+      totalElements = ((Number) countQuery.getSingleResult()).longValue();
 
-    if (totalElements == 0) {
-      return buildEmptyResponse(page, size);
+      if (totalElements == 0) {
+        return buildEmptyResponse(page, size);
+      }
     }
 
         // 정렬 조건 파싱 — "컬럼키,asc|desc" 형식, SQL Injection 방지
@@ -188,12 +193,14 @@ public class PageDataService {
     content = applyFetch(slug, content);
 
     if (unpaged) {
+      // COUNT를 생략했으므로(totalElements=-1) SELECT로 실제 받은 건수를 그대로 사용한다.
+      int actualCount = content.size();
       return PageDataListResponse.builder()
                     .content(content)
-                    .totalElements(totalElements)
+                    .totalElements(actualCount)
                     .totalPages(1)
                     .page(0)
-                    .size((int) totalElements)
+                    .size(actualCount)
                     .last(true)
                     .first(true)
                     .build();
@@ -2098,6 +2105,22 @@ public class PageDataService {
         List<SlugRelation> fetchRelations = slugRelationRepository.findByMasterSlugAndRelationDir(slug, "FETCH");
         if (fetchRelations.isEmpty()) return content;
 
+        // TABLE 타입(ARRAY_CONTAINS/CATEGORY 제외) FETCH는 row마다 개별 쿼리하지 않고 relation당 1회만 조회한다(N+1 방지).
+        // 이번 배치(content)에서 실제 참조된 masterValue만 모아 IN 조건 1건으로 조회 — 기존 applyTableFetchBatch와 동일한 패턴을 재사용한다.
+        Map<Long, Map<String, Object>> tableFetchCache = new HashMap<>();
+        for (SlugRelation rel : fetchRelations) {
+            boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
+            boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
+            if (isArrayContains || isCategory) continue; // ARRAY_CONTAINS/CATEGORY는 이번 범위 제외, 기존 방식 유지
+
+            List<String> masterValues = content.stream()
+                .map(item -> extractField(item.getDataJson(), rel.getMasterKey()))
+                .filter(v -> v != null && !v.isBlank())
+                .distinct()
+                .toList();
+            tableFetchCache.put(rel.getId(), batchResolveTableFetch(rel, masterValues));
+        }
+
         return content.stream().map(item -> {
             Map<String, Object> enriched = new LinkedHashMap<>(item.getDataJson());
             for (SlugRelation rel : fetchRelations) {
@@ -2120,9 +2143,10 @@ public class PageDataService {
                     if (masterValue == null || masterValue.isBlank()) continue;
 
                     // 반환값: fetch_fields 있으면 매칭 1건=String/2건 이상=List<String>, 없으면 Map<String,Object> 전체 객체
+                    // TABLE 타입은 위에서 relation당 1회 미리 조회해둔 tableFetchCache에서 조회(row별 쿼리 제거)
                     fetchedValue = isCategory
                         ? resolveCategoryFetch(rel, masterValue)
-                        : resolveTableFetch(rel, masterValue);
+                        : tableFetchCache.getOrDefault(rel.getId(), Collections.emptyMap()).get(masterValue);
                 }
 
                 if (fetchedValue != null) {
@@ -2139,8 +2163,66 @@ public class PageDataService {
     }
 
     /**
+     * TABLE 유형 FETCH 배치 조회(relation당 쿼리 1건) — applyFetch()에서 row-loop 밖으로 뺀 조회 로직
+     * - masterValues(이번 배치에서 실제 참조된 값만) 기준 IN 조건 1건으로 slave를 조회 후 slaveKey 값 기준으로 그룹핑
+     * - 반환값 포맷은 기존 resolveTableFetch()와 동일하게 유지한다: fetch_fields 있으면 매칭 1건=String/2건 이상=List<String>(합치지 않음),
+     *   fetch_fields 없으면 매칭된 slave 레코드 중 첫 번째 전체를 Map으로 반환
+     *
+     * @param rel          FETCH 관계(TABLE 타입, ARRAY_CONTAINS 아님)
+     * @param masterValues 이번 배치에서 실제 사용된 masterValue 목록(중복 제거된 값)
+     * @return masterValue → fetchedValue 매핑 (매칭 없으면 빈 Map)
+     */
+    private Map<String, Object> batchResolveTableFetch(SlugRelation rel, List<String> masterValues) {
+        if (masterValues.isEmpty()) return Collections.emptyMap();
+
+        String idList = masterValues.stream().distinct()
+            .map(v -> "'" + v + "'")
+            .collect(java.util.stream.Collectors.joining(","));
+
+        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        appendSlaveKeyInCondition(sql, rel.getSlaveKey(), idList);
+        Map<String, String> filterParams = new LinkedHashMap<>();
+        if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
+            appendSlaveFilter(sql, rel.getSlaveFilter(), filterParams);
+        }
+
+        Query q = entityManager.createNativeQuery(sql.toString());
+        q.setParameter("slaveSlug", rel.getSlaveSlug());
+        filterParams.forEach(q::setParameter);
+
+        List<Object> results = q.getResultList();
+        if (results.isEmpty()) return Collections.emptyMap();
+
+        // slaveKey 값 기준 그룹핑 (다건 매칭 가능)
+        Map<String, List<Map<String, Object>>> grouped = groupSlaveRecordsByKey(results, rel.getSlaveKey());
+        if (grouped.isEmpty()) return Collections.emptyMap();
+
+        boolean hasFetchFields = StringUtils.hasText(rel.getFetchFields());
+        Map<String, Object> resultMap = new LinkedHashMap<>();
+        for (Map.Entry<String, List<Map<String, Object>>> entry : grouped.entrySet()) {
+            List<Map<String, Object>> matched = entry.getValue();
+            if (!hasFetchFields) {
+                // fetch_fields 없음 → 매칭된 slave 레코드 중 첫 번째 전체를 Map으로 반환(resolveTableFetch와 동일 규칙)
+                resultMap.put(entry.getKey(), matched.get(0));
+                continue;
+            }
+            // fetch_fields 있음 → 해당 경로 값 문자열 추출(합치지 않음 — 매칭 건수에 따라 String 또는 List<String>)
+            List<String> values = new ArrayList<>();
+            for (Map<String, Object> m : matched) {
+                String val = extractField(m, rel.getFetchFields());
+                if (val != null) values.add(val);
+            }
+            if (!values.isEmpty()) {
+                resultMap.put(entry.getKey(), values.size() == 1 ? values.get(0) : values);
+            }
+        }
+        return resultMap;
+    }
+
+    /**
      * FETCH 관계 배치 적용 — 엑셀 export 전용, relation당 쿼리 1건(N+1 방지)
-     * search()/getById()가 사용하는 row당 조회 방식의 applyFetch()는 그대로 유지되며, 이 메서드와는 독립적으로 동작한다.
+     * search()/getById()가 사용하는 applyFetch()도 TABLE 타입은 동일하게 relation당 1회 조회(batchResolveTableFetch)로 개선되었으며,
+     * 이 메서드는 export 전용 rows(Map) 구조에 직접 값을 주입한다는 점에서 독립적으로 동작한다.
      * 이번 범위는 TABLE/ARRAY_CONTAINS 타입만 지원하며, CATEGORY 타입은 배치 대상에서 제외(후속 개발 예정)한다.
      *
      * @param slug        마스터 slug
@@ -2308,7 +2390,7 @@ public class PageDataService {
 
     /**
      * 배치 FETCH 매칭 결과로 export용 값 생성
-     * - fetch_fields 있으면 각 매칭 레코드에서 해당 경로 값을 추출해 fetch_separator로 합친 문자열 반환 (기존 resolveTableFetch와 달리 export는 스칼라 셀 값이 필요하므로 서버에서 직접 합침)
+     * - fetch_fields 있으면 각 매칭 레코드에서 해당 경로 값을 추출해 fetch_separator로 합친 문자열 반환 (batchResolveTableFetch는 String/List<String>을 그대로 반환하지만, export는 스칼라 셀 값이 필요하므로 서버에서 직접 합침)
      * - fetch_fields 없으면 첫 번째 매칭 레코드 전체를 Map으로 반환 (ExcelService.getNestedValue의 dot notation으로 자유롭게 접근 가능)
      */
     private Object buildFetchedValue(List<Map<String, Object>> matched, boolean hasFetchFields, String fetchFields, String separator) {
@@ -2362,59 +2444,6 @@ public class PageDataService {
             }
         }
         return records.isEmpty() ? null : records;
-    }
-
-    /**
-     * TABLE 유형 FETCH
-     * - fetch_fields 있음: 해당 경로 값을 문자열로 추출 — 매칭 1건이면 String, 2건 이상이면 List<String> 반환(합치지 않음, FE에서 fetchSeparator로 합침)
-     * - fetch_fields 없음: 첫 번째 slave 레코드 dataJson 전체를 Map으로 반환
-     *   → FE에서 accessor "_fetchedRel{id}.form1.title" 등 dot notation으로 자유롭게 접근 가능
-     */
-    @SuppressWarnings("unchecked")
-    private Object resolveTableFetch(SlugRelation rel, String masterValue) {
-        boolean hasFetchFields = StringUtils.hasText(rel.getFetchFields());
-
-        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
-        appendSlaveKeyCondition(sql, rel.getSlaveKey(), "masterValue");
-        Map<String, String> filterParams = new LinkedHashMap<>();
-        if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
-            appendSlaveFilter(sql, rel.getSlaveFilter(), filterParams);
-        }
-        // fetch_fields 없으면 첫 번째 레코드만 조회, 있으면 다중 지원
-        sql.append(hasFetchFields ? " LIMIT 100" : " LIMIT 1");
-
-        Query q = entityManager.createNativeQuery(sql.toString());
-        q.setParameter("slaveSlug", rel.getSlaveSlug());
-        q.setParameter("masterValue", masterValue);
-        filterParams.forEach(q::setParameter);
-
-        List<Object> results = q.getResultList();
-        if (results.isEmpty()) return null;
-
-        if (!hasFetchFields) {
-            // fetch_fields 없음 → 첫 번째 slave dataJson 전체 Map 반환
-            try {
-                return objectMapper.readValue(results.get(0).toString(),
-                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-            } catch (Exception e) {
-                log.warn("TABLE FETCH 전체 JSON 파싱 실패: {}", e.getMessage());
-                return null;
-            }
-        }
-
-        // fetch_fields 있음 → 해당 경로 값 문자열 추출 (합치지 않음 — 매칭 건수에 따라 String 또는 List<String> 반환)
-        List<String> values = new ArrayList<>();
-        for (Object row : results) {
-            try {
-                Map<String, Object> dataJson = objectMapper.readValue(row.toString(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
-                String val = extractField(dataJson, rel.getFetchFields());
-                if (val != null) values.add(val);
-            } catch (Exception e) {
-                log.warn("TABLE FETCH dataJson 파싱 실패: {}", e.getMessage());
-            }
-        }
-        if (values.isEmpty()) return null;
-        return values.size() == 1 ? values.get(0) : values;
     }
 
     /**
