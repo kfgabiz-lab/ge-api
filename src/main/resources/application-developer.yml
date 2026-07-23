@@ -85,6 +85,8 @@ ls:
     inApi:
       connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@
       connectPortalIv: IV($&*)2516($&*)
+      ctpFileDownApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/download
+      ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : "AIzaSyBkHvBn_MG-VWQd2C8-UA3PJBniWPy5QNk"
       recapchaKey : "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
