@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 public class MailService {
 
     private final JavaMailSender mailSender;
+    private static final String EMAIL_SEND_SUCCESS = "S";
+	private static final String EMAIL_SEND_FAIL    = "F";
   //이메일 발송 내역 발송상태 저장을 위해 return 방식 변경 void -> String
     public String sendMail(String to, String subject, String content) {
 
@@ -28,13 +30,13 @@ public class MailService {
             log.info("메일 세팅 완료");
             mailSender.send(message);
             log.info("메일 전송 완료");
-            return "S"; 
+            return EMAIL_SEND_SUCCESS; 
 
         } catch (Exception e) {
             log.info("메일 전송 실패");
             log.info(e.getMessage());
 //            throw new RuntimeException("메일 전송 실패", e);
-            return "F";
+            return EMAIL_SEND_FAIL;
         }
 //        log.info("메일 전송 End");
     }

@@ -4,6 +4,9 @@ import com.ge.bo.dto.NewsletterInsightsRequest;
 import com.ge.bo.service.NewsletterInsightsService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+
+import java.util.Map;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,8 +19,9 @@ public class FoNewsletterController {
     private final NewsletterInsightsService newsletterInsightsService;
 
     @PostMapping("/insights")
-    public ResponseEntity<Void> sendInsights(@Valid @RequestBody NewsletterInsightsRequest request) {
+    public ResponseEntity<Map<String, Boolean>> sendInsights(@Valid @RequestBody NewsletterInsightsRequest request) {
     	newsletterInsightsService.send(request);
-        return ResponseEntity.status(HttpStatus.CREATED).build();
+        return ResponseEntity.status(HttpStatus.CREATED)
+        					 .body(Map.of("success", true));
     }
 }
