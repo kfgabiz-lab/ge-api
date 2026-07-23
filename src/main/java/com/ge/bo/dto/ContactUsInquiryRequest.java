@@ -14,17 +14,14 @@ public record ContactUsInquiryRequest(
         @Size(max = 30)
         String type,
 
-        @Size(max = 255) String productCategoryLv1,
+        /** Lv1 카테고리 — devices-tree(category-data) 행의 rowId(page_data PK) */
+        Long productCategoryLv1Id,
 
-        @Size(max = 255) String productCategoryLv2,
+        /** Lv2 카테고리 — devices-tree(category-data) 행의 rowId(page_data PK) */
+        Long productCategoryLv2Id,
 
-        @Size(max = 255) String productCategoryLv3,
-
-        /** Lv1 카테고리 코드 (예: L06) */
-        @Size(max = 20) String productCategoryLv1Id,
-
-        /** Lv2 카테고리 코드 (예: L06-01) */
-        @Size(max = 20) String productCategoryLv2Id,
+        /** Lv3(제품) — devices-tree(category-data) 행의 rowId(page_data PK) */
+        Long productCategoryLv3Id,
 
         @NotBlank(message = "이메일을 입력해주세요.")
         @Email(message = "올바른 이메일 형식이 아닙니다.")

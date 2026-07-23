@@ -31,25 +31,17 @@ public class ContactUsInquiry {
     @Column(name = "inquiry_type", nullable = false, length = 30)
     private String inquiryType;
 
-    /** 제품 카테고리 Lv1 라벨 */
-    @Column(name = "product_category_lv1", length = 255)
-    private String productCategoryLv1;
+    /** 제품 카테고리 Lv1 — devices-tree(category-data) 행의 rowId(page_data PK) */
+    @Column(name = "product_category_lv1_id")
+    private Long productCategoryLv1Id;
 
-    /** 제품 카테고리 Lv2 라벨 */
-    @Column(name = "product_category_lv2", length = 255)
-    private String productCategoryLv2;
+    /** 제품 카테고리 Lv2 — devices-tree(category-data) 행의 rowId(page_data PK) */
+    @Column(name = "product_category_lv2_id")
+    private Long productCategoryLv2Id;
 
-    /** 제품 카테고리 Lv3 라벨 */
-    @Column(name = "product_category_lv3", length = 255)
-    private String productCategoryLv3;
-
-    /** 제품 카테고리 Lv1 코드 (예: L06) */
-    @Column(name = "product_category_lv1_id", length = 20)
-    private String productCategoryLv1Id;
-
-    /** 제품 카테고리 Lv2 코드 (예: L06-01) */
-    @Column(name = "product_category_lv2_id", length = 20)
-    private String productCategoryLv2Id;
+    /** 제품 카테고리 Lv3(제품) — devices-tree(category-data) 행의 rowId(page_data PK) */
+    @Column(name = "product_category_lv3_id")
+    private Long productCategoryLv3Id;
 
     /** 문의자 이메일 */
     @Column(name = "email", nullable = false, length = 255)
@@ -97,17 +89,14 @@ public class ContactUsInquiry {
 
     @Builder
     public ContactUsInquiry(String inquiryType,
-                            String productCategoryLv1, String productCategoryLv2, String productCategoryLv3,
-                            String productCategoryLv1Id, String productCategoryLv2Id,
+                            Long productCategoryLv1Id, Long productCategoryLv2Id, Long productCategoryLv3Id,
                             String email, String firstName, String lastName, String companyName,
                             String country, String inquiryContent, String passwordHash,
                             Boolean marketingOptInFlag, Boolean privacyConsentFlag, String createdIp) {
         this.inquiryType = inquiryType;
-        this.productCategoryLv1 = productCategoryLv1;
-        this.productCategoryLv2 = productCategoryLv2;
-        this.productCategoryLv3 = productCategoryLv3;
         this.productCategoryLv1Id = productCategoryLv1Id;
         this.productCategoryLv2Id = productCategoryLv2Id;
+        this.productCategoryLv3Id = productCategoryLv3Id;
         this.email = email;
         this.firstName = firstName;
         this.lastName = lastName;
