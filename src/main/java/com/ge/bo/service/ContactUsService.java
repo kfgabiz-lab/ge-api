@@ -42,6 +42,7 @@ public class ContactUsService {
     private final CtpAuthService ctpAuthService;
     private final ExternalApiClient externalApiClient;
     private final CtpProperties ctpProperties;
+    private final CtpContactUsClient ctpContactUsClient;
 
     /**
      * 문의 접수 처리
@@ -55,12 +56,12 @@ public class ContactUsService {
         ExceptionRouting routing = ExceptionRouting.resolve(req.productCategoryLv1Id(), req.productCategoryLv2Id());
 
         CtpContactUsPayload payload = buildPayload(req, inquiryDateTime, routing);
-        CtpContactUsResult result = callCtp(payload);
+        CtpContactUsResult result = ctpContactUsClient.send(payload);
 
         // 개인정보(이메일/이름/문의내용 등)는 로그에 남기지 않고, 추적용 결과값만 기록
         log.info("Contact Us 접수 처리 완료 - type={}, status={}, code={}", req.type(), result.status(), result.returnCode());
 
-        return ContactUsResponse.of(result.status(), resolveMessage(result));
+        return ContactUsResponse.of(result.status(), ctpContactUsClient.resolveMessage(result));
     }
 
     /**
@@ -135,19 +136,7 @@ public class ContactUsService {
                 routing.email());
     }
 
-    /** CTP 호출 실행 — 401(토큰 만료) 시 토큰 재발급 후 1회 재시도 후 실패 시 Status="E"로 응답 */
-    private CtpContactUsResult callCtp(CtpContactUsPayload payload) {
-        ApiCallResult<CtpContactUsResult> result = callWithAuthRetry(
-                token -> postCtp(ctpProperties.getApiUrl(), payload, token, CtpContactUsResult.class));
-
-        if (!result.isSuccess() || result.getData() == null) {
-            log.warn("CTP 문의 접수 전송 실패 statusCode={} error={}", result.getStatusCode(), result.getErrorMessage());
-            return new CtpContactUsResult("E", "ERROR", "Connect Portal 전송에 실패했습니다. 잠시 후 다시 시도해주세요.");
-        }
-        return result.getData();
-    }
-
-    /** CTP 호출 후 401(토큰 만료) 응답 시 토큰 재발급 후 1회 재시도하는 공통 로직 */
+    /** CTP 호출 후 401(토큰 만료) 응답 시 토큰 재발급 후 1회 재시도하는 공통 로직 (문의결과조회 전용 — 접수 전송은 CtpContactUsClient 사용) */
     private <T> ApiCallResult<T> callWithAuthRetry(Function<String, ApiCallResult<T>> requester) {
         ApiCallResult<T> result = requester.apply(ctpAuthService.getAccessToken());
         if (!result.isSuccess() && result.getStatusCode() == 401) {
@@ -164,19 +153,6 @@ public class ContactUsService {
                 .body(payload)
                 .build();
         return externalApiClient.call(request, responseType);
-    }
-
-    /** CTP 응답 Status 코드를 프론트에 보여줄 안내 문구로 변환 */
-    private String resolveMessage(CtpContactUsResult result) {
-        if (isBlank(result.status())) {
-            return result.returnMessage() != null ? result.returnMessage() : "문의 접수 처리 중 오류가 발생했습니다.";
-        }
-        return switch (result.status()) {
-            case "S" -> "문의가 정상적으로 접수되었습니다.";
-            case "X" -> "예외가 발생했습니다.";
-            case "D" -> "이미 접수된 문의입니다.";
-            default -> result.returnMessage() != null ? result.returnMessage() : "문의 접수 처리 중 오류가 발생했습니다.";
-        };
     }
 
     private boolean isBlank(String value) {

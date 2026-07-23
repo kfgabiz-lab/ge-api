@@ -425,6 +425,31 @@ public class PageDataService {
   }
 
     /**
+     * 제품(product-data) id로 담당자(productManager-data) 이메일 조회
+     * - productManager-data.data_json.ms(JSONB 배열, 담당 product-data id 목록)에 productId가 포함된
+     *   공개(is_visible=001) 행을 찾아 product_manager.email 반환
+     * - 매칭되는 담당자가 없으면 Optional.empty() (Contact Us CTP 연동 ProductInformationInquiryType 판단용)
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> findProductManagerEmail(Long productId, Long siteId) {
+        String sql = "SELECT data_json->'product_manager'->>'email'"
+            + " FROM page_data"
+            + " WHERE data_slug = 'productManager-data'"
+            + "  AND data_json->'ms' @> to_jsonb(:productId)"
+            + "  AND data_json->'product_manager'->>'is_visible' = '001'"
+            + "  AND (site_id = :siteId OR site_id IS NULL)"
+            + " LIMIT 1";
+
+        Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("productId", productId);
+        query.setParameter("siteId", siteId);
+
+        @SuppressWarnings("unchecked")
+        List<Object> rows = query.getResultList();
+        return rows.isEmpty() ? Optional.empty() : Optional.ofNullable((String) rows.get(0));
+    }
+
+    /**
      * 단건 조회
      *
      * @param slug 페이지 식별자

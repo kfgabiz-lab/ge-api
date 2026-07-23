@@ -31,17 +31,9 @@ public class ContactUsInquiry {
     @Column(name = "inquiry_type", nullable = false, length = 30)
     private String inquiryType;
 
-    /** 제품 카테고리 Lv1 — devices-tree(category-data) 행의 rowId(page_data PK) */
-    @Column(name = "product_category_lv1_id")
-    private Long productCategoryLv1Id;
-
-    /** 제품 카테고리 Lv2 — devices-tree(category-data) 행의 rowId(page_data PK) */
-    @Column(name = "product_category_lv2_id")
-    private Long productCategoryLv2Id;
-
-    /** 제품 카테고리 Lv3(제품) — devices-tree(category-data) 행의 rowId(page_data PK) */
-    @Column(name = "product_category_lv3_id")
-    private Long productCategoryLv3Id;
+    /** 제품 카테고리 — 선택된 Lv1/Lv2/Lv3 라벨을 "카테고리1 | 카테고리2 | 카테고리3" 형태로 결합한 문자열 */
+    @Column(name = "product_category", length = 1000)
+    private String productCategory;
 
     /** 문의자 이메일 */
     @Column(name = "email", nullable = false, length = 255)
@@ -59,7 +51,7 @@ public class ContactUsInquiry {
     @Column(name = "company_name", nullable = false, length = 100)
     private String companyName;
 
-    /** 국가코드 (공통코드 COUNTRY, ISO 3166-1 alpha-2 대문자, 예: US) */
+    /** 국가코드 (공통코드 COUNTRYCODE, ISO 3166-1 alpha-2 대문자, 예: US) */
     @Column(name = "country", nullable = false, length = 2)
     private String country;
 
@@ -88,15 +80,12 @@ public class ContactUsInquiry {
     private OffsetDateTime createdAt;
 
     @Builder
-    public ContactUsInquiry(String inquiryType,
-                            Long productCategoryLv1Id, Long productCategoryLv2Id, Long productCategoryLv3Id,
+    public ContactUsInquiry(String inquiryType, String productCategory,
                             String email, String firstName, String lastName, String companyName,
                             String country, String inquiryContent, String passwordHash,
                             Boolean marketingOptInFlag, Boolean privacyConsentFlag, String createdIp) {
         this.inquiryType = inquiryType;
-        this.productCategoryLv1Id = productCategoryLv1Id;
-        this.productCategoryLv2Id = productCategoryLv2Id;
-        this.productCategoryLv3Id = productCategoryLv3Id;
+        this.productCategory = productCategory;
         this.email = email;
         this.firstName = firstName;
         this.lastName = lastName;

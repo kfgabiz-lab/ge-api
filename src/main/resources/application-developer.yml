@@ -95,8 +95,8 @@ ls:
         tokenUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/oauth2/token
         apiUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0001
         detailApiUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0002
-        clientId: 3MVG9mmadmkxIGpIA1xkvl0CJAQOyaUedd6Q.WHXpTd.fitR9M0vlQDqzE7dMXhzQcds2dWRffBPcJ53n66xW
-        clientSecret:
+        clientId: ${CTP_CLIENT_ID:}
+        clientSecret: ${CTP_CLIENT_SECRET:}
         grantType: client_credentials
     # Azure Blob Storage 정보
     azure:
