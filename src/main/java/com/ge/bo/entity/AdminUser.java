@@ -7,6 +7,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -49,7 +50,7 @@ public class AdminUser {
   @Column(length = 500)
     private String remark;
 
-  private OffsetDateTime lastLoginAt;
+  private LocalDateTime lastLoginAt;
 
   @Builder.Default
     @Column(nullable = false)
@@ -59,7 +60,7 @@ public class AdminUser {
     @Column(nullable = false)
     private int failedLoginAttempts = 0;
 
-  private OffsetDateTime lockedUntil;
+  private LocalDateTime lockedUntil;
 
   /** TOTP 비밀키 (Base32 인코딩, 최초 QR 등록 시 생성) */
   @Column(name = "totp_secret", columnDefinition = "TEXT")
@@ -72,11 +73,11 @@ public class AdminUser {
 
   @CreatedDate
     @Column(nullable = false, updatable = false)
-    private OffsetDateTime createdAt;
+    private LocalDateTime createdAt;
 
   @LastModifiedDate
     @Column(nullable = false)
-    private OffsetDateTime updatedAt;
+    private LocalDateTime updatedAt;
 
     /* 등록일 */
   @Column(nullable = false, name = "reg_date", updatable = false)

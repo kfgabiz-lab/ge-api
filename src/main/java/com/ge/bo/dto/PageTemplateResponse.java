@@ -4,7 +4,7 @@ import com.ge.bo.entity.PageTemplate;
 import lombok.Builder;
 import lombok.Getter;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 
 /**
  * 페이지 템플릿 응답 DTO
@@ -28,8 +28,8 @@ public class PageTemplateResponse {
   private String pageUrl;
 
   private String createdBy;
-  private OffsetDateTime createdAt;
-  private OffsetDateTime updatedAt;
+  private LocalDateTime createdAt;
+  private LocalDateTime updatedAt;
 
     /**
      * 엔티티 → 응답 DTO 변환 (정적 팩토리)

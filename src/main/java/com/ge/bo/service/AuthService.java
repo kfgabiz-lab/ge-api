@@ -17,7 +17,6 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,7 +34,7 @@ import com.ge.bo.sso.SsoResult;
 import com.ge.bo.sso.SsoResultCode;
 
 import java.time.Duration;
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -375,7 +374,7 @@ public class AuthService {
         .deptCode(sso.deptCode())
         .deptName(sso.deptName())
         .isActive(false)
-        .lastLoginAt(OffsetDateTime.now())
+        .lastLoginAt(LocalDateTime.now())
         .build();
   }
 

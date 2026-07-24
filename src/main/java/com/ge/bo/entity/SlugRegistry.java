@@ -1,6 +1,5 @@
 package com.ge.bo.entity;
 
-import com.ge.bo.entity.SlugEntity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedBy;
@@ -9,7 +8,7 @@ import org.springframework.data.annotation.LastModifiedBy;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 
 /**
  * Slug 레지스트리 엔티티 — 위젯 빌더 연동용 slug 사전 등록 관리
@@ -63,7 +62,7 @@ public class SlugRegistry {
 
   @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
-    private OffsetDateTime createdAt;
+    private LocalDateTime createdAt;
 
   @LastModifiedBy
     @Column(name = "updated_by", nullable = false, length = 50)
@@ -71,5 +70,5 @@ public class SlugRegistry {
 
   @LastModifiedDate
     @Column(name = "updated_at", nullable = false)
-    private OffsetDateTime updatedAt;
+    private LocalDateTime updatedAt;
 }

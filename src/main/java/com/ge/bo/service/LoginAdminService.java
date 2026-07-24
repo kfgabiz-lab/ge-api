@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
@@ -59,7 +59,7 @@ public class LoginAdminService {
         AdminUser admin = adminRepository.findById(adminId)
                 .orElseThrow(() -> new IllegalStateException("Admin not found: " + adminId));
         admin.setFailedLoginAttempts(0);
-        admin.setLastLoginAt(OffsetDateTime.now());
+        admin.setLastLoginAt(LocalDateTime.now());
         adminRepository.save(admin);
     }
 }

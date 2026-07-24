@@ -1,5 +1,6 @@
 package com.ge.bo.service;
 
+import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.common.mail.MailService;
 import com.ge.bo.dto.NewsletterInsightsRequest;
 import com.ge.bo.exception.ErrorCode;
@@ -13,7 +14,6 @@ import jakarta.persistence.Query;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,35 +22,37 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class NewsletterInsightsService {
-	
+
 	//hub-spot 메일 미정으로 테스트
 	//메일 수신자 공통코드로 수정
 	private static final String EMAIL_RECIPIENT_GROUP_CODE      = "EMAIL_RECIPIENT"; //메일 수신자 공통코드
 	private static final String EMAIL_RECIPIENT_NEWSLETTER_CODE = "NEWSLETTER";
     private static final DateTimeFormatter SUBJECT_DATE_FORMAT  = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    // page_data.site_id 기본값 — X-Site-Id 헤더가 없는 경우에만 사용(기존 하드코딩 값 유지, 회귀 방지)
+    private static final Long DEFAULT_SITE_ID = 1L;
 
     private final MailService mailService;
     //page_data 저장용
     private final EntityManager entityManager;
     private final ObjectMapper objectMapper;
-    
+    private final SiteTimeZoneResolver siteTimeZoneResolver;
+
     //뉴스레터 메일 전송
     @Transactional
-    public void send(NewsletterInsightsRequest request) {
-    	// 사용자 접속 위치에 따른 timezone 설정 (FE에서 받아옴)
-    	ZoneId KST         = ZoneId.of(request.userTimeZone()); 	
-    	OffsetDateTime now = OffsetDateTime.now(KST);
-    	
+    public void send(NewsletterInsightsRequest request, Long siteId) {
+    	// 사이트(X-Site-Id) timezone 기준 접수시각 — 없으면 서버 기본 zone으로 폴백
+    	OffsetDateTime now = OffsetDateTime.now(siteTimeZoneResolver.resolve(siteId));
+
     	//메일 제목 및 내용 세팅
         String subject = "New Newsletter Subscriber (%s)".formatted(now.format(SUBJECT_DATE_FORMAT));
         String content = buildMailContent(request);
-        
+
         //1. 공통코드 EMAIL_RECIPIENT 에서 CODE가 NEWSLETTER 인 수신자 이메일 조회
         String recipientEmail = findNewsletterRecipientEmailName();
         //2. 이메일 발송 후 발송 상태 반환
         String sendStatus     = mailService.sendMail(recipientEmail, subject, content);
         //3. 이메일 발송 내역 저장 호출
-        saveEmailSendHistory(now, sendStatus, recipientEmail);
+        saveEmailSendHistory(now, sendStatus, recipientEmail, siteId != null ? siteId : DEFAULT_SITE_ID);
     }
     
     //메일 내용 세팅
@@ -67,7 +69,7 @@ public class NewsletterInsightsService {
     }
     
     //이메일 발송 내역 저장
-    private void saveEmailSendHistory(OffsetDateTime sentAt, String sendStatus, String recipientEmail) {
+    private void saveEmailSendHistory(OffsetDateTime sentAt, String sendStatus, String recipientEmail, Long siteId) {
         Map<String, Object> dataJson = new LinkedHashMap<>();
         dataJson.put("emailSendHis", Map.of(
                      "emailSendType", "01",						  //분류(공통코드 EMAILSENDTYPE)
@@ -89,7 +91,7 @@ public class NewsletterInsightsService {
             insertQuery.setParameter("templateSlug", "emailSendHis-list");
             insertQuery.setParameter("dataSlug"    , "emailSendHis-data");
             insertQuery.setParameter("dataJson"    , dataJsonStr);
-            insertQuery.setParameter("siteId"      , 1L);
+            insertQuery.setParameter("siteId"      , siteId);
 
             Long newId = ((Number) insertQuery.getSingleResult()).longValue();
 

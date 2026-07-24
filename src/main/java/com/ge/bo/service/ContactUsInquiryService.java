@@ -1,5 +1,6 @@
 package com.ge.bo.service;
 
+import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.common.crypto.Aes256Utils;
 import com.ge.bo.dto.ContactUsInquiryRequest;
 import com.ge.bo.dto.ContactUsInquiryResponse;
@@ -13,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.Set;
@@ -43,7 +43,6 @@ public class ContactUsInquiryService {
 
     private static final DateTimeFormatter INQUIRY_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter SUBJECT_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
-    private static final ZoneId NAHP_ZONE = ZoneId.of("America/New_York");
 
     // private final ContactUsInquiryRepository contactUsInquiryRepository; // DB 저장 비활성화(2026-07-23) — 재사용 대비 보존
     private final CodeDetailRepository codeDetailRepository;
@@ -51,6 +50,7 @@ public class ContactUsInquiryService {
     private final Aes256Utils cryptoUtil;
     private final PageDataService pageDataService;
     private final CtpContactUsClient ctpContactUsClient;
+    private final SiteTimeZoneResolver siteTimeZoneResolver;
 
     /**
      * 문의 접수 처리 — 공통코드 검증 → CTP(Salesforce) 전송 → 결과 반환
@@ -96,8 +96,8 @@ public class ContactUsInquiryService {
         // log.info("Contact Us 문의 접수 저장 완료 - id={}", saved.getId());
         // ---------------------------------------------------------------------------
 
-        // 3) CTP(Salesforce) 전송
-        OffsetDateTime inquiryDateTime = OffsetDateTime.now(NAHP_ZONE);
+        // 3) CTP(Salesforce) 전송 — 접수일시는 요청 사이트(X-Site-Id)의 timezone 기준(없으면 서버 기본 zone)
+        OffsetDateTime inquiryDateTime = OffsetDateTime.now(siteTimeZoneResolver.resolve(siteId));
         ExceptionRouting routing = ExceptionRouting.resolve(request.productCategory());
         String productInformationInquiryType = resolveProductInformationInquiryType(request.productId(), siteId);
 

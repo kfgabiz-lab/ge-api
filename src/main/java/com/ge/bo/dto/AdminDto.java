@@ -7,8 +7,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.*;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.OffsetDateTime;
 
 public class AdminDto {
 
@@ -93,8 +93,8 @@ public class AdminDto {
     private String role;
     @JsonProperty("isActive")
         private boolean isActive;
-    private OffsetDateTime lastLoginAt;
-    private OffsetDateTime createdAt;
+    private LocalDateTime lastLoginAt;
+    private LocalDateTime createdAt;
         /* 등록일 */
     private LocalDate regDt;
         /* 등록시간 */

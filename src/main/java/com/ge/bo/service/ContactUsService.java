@@ -3,6 +3,7 @@ package com.ge.bo.service;
 import com.ge.bo.common.client.ApiCallRequest;
 import com.ge.bo.common.client.ApiCallResult;
 import com.ge.bo.common.client.ExternalApiClient;
+import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.common.crypto.Aes256Utils;
 import com.ge.bo.dto.ContactUsDetailRequest;
 import com.ge.bo.dto.ContactUsDetailResponse;
@@ -18,7 +19,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -35,24 +35,25 @@ public class ContactUsService {
 
     private static final DateTimeFormatter INQUIRY_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter SUBJECT_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
-    // 북미 접수일시 기준 시간대 — 필요 시 지역별 타임존으로 조정
-    private static final ZoneId NAHP_ZONE = ZoneId.of("America/New_York");
 
     private final Aes256Utils cryptoUtil;
     private final CtpAuthService ctpAuthService;
     private final ExternalApiClient externalApiClient;
     private final CtpProperties ctpProperties;
     private final CtpContactUsClient ctpContactUsClient;
+    private final SiteTimeZoneResolver siteTimeZoneResolver;
 
     /**
      * 문의 접수 처리
      * 입력값 검증 → CTP(Salesforce) 동기 전송 → 처리 결과 로그 기록 → 응답 반환
      * (문의 내용은 DB에 저장하지 않음 — Salesforce가 시스템 오브 레코드)
+     *
+     * @param siteId 요청 사이트(X-Site-Id) — 접수일시 timezone 조회용. 없으면 서버 기본 zone으로 폴백
      */
-    public ContactUsResponse submit(ContactUsRequest req) {
+    public ContactUsResponse submit(ContactUsRequest req, Long siteId) {
         validate(req);
 
-        OffsetDateTime inquiryDateTime = OffsetDateTime.now(NAHP_ZONE);
+        OffsetDateTime inquiryDateTime = OffsetDateTime.now(siteTimeZoneResolver.resolve(siteId));
         ExceptionRouting routing = ExceptionRouting.resolve(req.productCategoryLv1Id(), req.productCategoryLv2Id());
 
         CtpContactUsPayload payload = buildPayload(req, inquiryDateTime, routing);

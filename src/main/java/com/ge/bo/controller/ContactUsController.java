@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -26,8 +27,10 @@ public class ContactUsController {
     private final ContactUsService contactUsService;
 
     @PostMapping
-    public ResponseEntity<ContactUsResponse> submit(@Valid @RequestBody ContactUsRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(contactUsService.submit(request));
+    public ResponseEntity<ContactUsResponse> submit(
+            @Valid @RequestBody ContactUsRequest request,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(contactUsService.submit(request, siteId));
     }
 
     @PostMapping("/answer")

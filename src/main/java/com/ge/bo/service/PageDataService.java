@@ -1,6 +1,7 @@
 package com.ge.bo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.dto.AdjacentResponse;
 import com.ge.bo.dto.DevicesTreeRowResponse;
 import com.ge.bo.dto.PageDataListResponse;
@@ -28,6 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -49,6 +52,7 @@ public class PageDataService {
   private final PageFileService pageFileService;
   private final SlugRelationRepository slugRelationRepository;
   private final ValidationRuleRepository validationRuleRepository;
+  private final SiteTimeZoneResolver siteTimeZoneResolver;
 
   @PersistenceContext
     private EntityManager entityManager;
@@ -127,6 +131,7 @@ public class PageDataService {
         countQuery.setParameter("siteId", siteId);
       }
       bindSearchParams(countQuery, searchParams);
+      bindTodayIfPresent(countQuery, countSql, siteId);
       totalElements = ((Number) countQuery.getSingleResult()).longValue();
 
       if (totalElements == 0) {
@@ -174,6 +179,7 @@ public class PageDataService {
       dataQuery.setParameter("siteId", siteId);
     }
     bindSearchParams(dataQuery, searchParams);
+    bindTodayIfPresent(dataQuery, dataSql, siteId);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -252,6 +258,7 @@ public class PageDataService {
       dataQuery.setParameter("siteId", siteId);
     }
     bindSearchParams(dataQuery, statusParams);
+    bindTodayIfPresent(dataQuery, dataSql, siteId);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -491,20 +498,24 @@ public class PageDataService {
 
     String dataJsonStr = serializeDataJson(request.getDataJson());
     String currentUser = getCurrentUserId();
+        // 감사 컬럼(created_at/updated_at)도 사이트 timezone 기준 — SQL NOW()는 세션 기본 시간대라 사용하지 않음
+        // created_at/updated_at 컬럼이 timestamp without time zone이라 LocalDateTime(오프셋 없는 벽시계 값)으로 바인딩해야
+        // pgjdbc가 UTC로 재정규화하지 않고 사이트 timezone 기준 값 그대로 저장된다
+    LocalDateTime now = LocalDateTime.now(siteTimeZoneResolver.resolve(siteId));
         // group_id 있으면 함께 저장 (다중 slug 저장 그룹), 없으면 기존 방식
     final Query insertQuery;
     if (request.getGroupId() != null && !request.getGroupId().isBlank()) {
       insertQuery = entityManager.createNativeQuery(
           "INSERT INTO page_data"
           + " (template_slug, data_slug, data_json, site_id, group_id, created_by, created_at, updated_by, updated_at)"
-          + " VALUES (:templateSlug, :slug, CAST(:dataJson AS jsonb), :siteId, :groupId, :createdBy, NOW(), :updatedBy, NOW())"
+          + " VALUES (:templateSlug, :slug, CAST(:dataJson AS jsonb), :siteId, :groupId, :createdBy, :createdAt, :updatedBy, :updatedAt)"
           + " RETURNING id");
       insertQuery.setParameter("groupId", request.getGroupId());
     } else {
       insertQuery = entityManager.createNativeQuery(
           "INSERT INTO page_data"
           + " (template_slug, data_slug, data_json, site_id, created_by, created_at, updated_by, updated_at)"
-          + " VALUES (:templateSlug, :slug, CAST(:dataJson AS jsonb), :siteId, :createdBy, NOW(), :updatedBy, NOW())"
+          + " VALUES (:templateSlug, :slug, CAST(:dataJson AS jsonb), :siteId, :createdBy, :createdAt, :updatedBy, :updatedAt)"
           + " RETURNING id");
     }
         // data_slug: path의 slug (조회 기준), template_slug: 페이지 slug (저장 전용)
@@ -513,7 +524,9 @@ public class PageDataService {
     insertQuery.setParameter("dataJson", dataJsonStr);
     insertQuery.setParameter("siteId", siteId);
     insertQuery.setParameter("createdBy", currentUser);
+    insertQuery.setParameter("createdAt", now);
     insertQuery.setParameter("updatedBy", currentUser);
+    insertQuery.setParameter("updatedAt", now);
     Long newId = ((Number) insertQuery.getSingleResult()).longValue();
 
         // 생성된 id를 dataJson에 자동 주입 — 카테고리 계층 등 id 참조가 필요한 모든 곳에서 활용
@@ -537,8 +550,8 @@ public class PageDataService {
      */
   @Transactional
     public PageDataResponse update(String slug, Long id, PageDataRequest request, Long siteId) {
-        // 존재 여부 확인 (없으면 404)
-    pageDataRepository.findByIdAndDataSlug(id, slug)
+        // 존재 여부 확인 (없으면 404) — 감사 컬럼용 timezone은 이 레코드가 실제 속한 사이트(site_id) 기준
+    PageData existing = pageDataRepository.findByIdAndDataSlug(id, slug)
                 .orElseThrow(ErrorCode.PAGE_DATA_NOT_FOUND::toException);
         // 검증 규칙 체크 — 저장을 트리거한 action-button에서 선택된 규칙만 수행 (자기 자신은 제외)
     if (request.getValidationRuleIds() != null && !request.getValidationRuleIds().isEmpty()) {
@@ -551,13 +564,16 @@ public class PageDataService {
     String currentUser = getCurrentUserId();
         // JPA save() 대신 네이티브 쿼리 사용: String → JSONB 타입 명시적 캐스팅
         // 수정 시 updated_by/updated_at만 변경, created_by/created_at은 유지
+        // updated_at은 이 레코드가 실제 속한 사이트(existing.getSiteId())의 timezone 기준 — 요청 헤더의 siteId는 검증용일 뿐 site_id 자체는 안 바뀜
+    LocalDateTime updatedAt = LocalDateTime.now(siteTimeZoneResolver.resolve(existing.getSiteId()));
     Query updateQuery = entityManager.createNativeQuery(
         "UPDATE page_data"
-        + " SET data_json = CAST(:dataJson AS jsonb), updated_by = :updatedBy, updated_at = NOW()"
+        + " SET data_json = CAST(:dataJson AS jsonb), updated_by = :updatedBy, updated_at = :updatedAt"
         + ", template_slug = :templateSlug"
         + " WHERE id = :id AND data_slug = :slug");
     updateQuery.setParameter("dataJson", dataJsonStr);
     updateQuery.setParameter("updatedBy", currentUser);
+    updateQuery.setParameter("updatedAt", updatedAt);
     updateQuery.setParameter("templateSlug", request.getTemplateSlug() != null ? request.getTemplateSlug() : slug);
     updateQuery.setParameter("id", id);
     updateQuery.setParameter("slug", slug);
@@ -611,12 +627,15 @@ public class PageDataService {
     dataJson.put("id", id);
     String dataJsonStr = serializeDataJson(dataJson);
     String currentUser = getCurrentUserId();
+        // updated_at은 이 레코드가 실제 속한 사이트(existing.getSiteId())의 timezone 기준
+    LocalDateTime updatedAt = LocalDateTime.now(siteTimeZoneResolver.resolve(existing.getSiteId()));
     Query updateQuery = entityManager.createNativeQuery(
         "UPDATE page_data"
-        + " SET data_json = CAST(:dataJson AS jsonb), updated_by = :updatedBy, updated_at = NOW()"
+        + " SET data_json = CAST(:dataJson AS jsonb), updated_by = :updatedBy, updated_at = :updatedAt"
         + " WHERE id = :id AND data_slug = :slug");
     updateQuery.setParameter("dataJson", dataJsonStr);
     updateQuery.setParameter("updatedBy", currentUser);
+    updateQuery.setParameter("updatedAt", updatedAt);
     updateQuery.setParameter("id", id);
     updateQuery.setParameter("slug", slug);
     updateQuery.executeUpdate();
@@ -730,6 +749,7 @@ public class PageDataService {
       dataQuery.setParameter("siteId", siteId);
     }
     bindSearchParams(dataQuery, searchParams);
+    bindTodayIfPresent(dataQuery, dataSql, siteId);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -978,6 +998,7 @@ public class PageDataService {
     }
     setConditionParams(query, rule.getCondition());
     bindSiteParam(query, siteId);
+    bindTodayIfPresent(query, sql.toString(), siteId);
     if (excludeId != null) {
       query.setParameter("excludeId", excludeId);
     }
@@ -995,7 +1016,7 @@ public class PageDataService {
     if (rule.getMaxCount() == null) {
       return;
     }
-    if (!matchesCondition(dataJson, rule.getCondition())) {
+    if (!matchesCondition(dataJson, rule.getCondition(), siteId)) {
       return;
     }
 
@@ -1011,6 +1032,7 @@ public class PageDataService {
     query.setParameter("slug", slug);
     setConditionParams(query, rule.getCondition());
     bindSiteParam(query, siteId);
+    bindTodayIfPresent(query, sql.toString(), siteId);
     if (excludeId != null) {
       query.setParameter("excludeId", excludeId);
     }
@@ -1041,7 +1063,7 @@ public class PageDataService {
       String sqlOp = "!=".equals(t.op()) ? "<>" : t.op();
       if (t.isToday()) {
         sql.append(" AND substring(regexp_replace(").append(toJsonPathExpr(t.key()))
-                .append(", '[^0-9]', '', 'g'), 1, 8) ").append(sqlOp).append(" to_char(CURRENT_DATE, 'YYYYMMDD')");
+                .append(", '[^0-9]', '', 'g'), 1, 8) ").append(sqlOp).append(" :today");
       } else {
         sql.append(" AND ").append(toJsonPathExpr(t.key())).append(" ").append(sqlOp).append(" :cond_").append(i);
       }
@@ -1092,9 +1114,27 @@ public class PageDataService {
     }
   }
 
-    /** 저장하려는 dataJson이 condition(evalConditionExpr 문법, 암묵적 AND)을 전부 만족하는지 확인 — condition 없으면 항상 true */
-  private boolean matchesCondition(Map<String, Object> dataJson, String condition) {
-    String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+    /** "오늘" 판정 기준 zone — 사이트(X-Site-Id) timezone 우선, 없으면 서버 기본 zone(기존 동작과 동일) */
+  private ZoneId resolveZone(Long siteId) {
+    return siteTimeZoneResolver.resolve(siteId);
+  }
+
+    /** CURRENT_DATE SQL 리터럴 대체용 — 사이트 zone 기준 오늘 날짜를 기존 to_char(CURRENT_DATE,'YYYYMMDD')와 동일한 8자리 형식으로 변환 */
+  private String resolveTodayParam(Long siteId) {
+    return LocalDate.now(resolveZone(siteId)).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+  }
+
+    /** sql에 :today 플레이스홀더가 실제로 쓰였을 때만 바인딩 — 안 쓰였는데 바인딩하면 Hibernate가 예외를 던지므로 반드시 조건부로 처리 */
+  private void bindTodayIfPresent(Query query, String sql, Long siteId) {
+    if (sql.contains(":today")) {
+      query.setParameter("today", resolveTodayParam(siteId));
+    }
+  }
+
+    /** 저장하려는 dataJson이 condition(evalConditionExpr 문법, 암묵적 AND)을 전부 만족하는지 확인 — condition 없으면 항상 true
+     *  siteId: "오늘" 판정 기준 zone 조회용(사이트 timezone, 없으면 서버 기본 zone) */
+  private boolean matchesCondition(Map<String, Object> dataJson, String condition, Long siteId) {
+    String today = LocalDate.now(resolveZone(siteId)).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
     for (CondToken t : parseConditionExpr(condition)) {
       Object val = extractFieldValue(dataJson, t.key());
       String strVal = val != null ? val.toString() : "";
@@ -1188,9 +1228,9 @@ public class PageDataService {
                 .dataJson(dataMap)
                 .groupId((String) row[3])
                 .createdBy(resolveUserName((String) row[4], userNameMap))
-                .createdAt(row[5] != null ? toOffsetDateTime(row[5]) : null)
+                .createdAt(row[5] != null ? toLocalDateTime(row[5]) : null)
                 .updatedBy(resolveUserName((String) row[6], userNameMap))
-                .updatedAt(row[7] != null ? toOffsetDateTime(row[7]) : null)
+                .updatedAt(row[7] != null ? toLocalDateTime(row[7]) : null)
                 .build();
   }
 
@@ -1241,17 +1281,18 @@ public class PageDataService {
 
     /**
      * 네이티브 쿼리 결과의 타임스탬프 변환
-     * Hibernate 6 + PostgreSQL JDBC에서 TIMESTAMPTZ는 다양한 타입으로 반환될 수 있음
+     * created_at/updated_at은 timestamp without time zone 컬럼이라 pgjdbc가 보통 java.sql.Timestamp로 반환하며,
+     * Timestamp.toLocalDateTime()은 존 변환 없이 저장된 벽시계 값을 그대로 추출한다(사이트 timezone 값 보존)
      */
-  private java.time.OffsetDateTime toOffsetDateTime(Object obj) {
+  private java.time.LocalDateTime toLocalDateTime(Object obj) {
     if (obj == null) return null;
     log.debug("createdAt 실제 타입: {}, 값: {}", obj.getClass().getName(), obj);
-    if (obj instanceof java.time.OffsetDateTime odt) return odt;
-    if (obj instanceof java.time.Instant instant) return instant.atOffset(java.time.ZoneOffset.UTC);
-    if (obj instanceof java.time.ZonedDateTime zdt) return zdt.toOffsetDateTime();
-    if (obj instanceof java.sql.Timestamp ts) return ts.toInstant().atOffset(java.time.ZoneOffset.UTC);
-    if (obj instanceof java.time.LocalDateTime ldt) return ldt.atOffset(java.time.ZoneOffset.UTC);
-    try { return java.time.OffsetDateTime.parse(obj.toString()); } catch (Exception ignored) {}
+    if (obj instanceof java.time.LocalDateTime ldt) return ldt;
+    if (obj instanceof java.sql.Timestamp ts) return ts.toLocalDateTime();
+    if (obj instanceof java.time.OffsetDateTime odt) return odt.toLocalDateTime();
+    if (obj instanceof java.time.ZonedDateTime zdt) return zdt.toLocalDateTime();
+    if (obj instanceof java.time.Instant instant) return java.time.LocalDateTime.ofInstant(instant, java.time.ZoneOffset.UTC);
+    try { return java.time.LocalDateTime.parse(obj.toString()); } catch (Exception ignored) {}
     return null;
   }
 
@@ -1283,7 +1324,7 @@ public class PageDataService {
           // regexp_replace로 숫자만 추출 후 8자리 비교 — YYYY-MM-DD/YYYYMMDD/YYYYMMDDHHMMSS 포맷 모두 대응
           String fromSub = "substring(regexp_replace(" + fromPart + ", '[^0-9]', '', 'g'), 1, 8)";
           String toSub   = "substring(regexp_replace(" + toPart   + ", '[^0-9]', '', 'g'), 1, 8)";
-          String today   = "to_char(CURRENT_DATE, 'YYYYMMDD')";
+          String today   = ":today";
           switch (value) {
             case "before":
               whereClause.append(" AND ").append(fromSub).append(" > ").append(today);
@@ -1305,7 +1346,7 @@ public class PageDataService {
           String toRoot     = "substring(regexp_replace(data_json->>'" + rangeKey + "_to', '[^0-9]', '', 'g'), 1, 8)";
           String fromNested = "substring(regexp_replace(kv.value->>'" + rangeKey + "_from', '[^0-9]', '', 'g'), 1, 8)";
           String toNested   = "substring(regexp_replace(kv.value->>'" + rangeKey + "_to', '[^0-9]', '', 'g'), 1, 8)";
-          String today      = "to_char(CURRENT_DATE, 'YYYYMMDD')";
+          String today      = ":today";
           String nested     = " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ";
           switch (value) {
             case "before":
@@ -1408,7 +1449,7 @@ public class PageDataService {
         List<CondToken> tokens = parseConditionExpr(ternary[0]);
         if (tokens.isEmpty()) return;
 
-        String today = "to_char(CURRENT_DATE, 'YYYYMMDD')";
+        String today = ":today";
         List<String> topParts = new ArrayList<>();
         List<String> nestedParts = new ArrayList<>();
         int idx = 0;
@@ -1746,6 +1787,7 @@ public class PageDataService {
       query.setParameter("siteId", siteId);
     }
     bindSearchParams(query, statusParams);
+    bindTodayIfPresent(query, sql, siteId);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
@@ -1813,7 +1855,7 @@ public class PageDataService {
      */
   private void bindSearchParams(Query query, Map<String, String> searchParams) {
     searchParams.forEach((key, value) -> {
-      // drs_ 접두사 → CURRENT_DATE 직접 사용, 파라미터 바인딩 불필요
+      // drs_ 접두사 → :today 공통 파라미터 사용(키별 개별 바인딩 불필요, bindTodayIfPresent에서 일괄 바인딩)
       if (key.startsWith("drs_")) return;
 
       // condval_ 접두사 → condexpr_의 동반 파라미터일 뿐, 단독 바인딩 없음

@@ -4,7 +4,7 @@ import com.ge.bo.entity.TsxGeneration;
 import lombok.Builder;
 import lombok.Getter;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 
 /**
  * TSX 생성 이력 응답 DTO (목록/단건 공통)
@@ -23,7 +23,7 @@ public class TsxGenerationResponse {
     /** 생성된 TSX 코드 전문 */
   private String tsxCode;
   private String createdBy;
-  private OffsetDateTime createdAt;
+  private LocalDateTime createdAt;
 
     /** TsxGeneration 엔티티 → 응답 DTO 변환 */
   public static TsxGenerationResponse from(TsxGeneration entity) {

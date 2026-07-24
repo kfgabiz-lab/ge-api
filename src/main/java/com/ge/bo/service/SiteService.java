@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.dto.SiteDto;
 import com.ge.bo.entity.AdminUserSite;
 import com.ge.bo.entity.Site;
@@ -24,6 +25,7 @@ public class SiteService {
   private final AdminUserSiteRepository adminUserSiteRepository;
   private final AdminRepository adminRepository;
   private final MessageResourceService messageResourceService;
+  private final SiteTimeZoneResolver siteTimeZoneResolver;
 
   /** 홈페이지 목록 조회 */
   @Transactional(readOnly = true)
@@ -51,6 +53,7 @@ public class SiteService {
         .nameMsgKey(request.getNameMsgKey())
         .description(request.getDescription() != null ? request.getDescription().trim() : null)
         .domain(request.getDomain() != null ? request.getDomain().trim() : null)
+        .timezone(request.getTimezone() != null ? request.getTimezone().trim() : null)
         .isActive(request.getIsActive())
         .build();
 
@@ -69,15 +72,20 @@ public class SiteService {
     site.setNameMsgKey(request.getNameMsgKey());
     site.setDescription(request.getDescription() != null ? request.getDescription().trim() : null);
     site.setDomain(request.getDomain() != null ? request.getDomain().trim() : null);
+    site.setTimezone(request.getTimezone() != null ? request.getTimezone().trim() : null);
     site.setActive(request.getIsActive());
 
-    return toResponse(siteRepository.save(site));
+    SiteDto.Response response = toResponse(siteRepository.save(site));
+    /* timezone이 바뀌었을 수 있으므로 캐시 무효화 — 안 지우면 다음 조회 시 옛 값(또는 폴백)이 계속 쓰인다 */
+    siteTimeZoneResolver.evict(id);
+    return response;
   }
 
   /** 홈페이지 삭제 */
   @Transactional
   public void deleteSite(Long id) {
     siteRepository.delete(findSiteById(id));
+    siteTimeZoneResolver.evict(id);
   }
 
   /** 관리자별 매핑된 홈페이지 목록 조회 */
@@ -137,6 +145,7 @@ public class SiteService {
         .nameMsgKey(site.getNameMsgKey())
         .description(site.getDescription())
         .domain(site.getDomain())
+        .timezone(site.getTimezone())
         .isActive(site.isActive())
         .createdBy(site.getCreatedBy())
         .createdAt(site.getCreatedAt())

@@ -8,7 +8,7 @@ import org.springframework.data.annotation.LastModifiedBy;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 
 /**
  * 홈페이지(Site) 엔티티
@@ -41,6 +41,10 @@ public class Site {
   @Column
     private String domain;
 
+    /** 사이트별 시간대 (IANA 문자열, 예: America/New_York) — nullable, 없으면 서버 기본 zone 사용 */
+  @Column
+    private String timezone;
+
   @Builder.Default
     @Column(name = "is_active", nullable = false)
     private boolean isActive = true;
@@ -51,7 +55,7 @@ public class Site {
 
   @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
-    private OffsetDateTime createdAt;
+    private LocalDateTime createdAt;
 
   @LastModifiedBy
     @Column(name = "updated_by", nullable = false)
@@ -59,5 +63,5 @@ public class Site {
 
   @LastModifiedDate
     @Column(name = "updated_at", nullable = false)
-    private OffsetDateTime updatedAt;
+    private LocalDateTime updatedAt;
 }

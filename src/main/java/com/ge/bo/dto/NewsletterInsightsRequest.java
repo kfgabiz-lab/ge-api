@@ -13,9 +13,6 @@ public record NewsletterInsightsRequest(
 
         @NotBlank(message = "관심 분야를 입력해주세요.")
         @Size(max = 1000)
-        String areasOfInterest,
-        
-        @NotBlank
-        String userTimeZone
+        String areasOfInterest
 ) {
 }
