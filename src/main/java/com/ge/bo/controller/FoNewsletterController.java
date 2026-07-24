@@ -19,8 +19,10 @@ public class FoNewsletterController {
     private final NewsletterInsightsService newsletterInsightsService;
 
     @PostMapping("/insights")
-    public ResponseEntity<Map<String, Boolean>> sendInsights(@Valid @RequestBody NewsletterInsightsRequest request) {
-    	newsletterInsightsService.send(request);
+    public ResponseEntity<Map<String, Boolean>> sendInsights(
+            @Valid @RequestBody NewsletterInsightsRequest request,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    	newsletterInsightsService.send(request, siteId);
         return ResponseEntity.status(HttpStatus.CREATED)
         					 .body(Map.of("success", true));
     }

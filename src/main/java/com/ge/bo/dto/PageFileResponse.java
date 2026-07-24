@@ -4,7 +4,7 @@ import com.ge.bo.entity.PageFile;
 import lombok.Builder;
 import lombok.Getter;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 
 /**
  * 파일 업로드/조회 응답 DTO
@@ -21,7 +21,7 @@ public class PageFileResponse {
   private String origName;
   private Long fileSize;
   private String mimeType;
-  private OffsetDateTime createdAt;
+  private LocalDateTime createdAt;
 
     /** PageFile 엔티티 → 응답 DTO 변환 */
   public static PageFileResponse from(PageFile pageFile) {

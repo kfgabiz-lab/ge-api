@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.*;
 
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 import java.util.List;
 
 public class SiteDto {
@@ -25,6 +25,9 @@ public class SiteDto {
 
     @Size(max = 255, message = "도메인은 255자 이하여야 합니다.")
         private String domain;
+
+    @Size(max = 100, message = "시간대는 100자 이하여야 합니다.")
+        private String timezone;
 
     @NotNull(message = "사용여부 값은 필수입니다.")
         private Boolean isActive;
@@ -46,6 +49,9 @@ public class SiteDto {
     @Size(max = 255, message = "도메인은 255자 이하여야 합니다.")
         private String domain;
 
+    @Size(max = 100, message = "시간대는 100자 이하여야 합니다.")
+        private String timezone;
+
     @NotNull(message = "사용여부 값은 필수입니다.")
         private Boolean isActive;
   }
@@ -61,11 +67,12 @@ public class SiteDto {
     private String nameMsgKey;
     private String description;
     private String domain;
+    private String timezone;
     private Boolean isActive;
     private String createdBy;
-    private OffsetDateTime createdAt;
+    private LocalDateTime createdAt;
     private String updatedBy;
-    private OffsetDateTime updatedAt;
+    private LocalDateTime updatedAt;
   }
 
     /** 관리자-홈페이지 매핑 일괄 변경 요청 */

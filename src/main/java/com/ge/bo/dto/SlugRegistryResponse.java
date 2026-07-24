@@ -1,7 +1,7 @@
 package com.ge.bo.dto;
 
 import com.ge.bo.entity.SlugRegistry;
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 
 public record SlugRegistryResponse(
     Long id,
@@ -14,9 +14,9 @@ public record SlugRegistryResponse(
     String entitySlug,
     String entityName,
     String createdBy,
-    OffsetDateTime createdAt,
+    LocalDateTime createdAt,
     String updatedBy,
-    OffsetDateTime updatedAt
+    LocalDateTime updatedAt
 ) {
   public static SlugRegistryResponse from(SlugRegistry e) {
     Long entityId     = e.getSlugEntity() != null ? e.getSlugEntity().getId()   : null;

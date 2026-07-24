@@ -243,22 +243,26 @@ public class FoTrainingService {
                 .dataJson(dataMap)
                 .groupId((String) row[3])
                 .createdBy((String) row[4])
-                .createdAt(row[5] != null ? toOffsetDateTime(row[5]) : null)
+                .createdAt(row[5] != null ? toLocalDateTime(row[5]) : null)
                 .updatedBy((String) row[6])
-                .updatedAt(row[7] != null ? toOffsetDateTime(row[7]) : null)
+                .updatedAt(row[7] != null ? toLocalDateTime(row[7]) : null)
                 .build();
     }
 
-    /** 다양한 시간 타입 → OffsetDateTime (PageDataService.toOffsetDateTime 동일 로직) */
-    private java.time.OffsetDateTime toOffsetDateTime(Object obj) {
+    /**
+     * 다양한 시간 타입 → LocalDateTime (PageDataService.toLocalDateTime 동일 로직)
+     * created_at/updated_at은 timestamp without time zone 컬럼이라 pgjdbc가 보통 java.sql.Timestamp로 반환하며,
+     * Timestamp.toLocalDateTime()은 존 변환 없이 저장된 벽시계 값을 그대로 추출한다(사이트 timezone 값 보존)
+     */
+    private java.time.LocalDateTime toLocalDateTime(Object obj) {
         if (obj == null) return null;
-        if (obj instanceof java.time.OffsetDateTime odt) return odt;
-        if (obj instanceof java.time.Instant instant) return instant.atOffset(java.time.ZoneOffset.UTC);
-        if (obj instanceof java.time.ZonedDateTime zdt) return zdt.toOffsetDateTime();
-        if (obj instanceof java.sql.Timestamp ts) return ts.toInstant().atOffset(java.time.ZoneOffset.UTC);
-        if (obj instanceof java.time.LocalDateTime ldt) return ldt.atOffset(java.time.ZoneOffset.UTC);
+        if (obj instanceof java.time.LocalDateTime ldt) return ldt;
+        if (obj instanceof java.sql.Timestamp ts) return ts.toLocalDateTime();
+        if (obj instanceof java.time.OffsetDateTime odt) return odt.toLocalDateTime();
+        if (obj instanceof java.time.ZonedDateTime zdt) return zdt.toLocalDateTime();
+        if (obj instanceof java.time.Instant instant) return java.time.LocalDateTime.ofInstant(instant, java.time.ZoneOffset.UTC);
         try {
-            return java.time.OffsetDateTime.parse(obj.toString());
+            return java.time.LocalDateTime.parse(obj.toString());
         } catch (Exception ignored) {
             return null;
         }
