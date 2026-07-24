@@ -91,6 +91,14 @@ ls:
     outApi:
       googleMapKey : abc
       recapchaKey : "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
+      ctp:
+        # Connect Portal(Salesforce) Sandbox — IF_SRR_NAHP_CTP_0001(문의접수) / _0002(문의결과조회)
+        tokenUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/oauth2/token
+        apiUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0001
+        detailApiUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0002
+        clientId: ${CTP_CLIENT_ID:}
+        clientSecret: ${CTP_CLIENT_SECRET:}
+        grantType: client_credentials
     # Azure Blob Storage 정보
     azure:
       blob-storage:
