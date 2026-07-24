@@ -1674,6 +1674,19 @@ public class PageDataService {
   }
 
   /**
+   * dot notation 키 → data_json JSONB 컨테이너 경로 (마지막 세그먼트도 '->'로 접근해 jsonb 타입 유지).
+   * buildJsonPath는 마지막에 '->>'(text)를 붙이지만, 이 메서드는 '@>' 컨테인먼트 비교용으로
+   * jsonb 배열/객체 자체를 반환한다. (예: "ms" → data_json->'ms', "a.b" → data_json->'a'->'b')
+   */
+  private String buildJsonbContainerPath(String keyPath) {
+    StringBuilder path = new StringBuilder("data_json");
+    for (String seg : keyPath.split("\\.")) {
+      path.append("->'").append(seg).append("'");
+    }
+    return path.toString();
+  }
+
+  /**
    * 상태 게이트 조건 파라미터 추출 — search()와 동일하게 예약 파라미터(page/size/sort)/빈 값 제외
    * extraExcludeKeys: 추가로 제외할 키 (인접글의 sortField/titleField처럼 WHERE 조건이 아닌 파라미터)
    */
@@ -2092,11 +2105,10 @@ public class PageDataService {
 
             SlugRelation rel = slugRelationRepository.findById(relId).orElse(null);
             if (rel == null) continue;
-            if ("ARRAY_CONTAINS".equals(rel.getJoinType())) {
-                log.warn("조인 검색은 ARRAY_CONTAINS join_type을 지원하지 않습니다. relationId={}", relId);
-                continue;
-            }
             if (!StringUtils.hasText(rel.getMasterKey())) continue;
+            // ARRAY_CONTAINS: masterKey가 JSONB 배열(예: productManager-data.ms — 담당 product-data id 목록)인 관계.
+            // 아래 ②에서 IN 조건 대신 @> 컨테인먼트로 "배열 안에 linkValue가 포함된 master 행"을 검색한다.
+            boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
 
             // ① 연동 slug(slaveSlug)에서 joink_/joinv_ 조건 + relation 고정조건(slaveFilter)에 맞는 레코드 조회
             StringBuilder slaveSql = new StringBuilder(
@@ -2133,22 +2145,40 @@ public class PageDataService {
             }
 
             // ② masterKey(relation의 master_key) 경로가 linkValues 중 하나와 일치하는 현재 검색 대상 행 id 수집
-            //    (appendSlaveKeyInCondition 재사용 — resolveFilterRelationIds와 동일한 "dot notation → IN 조건" 패턴)
-            String linkValueList = linkValues.stream()
-                .map(v -> "'" + v.replace("'", "''") + "'")
-                .collect(java.util.stream.Collectors.joining(","));
-
-            StringBuilder masterSql = new StringBuilder("SELECT id FROM page_data WHERE data_slug = :masterSlug");
-            appendSlaveKeyInCondition(masterSql, rel.getMasterKey(), linkValueList);
-
-            Query masterQuery = entityManager.createNativeQuery(masterSql.toString());
-            masterQuery.setParameter("masterSlug", rel.getMasterSlug());
-
-            List<Object> masterRows = masterQuery.getResultList();
             Set<Long> ids = new HashSet<>();
-            for (Object row : masterRows) {
-                try { ids.add(((Number) row).longValue()); }
-                catch (Exception e) { /* skip */ }
+            StringBuilder masterSql = new StringBuilder("SELECT id FROM page_data WHERE data_slug = :masterSlug");
+            boolean runMasterQuery = true;
+
+            if (isArrayContains) {
+                // ARRAY_CONTAINS: masterKey(JSONB 배열)에 linkValue(slave id)가 포함된 master 행 조회.
+                // findProductManagerEmail의 "data_json->'ms' @> ..." 컨벤션 재사용 — 배열 원소는 숫자 id이므로
+                // '[id]'::jsonb 컨테인먼트로 비교하고, 복수 linkValue는 OR로 연결한다.
+                if (!rel.getMasterKey().matches("[a-zA-Z0-9_.]+")) continue; // SQL Injection 방지
+                String container = buildJsonbContainerPath(rel.getMasterKey());
+                String containsCond = linkValues.stream()
+                    .filter(v -> v.matches("-?\\d+")) // 숫자 검증 — 숫자 아닌 값은 배열 원소가 될 수 없어 제외(Injection 차단)
+                    .map(v -> container + " @> '[" + v + "]'::jsonb")
+                    .collect(java.util.stream.Collectors.joining(" OR "));
+                // 숫자 linkValue가 하나도 없으면 이 조인 조건은 공집합 → 쿼리 생략(ids는 빈 셋 유지)
+                if (containsCond.isBlank()) runMasterQuery = false;
+                else masterSql.append(" AND (").append(containsCond).append(")");
+            } else {
+                //    (appendSlaveKeyInCondition 재사용 — resolveFilterRelationIds와 동일한 "dot notation → IN 조건" 패턴)
+                String linkValueList = linkValues.stream()
+                    .map(v -> "'" + v.replace("'", "''") + "'")
+                    .collect(java.util.stream.Collectors.joining(","));
+                appendSlaveKeyInCondition(masterSql, rel.getMasterKey(), linkValueList);
+            }
+
+            if (runMasterQuery) {
+                Query masterQuery = entityManager.createNativeQuery(masterSql.toString());
+                masterQuery.setParameter("masterSlug", rel.getMasterSlug());
+
+                List<Object> masterRows = masterQuery.getResultList();
+                for (Object row : masterRows) {
+                    try { ids.add(((Number) row).longValue()); }
+                    catch (Exception e) { /* skip */ }
+                }
             }
 
             // 복수 조인 필드 동시 검색: AND 교집합
