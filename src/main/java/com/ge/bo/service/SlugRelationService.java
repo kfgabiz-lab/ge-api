@@ -66,6 +66,7 @@ public class SlugRelationService {
                 .slaveType(StringUtils.hasText(request.slaveType()) ? request.slaveType().trim() : "TABLE")
                 .categoryDepth(request.categoryDepth() != null ? request.categoryDepth() : 1)
                 .categoryDepthFrom(request.categoryDepthFrom())
+                .includeLeaf(request.includeLeaf() != null ? request.includeLeaf() : false)
                 .description(trimOrNull(request.description()))
                 .build();
         return SlugRelationResponse.from(slugRelationRepository.save(entity));
@@ -88,6 +89,7 @@ public class SlugRelationService {
         entity.setSlaveType(StringUtils.hasText(request.slaveType()) ? request.slaveType().trim() : "TABLE");
         entity.setCategoryDepth(request.categoryDepth() != null ? request.categoryDepth() : 1);
         entity.setCategoryDepthFrom(request.categoryDepthFrom());
+        entity.setIncludeLeaf(request.includeLeaf() != null ? request.includeLeaf() : false);
         entity.setDescription(trimOrNull(request.description()));
         return SlugRelationResponse.from(slugRelationRepository.save(entity));
     }

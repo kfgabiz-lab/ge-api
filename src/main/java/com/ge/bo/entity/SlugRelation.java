@@ -83,6 +83,11 @@ public class SlugRelation {
     @Column(name = "category_depth_from")
     private Integer categoryDepthFrom;
 
+    /** CATEGORY 유형 FETCH 시 리프(연결 레코드 자기 자신)를 breadcrumb에 포함할지 여부 — 기본 false(기존 동작 유지) */
+    @Column(name = "include_leaf", nullable = false)
+    @Builder.Default
+    private Boolean includeLeaf = false;
+
     /** 설명 */
     @Column(columnDefinition = "TEXT")
     private String description;

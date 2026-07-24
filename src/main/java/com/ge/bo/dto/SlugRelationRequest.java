@@ -50,5 +50,8 @@ public record SlugRelationRequest(
         @Min(1) @Max(5)
         Integer categoryDepthFrom,
 
+        /** CATEGORY 유형 FETCH 시 리프(연결 레코드 자기 자신)를 breadcrumb에 포함할지 여부 — 기본 false(기존 동작 유지) */
+        Boolean includeLeaf,
+
         String description
 ) {}

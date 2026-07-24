@@ -2661,7 +2661,8 @@ public class PageDataService {
         }
 
         // fetch_fields 있음 → depth에 해당하는 이름 문자열 추출 (합치지 않음)
-        String categoryParentKeyPath = deriveCategoryParentKeyPath(rel.getFetchFields());
+        // 카테고리 레코드 간 parentId 경로는 collectFullCategoryPath() 내부에서 레코드마다 autoDetectParentKeyPath()로 자동 탐지한다
+        // (기존 deriveCategoryParentKeyPath()는 fetch_fields에 콤마가 포함되면 lastIndexOf('.') 파싱이 깨져 제거됨)
         List<String> results = new ArrayList<>();
         for (Object row : r1) {
             Map<String, Object> linkDataJson;
@@ -2671,16 +2672,16 @@ public class PageDataService {
                 log.warn("CATEGORY FETCH 연결 레코드 파싱 실패: {}", e.getMessage());
                 continue;
             }
-            List<String> fullPath = collectFullCategoryPath(linkDataJson, rel, linkParentKeyPath, categoryParentKeyPath);
+            List<String> fullPath = collectFullCategoryPath(linkDataJson, rel, linkParentKeyPath);
             if (fullPath.isEmpty()) continue;
-            if (fullPath.size() >= targetDepth) {
-                // fromDepth~targetDepth 범위의 이름을 계층 구분자(" > ", 고정)로 합침 — 레코드 간 구분자(sep)와 달라야 경계가 섞이지 않음
-                List<String> rangeNames = new ArrayList<>();
-                for (int d = Math.max(1, fromDepth); d <= targetDepth; d++) {
-                    if (fullPath.size() >= d) rangeNames.add(fullPath.get(d - 1));
-                }
-                if (!rangeNames.isEmpty()) results.add(String.join(" > ", rangeNames));
+            // depth가 섞인 행(예: 조상이 부족한 카테고리)도 있는 만큼만 잘라서 표시 — targetDepth보다 짧다고 통째로 skip하지 않음
+            int availableDepth = Math.min(fullPath.size(), targetDepth);
+            // fromDepth~availableDepth 범위의 이름을 계층 구분자(" > ", 고정)로 합침 — 레코드 간 구분자(sep)와 달라야 경계가 섞이지 않음
+            List<String> rangeNames = new ArrayList<>();
+            for (int d = Math.max(1, fromDepth); d <= availableDepth; d++) {
+                rangeNames.add(fullPath.get(d - 1));
             }
+            if (!rangeNames.isEmpty()) results.add(String.join(" > ", rangeNames));
         }
         if (results.isEmpty()) return null;
         // 매칭된 레코드(row)가 여러 건이면 List<String> 그대로 반환 — FE에서 fetchSeparator로 합침
@@ -2755,11 +2756,14 @@ public class PageDataService {
     /**
      * 연결 레코드 → 최상위 카테고리까지 전체 경로 수집 (대분류가 앞, 중분류가 뒤)
      * parentId가 비어있을 때까지 거슬러 올라감 (무한루프 방지: 최대 10단계)
+     * 카테고리 레코드 간 parentId 경로는 레코드마다 autoDetectParentKeyPath()로 자동 탐지한다
+     * (collectCategoryRecordAtDepth()와 동일한 방식 — fetch_fields에 콤마가 포함돼도 안전)
+     * rel.includeLeaf가 true면 연결 레코드(리프) 자기 자신의 이름을 경로 가장 끝(가장 깊은 depth)에 추가한다.
+     * includeLeaf 미설정/false면 기존과 완전히 동일하게 동작(리프 이름 미포함)한다.
      */
     @SuppressWarnings("unchecked")
     private List<String> collectFullCategoryPath(
-            Map<String, Object> linkDataJson, SlugRelation rel,
-            String linkParentKeyPath, String categoryParentKeyPath) {
+            Map<String, Object> linkDataJson, SlugRelation rel, String linkParentKeyPath) {
 
         List<String> path = new ArrayList<>();
         Map<String, Object> cursor = linkDataJson;
@@ -2780,24 +2784,23 @@ public class PageDataService {
 
             try {
                 Map<String, Object> parentDataJson = objectMapper.readValue(rows.get(0).toString(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
-                String name = extractField(parentDataJson, rel.getFetchFields());
+                String name = extractFieldMulti(parentDataJson, rel.getFetchFields());
                 if (name != null) path.add(0, name); // 상위일수록 앞에 추가
                 cursor = parentDataJson;
-                currentParentKeyPath = categoryParentKeyPath; // 두 번째부터: 카테고리 간 이동
+                currentParentKeyPath = autoDetectParentKeyPath(parentDataJson); // 카테고리 레코드마다 parentId 경로 자동 탐지
             } catch (Exception e) {
                 log.warn("CATEGORY FETCH 카테고리 경로 수집 실패: {}", e.getMessage());
                 break;
             }
         }
 
-        return path;
-    }
+        // includeLeaf=true(opt-in)일 때만 리프(연결 레코드) 자기 자신의 이름을 경로 가장 끝에 추가 — 기본 false면 기존 동작과 완전히 동일
+        if (Boolean.TRUE.equals(rel.getIncludeLeaf())) {
+            String leafName = extractFieldMulti(linkDataJson, rel.getFetchFields());
+            if (leafName != null) path.add(leafName);
+        }
 
-    /** fetchFields에서 카테고리 레코드 간 parentId 경로 추출: "form1.title" → "form1.parentId" */
-    private String deriveCategoryParentKeyPath(String fetchFields) {
-        if (fetchFields == null) return "parentId";
-        int dot = fetchFields.lastIndexOf('.');
-        return dot >= 0 ? fetchFields.substring(0, dot + 1) + "parentId" : "parentId";
+        return path;
     }
 
     /** slave_key 경로 조건 SQL 추가 (dot notation → data_json->'x'->>'y') */
@@ -2873,6 +2876,24 @@ public class PageDataService {
                 Object val = matches.get(0);
                 return val != null ? val.toString() : null;
             }
+        }
+        return null;
+    }
+
+    /**
+     * fetch_fields에 콤마로 구분된 여러 필드 경로 후보가 있을 때, 앞에서부터 순서대로 extractField()를 시도해
+     * 첫 번째로 값이 있는(non-null) 경로의 값을 반환한다. (예: "form1.title,form2.name")
+     * 콤마가 없으면 단일 경로로 간주해 extractField()와 동일하게 동작한다.
+     * CATEGORY FETCH의 상위 카테고리명/리프명 추출(collectFullCategoryPath) 전용 헬퍼이며,
+     * TABLE FETCH 등 기존 extractField() 호출부에는 영향을 주지 않는다.
+     */
+    private String extractFieldMulti(Map<String, Object> dataJson, String csvFieldPaths) {
+        if (dataJson == null || csvFieldPaths == null || csvFieldPaths.isBlank()) return null;
+        for (String fieldPath : csvFieldPaths.split(",")) {
+            String trimmed = fieldPath.trim();
+            if (trimmed.isEmpty()) continue;
+            String value = extractField(dataJson, trimmed);
+            if (value != null) return value;
         }
         return null;
     }
