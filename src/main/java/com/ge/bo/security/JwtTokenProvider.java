@@ -69,6 +69,36 @@ public class JwtTokenProvider {
   }
 
     /**
+     * 미리보기 토큰 생성 (5분 유효, 지정된 slug+recordId 1건만 조회 가능)
+     */
+  public String generatePreviewToken(String email, String slug, String recordId) {
+    return Jwts.builder()
+                .subject(email)
+                .claim("purpose", "preview")
+                .claim("slug", slug)
+                .claim("recordId", recordId)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 5L * 60 * 1000))
+                .signWith(getSigningKey())
+                .compact();
+  }
+
+    /**
+     * 미리보기 토큰 검증 (purpose=preview + slug/recordId 일치 여부까지 확인)
+     */
+  public boolean validatePreviewToken(String token, String slug, String recordId) {
+    try {
+      Claims claims = parseToken(token);
+      return "preview".equals(claims.get("purpose", String.class))
+          && slug.equals(claims.get("slug", String.class))
+          && recordId.equals(claims.get("recordId", String.class));
+    } catch (JwtException | IllegalArgumentException e) {
+      log.error("유효하지 않은 미리보기 토큰: {}", e.getMessage());
+      return false;
+    }
+  }
+
+    /**
      * TOTP 임시 토큰에서 이메일 추출 (type=TOTP_PENDING 검증 포함)
      */
   public String getEmailFromTotpPendingToken(String token) {
