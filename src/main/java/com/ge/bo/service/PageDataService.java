@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.dto.AdjacentResponse;
 import com.ge.bo.dto.DevicesTreeRowResponse;
+import com.ge.bo.dto.ProductInsightRowResponse;
 import com.ge.bo.dto.PageDataListResponse;
 import com.ge.bo.dto.PageDataRequest;
 import com.ge.bo.dto.PageDataResponse;
@@ -454,6 +455,54 @@ public class PageDataService {
         @SuppressWarnings("unchecked")
         List<Object> rows = query.getResultList();
         return rows.isEmpty() ? Optional.empty() : Optional.ofNullable((String) rows.get(0));
+    }
+
+    /**
+     * 제품(product-data) id로 맵핑된 게시글(blog/press/articles) 최신 3건 조회 — FO 제품상세 Insights(스펙 38)
+     * - blog-data/press-data/articles-data 의 data_json.product_list(JSONB 배열, ENTITY_REF product-data id)에
+     *   productId 가 포함되고, 공개(is_visible=001) + 게시일(publish_dttm)이 오늘 이하(과거)인 행 조회
+     * - findProductManagerEmail 의 "data_json->'...' @> to_jsonb(:id)" 컨벤션 재사용(배열 원소는 숫자 id)
+     * - 게시일 문자열에서 숫자만 추출해 앞 8자리(YYYYMMDD)로 :today(사이트 tz 기준) 이하 비교(condexpr 게시상태 게이트와 동일 방식)
+     * - 정렬: 게시일 내림차순, 동률 시 id 내림차순. 최대 3건.
+     */
+    @Transactional(readOnly = true)
+    public List<ProductInsightRowResponse> findProductInsights(Long productId, Long siteId) {
+        // title/is_visible/publish_dttm/image 는 data_json 최상위가 아니라 콘텐츠 섹션(press/blog/articles) 하위에 중첩된다.
+        // 섹션명은 slug에서 '-data'를 제거한 값(press-data→press, blog-data→blog, articles-data→articles)이라
+        // data_json->(replace(data_slug,'-data',''))->>'필드' 로 접근한다. product_list 는 최상위 배열이라 그대로 접근.
+        String section = "data_json->(replace(data_slug,'-data',''))";
+        String sql = "SELECT id, data_slug,"
+            + "  " + section + "->>'title'        AS title,"
+            + "  " + section + "->>'publish_dttm' AS publish_dttm,"
+            + "  " + section + "->>'image'        AS image"
+            + " FROM page_data"
+            + " WHERE data_slug IN ('blog-data','press-data','articles-data')"
+            + "  AND data_json->'product_list' @> to_jsonb(:productId)"
+            + "  AND " + section + "->>'is_visible' = '001'"
+            + "  AND substring(regexp_replace(" + section + "->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today"
+            + "  AND (site_id = :siteId OR site_id IS NULL)"
+            + " ORDER BY " + section + "->>'publish_dttm' DESC, id DESC"
+            + " LIMIT 3";
+
+        Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("productId", productId);
+        query.setParameter("today", resolveTodayParam(siteId));
+        query.setParameter("siteId", siteId);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+        List<ProductInsightRowResponse> result = new ArrayList<>();
+        for (Object[] row : rows) {
+            result.add(new ProductInsightRowResponse(
+                row[0] != null ? ((Number) row[0]).longValue() : null,
+                row[1] != null ? row[1].toString() : null,
+                row[2] != null ? row[2].toString() : null,
+                row[3] != null ? row[3].toString() : null,
+                row[4] != null ? row[4].toString() : null
+            ));
+        }
+        return result;
     }
 
     /**
