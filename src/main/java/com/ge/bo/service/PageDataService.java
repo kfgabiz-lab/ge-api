@@ -3,6 +3,7 @@ package com.ge.bo.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.dto.AdjacentResponse;
+import com.ge.bo.dto.CategoryLv2RowResponse;
 import com.ge.bo.dto.DevicesTreeRowResponse;
 import com.ge.bo.dto.ProductInsightRowResponse;
 import com.ge.bo.dto.PageDataListResponse;
@@ -60,6 +61,34 @@ public class PageDataService {
 
     /** 예약 파라미터 — 검색 조건에서 제외 (exclude는 응답 경량화용 필드제외 지시라 WHERE 조건이 아님) */
   private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude");
+
+    /** Lv1(:categoryId) 하위 "노출가능 Lv2" + 그 Lv2에 매핑된 "노출가능 제품(공개+판매중)" 집합.
+     *  JSONB 존재연산자 '?' 계열(?, ?|, ?&)은 Hibernate 네이티브 파서가 JDBC 위치 파라미터로 오인하므로 사용 금지(findDevicesTree 참고).
+     *  여기서는 depth 문자열 비교/조인만 쓰므로 '?' 자체가 등장하지 않는다. */
+  private static final String CATEGORY_LV2_CTE =
+        "WITH visible_lv2 AS ("
+      + "  SELECT c.id AS id, c.data_json AS data_json"
+      + "  FROM page_data c"
+      + "  WHERE c.data_slug = 'category-data'"
+      + "   AND c.data_json->'category'->>'parentId' = :categoryId"
+      + "   AND c.data_json->'category'->>'depth'    = '2'"
+      + "   AND c.data_json->'category'->>'is_visible' = '001'"
+      + "   AND (c.site_id = :siteId OR c.site_id IS NULL)"
+      + "), visible_product AS ("
+      + "  SELECT DISTINCT v.id AS lv2_id, p.id AS product_id"
+      + "  FROM visible_lv2 v"
+      + "  JOIN page_data j"
+      + "    ON j.data_slug = 'category-data'"
+      + "   AND j.data_json->'product'->>'depth'    = '3'"
+      + "   AND j.data_json->'product'->>'parentId' = v.id::text"
+      + "   AND (j.site_id = :siteId OR j.site_id IS NULL)"
+      + "  JOIN page_data p"
+      + "    ON p.data_slug = 'product-data'"
+      + "   AND p.id::text = j.data_json->'product'->>'id'"
+      + "   AND (p.site_id = :siteId OR p.site_id IS NULL)"
+      + "   AND p.data_json->'product'->>'is_visible'   = '001'"
+      + "   AND p.data_json->'product'->>'order_status' = '01'"
+      + ")";
 
     /**
      * 목록 조회 — 동적 JSONB 검색 + 페이지네이션
@@ -166,7 +195,7 @@ public class PageDataService {
 
         // 데이터 조회 — unpaged면 LIMIT/OFFSET 없이 조건에 맞는 전체 행 반환
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
-                + " created_by, created_at, updated_by, updated_at "
+                + " created_by, created_at, updated_by, updated_at, \"count\" "
                 + "FROM page_data " + whereClause
                 + orderBy
                 + (unpaged ? "" : " LIMIT :size OFFSET :offset");
@@ -249,7 +278,7 @@ public class PageDataService {
     appendWhereConditions(whereClause, statusParams);
 
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
-                + " created_by, created_at, updated_by, updated_at "
+                + " created_by, created_at, updated_by, updated_at, \"count\" "
                 + "FROM page_data " + whereClause
                 + " LIMIT 1";
     Query dataQuery = entityManager.createNativeQuery(dataSql);
@@ -486,6 +515,86 @@ public class PageDataService {
 
         Query query = entityManager.createNativeQuery(sql);
         query.setParameter("productId", productId);
+        query.setParameter("today", resolveTodayParam(siteId));
+        query.setParameter("siteId", siteId);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+        List<ProductInsightRowResponse> result = new ArrayList<>();
+        for (Object[] row : rows) {
+            result.add(new ProductInsightRowResponse(
+                row[0] != null ? ((Number) row[0]).longValue() : null,
+                row[1] != null ? row[1].toString() : null,
+                row[2] != null ? row[2].toString() : null,
+                row[3] != null ? row[3].toString() : null,
+                row[4] != null ? row[4].toString() : null
+            ));
+        }
+        return result;
+    }
+
+    /**
+     * Lv1(categoryId) 하위 "노출가능 Lv2" 목록 조회 — FO 카테고리 랜딩(기획서 3번 요건)
+     * 조건: Lv1 맵핑 + Lv2 공개(is_visible=001) + 하위 Lv3 제품 중 (공개+판매중) 1건 이상 + sortOrder 정렬
+     */
+    @Transactional(readOnly = true)
+    public List<CategoryLv2RowResponse> findCategoryLv2(Long categoryId, Long siteId) {
+        String sql = CATEGORY_LV2_CTE
+            + " SELECT v.id AS id,"
+            + "  v.data_json->'category'->>'title'        AS title,"
+            + "  v.data_json->'seo'->>'slug'              AS slug,"
+            + "  v.data_json->'device_systems'->>'image'  AS image"
+            + " FROM visible_lv2 v"
+            + " WHERE EXISTS (SELECT 1 FROM visible_product vp WHERE vp.lv2_id = v.id)"
+            + " ORDER BY"
+            + "  CASE WHEN v.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (v.data_json->>'sortOrder')::int END ASC NULLS LAST,"
+            + "  v.id ASC";
+
+        Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("categoryId", String.valueOf(categoryId));
+        query.setParameter("siteId", siteId);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+        List<CategoryLv2RowResponse> result = new ArrayList<>();
+        for (Object[] row : rows) {
+            result.add(new CategoryLv2RowResponse(
+                row[0] != null ? ((Number) row[0]).longValue() : null,
+                row[1] != null ? row[1].toString() : null,
+                row[2] != null ? row[2].toString() : null,
+                row[3] != null ? row[3].toString() : null
+            ));
+        }
+        return result;
+    }
+
+    /**
+     * Lv1(categoryId) 기준 Highlights 인사이트 조회 — FO 카테고리 랜딩(기획서 13번 요건)
+     * findCategoryLv2와 동일한 "노출가능 제품" 집합을 재사용해 press/blog/articles의 product_list 교집합을 찾는다.
+     * findProductInsights(단일 제품 기준)의 카테고리 확장판 — 응답 DTO는 그대로 재사용한다.
+     */
+    @Transactional(readOnly = true)
+    public List<ProductInsightRowResponse> findCategoryInsights(Long categoryId, Long siteId) {
+        String section = "n.data_json->(replace(n.data_slug,'-data',''))";
+        String sql = CATEGORY_LV2_CTE
+            + " SELECT n.id, n.data_slug,"
+            + "  " + section + "->>'title'        AS title,"
+            + "  " + section + "->>'publish_dttm' AS publish_dttm,"
+            + "  " + section + "->>'image'        AS image"
+            + " FROM page_data n"
+            + " WHERE n.data_slug IN ('blog-data','press-data','articles-data')"
+            + "  AND " + section + "->>'is_visible' = '001'"
+            + "  AND substring(regexp_replace(" + section + "->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today"
+            + "  AND (n.site_id = :siteId OR n.site_id IS NULL)"
+            + "  AND EXISTS (SELECT 1 FROM visible_product vp"
+            + "              WHERE n.data_json->'product_list' @> to_jsonb(vp.product_id))"
+            + " ORDER BY " + section + "->>'publish_dttm' DESC, n.id DESC"
+            + " LIMIT 3";
+
+        Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("categoryId", String.valueOf(categoryId));
         query.setParameter("today", resolveTodayParam(siteId));
         query.setParameter("siteId", siteId);
 
@@ -1256,7 +1365,7 @@ public class PageDataService {
     /**
      * 네이티브 쿼리 결과 행(Object[]) → PageDataResponse 변환
      * 컬럼 순서: id, template_slug, data_json::text, group_id, created_by,
-     * created_at, updated_by, updated_at
+     * created_at, updated_by, updated_at, count
      * userNameMap: admin_user id→name 맵 (미리 일괄 조회하여 N+1 방지)
      */
   private PageDataResponse mapRowToResponse(Object[] row, Map<Long, String> userNameMap) {
@@ -1280,6 +1389,7 @@ public class PageDataService {
                 .createdAt(row[5] != null ? toLocalDateTime(row[5]) : null)
                 .updatedBy(resolveUserName((String) row[6], userNameMap))
                 .updatedAt(row[7] != null ? toLocalDateTime(row[7]) : null)
+                .count(row[8] != null ? ((Number) row[8]).longValue() : null)
                 .build();
   }
 
