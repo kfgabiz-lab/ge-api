@@ -684,10 +684,11 @@ public class PageDataService {
     }
 
     /**
-     * 트레이닝 요청(Training Request) Step4 제품 선택 트리 — Power/Automation 각각
-     * Lv1(category) > Lv2(category) > 제품(product-data, has_training='001') 3단 구조를 조립한다.
-     * 제품이 하나도 없는 Lv2/Lv1 가지는 결과에서 제외한다(빈 드롭다운 방지).
-     * 같은 Lv2 아래 제품이 Power/Automation에 섞여 있을 가능성을 고려해 product_type 기준으로 별도 트리 2개를 만든다.
+     * 트레이닝 요청(Training Request) Step4 제품 선택 — Power/Automation 각각 "드롭다운2 옵션 + 체크박스 목록" 2단 구조를 조립한다.
+     * - Power: 드롭다운2 = Lv1 카테고리, 체크박스 = 그 하위 Lv2 카테고리(제품 자체가 아님)
+     * - Automation: 드롭다운2 = Lv2 카테고리(Lv1은 건너뜀), 체크박스 = 그 하위 실제 제품
+     * 어느 쪽이든 has_training='001' 제품이 하나도 없는 가지는 조인 단계에서 제외된다(빈 드롭다운 방지).
+     * 같은 Lv2 아래 제품이 Power/Automation에 섞여 있을 가능성을 고려해 product_type 기준으로 별도 목록 2개를 만든다.
      */
     @Transactional(readOnly = true)
     public TrainingProductTreeResponse findTrainingProductTree(Long siteId) {
@@ -730,12 +731,17 @@ public class PageDataService {
         return new TrainingProductTreeResponse(power, automation);
     }
 
-    /** findTrainingProductTree 조회 결과(flat row)를 productType 기준으로 Lv1>Lv2>제품 트리로 조립한다. */
+    /**
+     * findTrainingProductTree 조회 결과(flat row)를 productType 기준으로 "드롭다운2 옵션 + 체크박스 목록"으로 조립한다.
+     * - "P"(Power)   : 그룹키 = Lv1(카테고리), 체크박스 = 그 하위 Lv2 카테고리들(중복 제거)
+     * - "A"(Automation): 그룹키 = Lv2(카테고리, Lv1 건너뜀), 체크박스 = 그 하위 실제 제품들
+     * 순서는 SQL의 ORDER BY(lv1.id, lv2.id, p.id)를 그대로 살리기 위해 LinkedHashMap을 사용한다.
+     */
     private List<TrainingProductNodeResponse> buildTrainingTree(List<Object[]> rows, String productType) {
-        // Lv1 id -> (Lv1 title, Lv2 id -> (Lv2 title, 제품 목록)) 순서 보존을 위해 LinkedHashMap 사용
-        Map<Long, String> lv1Titles = new LinkedHashMap<>();
-        Map<Long, Map<Long, String>> lv2TitlesByLv1 = new LinkedHashMap<>();
-        Map<Long, Map<Long, List<TrainingProductOptionResponse>>> productsByLv1Lv2 = new LinkedHashMap<>();
+        boolean powerMode = "P".equals(productType);
+
+        Map<Long, String> groupTitles = new LinkedHashMap<>();                     // 그룹(드롭다운2 옵션) id -> title
+        Map<Long, Map<Long, String>> optionsByGroup = new LinkedHashMap<>();       // 그룹 id -> (체크박스 id -> name), 중복 자동 제거
 
         for (Object[] row : rows) {
             String rowProductType = row[6] != null ? row[6].toString() : null;
@@ -748,26 +754,28 @@ public class PageDataService {
             Long productId = ((Number) row[4]).longValue();
             String productName = row[5] != null ? row[5].toString() : null;
 
-            lv1Titles.putIfAbsent(lv1Id, lv1Title);
-            lv2TitlesByLv1.computeIfAbsent(lv1Id, k -> new LinkedHashMap<>()).putIfAbsent(lv2Id, lv2Title);
-            productsByLv1Lv2
-                .computeIfAbsent(lv1Id, k -> new LinkedHashMap<>())
-                .computeIfAbsent(lv2Id, k -> new ArrayList<>())
-                .add(new TrainingProductOptionResponse(productId, productName));
+            // Power는 Lv1 그룹 아래 Lv2 카테고리를, Automation은 Lv2 그룹 아래 실제 제품을 체크박스로 담는다.
+            Long groupId = powerMode ? lv1Id : lv2Id;
+            String groupTitle = powerMode ? lv1Title : lv2Title;
+            Long optionId = powerMode ? lv2Id : productId;
+            String optionName = powerMode ? lv2Title : productName;
+
+            groupTitles.putIfAbsent(groupId, groupTitle);
+            optionsByGroup
+                .computeIfAbsent(groupId, k -> new LinkedHashMap<>())
+                .putIfAbsent(optionId, optionName);
         }
 
-        List<TrainingProductNodeResponse> tree = new ArrayList<>();
-        for (Map.Entry<Long, String> lv1Entry : lv1Titles.entrySet()) {
-            Long lv1Id = lv1Entry.getKey();
-            List<TrainingProductNodeResponse> lv2Nodes = new ArrayList<>();
-            for (Map.Entry<Long, String> lv2Entry : lv2TitlesByLv1.get(lv1Id).entrySet()) {
-                Long lv2Id = lv2Entry.getKey();
-                List<TrainingProductOptionResponse> products = productsByLv1Lv2.get(lv1Id).get(lv2Id);
-                lv2Nodes.add(new TrainingProductNodeResponse(lv2Id, lv2Entry.getValue(), null, products));
+        List<TrainingProductNodeResponse> nodes = new ArrayList<>();
+        for (Map.Entry<Long, String> groupEntry : groupTitles.entrySet()) {
+            Long groupId = groupEntry.getKey();
+            List<TrainingProductOptionResponse> options = new ArrayList<>();
+            for (Map.Entry<Long, String> optionEntry : optionsByGroup.get(groupId).entrySet()) {
+                options.add(new TrainingProductOptionResponse(optionEntry.getKey(), optionEntry.getValue()));
             }
-            tree.add(new TrainingProductNodeResponse(lv1Id, lv1Entry.getValue(), lv2Nodes, null));
+            nodes.add(new TrainingProductNodeResponse(groupId, groupEntry.getValue(), options));
         }
-        return tree;
+        return nodes;
     }
 
     /**
