@@ -29,6 +29,9 @@ public class SiteDto {
     @Size(max = 100, message = "시간대는 100자 이하여야 합니다.")
         private String timezone;
 
+    @Size(max = 100, message = "로케일은 100자 이하여야 합니다.")
+        private String locale;
+
     @NotNull(message = "사용여부 값은 필수입니다.")
         private Boolean isActive;
   }
@@ -52,6 +55,9 @@ public class SiteDto {
     @Size(max = 100, message = "시간대는 100자 이하여야 합니다.")
         private String timezone;
 
+    @Size(max = 100, message = "로케일은 100자 이하여야 합니다.")
+        private String locale;
+
     @NotNull(message = "사용여부 값은 필수입니다.")
         private Boolean isActive;
   }
@@ -68,6 +74,7 @@ public class SiteDto {
     private String description;
     private String domain;
     private String timezone;
+    private String locale;
     private Boolean isActive;
     private String createdBy;
     private LocalDateTime createdAt;

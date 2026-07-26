@@ -1,7 +1,9 @@
 package com.ge.bo.controller;
 
 import com.ge.bo.dto.PageDataListResponse;
+import com.ge.bo.dto.TrainingProductTreeResponse;
 import com.ge.bo.service.FoTrainingService;
+import com.ge.bo.service.PageDataService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class FoTrainingController {
 
     private final FoTrainingService foTrainingService;
+    private final PageDataService pageDataService;
 
     /**
      * 카테고리별 커리큘럼 목록 조회
@@ -43,5 +46,16 @@ public class FoTrainingController {
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
         return ResponseEntity.ok(
                 foTrainingService.findCurriculumByCategory(categoryIds, trainingCourse, page, size, siteId));
+    }
+
+    /**
+     * Training Request(Step4) 제품 선택 트리 조회 — Power/Automation 각각
+     * Lv1(category) > Lv2(category) > 제품(has_training='001') 구조, 빈 가지 제외.
+     * GET /api/v1/fo/training/product-tree
+     */
+    @GetMapping("/product-tree")
+    public ResponseEntity<TrainingProductTreeResponse> getProductTree(
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.ok(pageDataService.findTrainingProductTree(siteId));
     }
 }

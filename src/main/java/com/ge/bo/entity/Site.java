@@ -45,6 +45,10 @@ public class Site {
   @Column
     private String timezone;
 
+    /** 사이트별 로케일 (BCP47 문자열, 예: en-US) — nullable, 없으면 FO 기본값 사용 */
+  @Column
+    private String locale;
+
   @Builder.Default
     @Column(name = "is_active", nullable = false)
     private boolean isActive = true;
