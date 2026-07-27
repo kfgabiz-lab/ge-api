@@ -2,11 +2,19 @@ package com.ge.bo.controller;
 
 import com.ge.bo.dto.PageDataListResponse;
 import com.ge.bo.dto.TrainingProductTreeResponse;
+import com.ge.bo.dto.TrainingRequestSubmitRequest;
+import com.ge.bo.dto.TrainingRequestSubmitResponse;
 import com.ge.bo.service.FoTrainingService;
 import com.ge.bo.service.PageDataService;
+import com.ge.bo.service.TrainingRequestService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -24,6 +32,7 @@ public class FoTrainingController {
 
     private final FoTrainingService foTrainingService;
     private final PageDataService pageDataService;
+    private final TrainingRequestService trainingRequestService;
 
     /**
      * 카테고리별 커리큘럼 목록 조회
@@ -57,5 +66,30 @@ public class FoTrainingController {
     public ResponseEntity<TrainingProductTreeResponse> getProductTree(
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
         return ResponseEntity.ok(pageDataService.findTrainingProductTree(siteId));
+    }
+
+    /**
+     * Training Request(비정기 교육 신청) 제출 — Step1~4 입력값 저장
+     * POST /api/v1/fo/training/requests
+     * 인증 불필요 (SecurityConfig 에서 /api/v1/fo/** permitAll)
+     */
+    @PostMapping("/requests")
+    public ResponseEntity<TrainingRequestSubmitResponse> submitRequest(
+            @Valid @RequestBody TrainingRequestSubmitRequest request,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(trainingRequestService.submit(request, getClientIp(httpRequest)));
+    }
+
+    /**
+     * 실제 클라이언트 IP 추출 — 리버스 프록시 환경에서는 X-Forwarded-For 헤더 우선
+     * (TrainingRegistrationController 의 동일 로직 복제)
+     */
+    private String getClientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (StringUtils.isNotBlank(forwarded)) {
+            // 여러 IP가 콤마로 연결된 경우 첫 번째가 실제 클라이언트 IP
+            return forwarded.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 }

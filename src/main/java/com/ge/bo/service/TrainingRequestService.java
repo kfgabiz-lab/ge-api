@@ -1,0 +1,133 @@
+package com.ge.bo.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ge.bo.dto.TrainingRequestSubmitRequest;
+import com.ge.bo.dto.TrainingRequestSubmitResponse;
+import com.ge.bo.entity.TrainingRequest;
+import com.ge.bo.exception.BusinessException;
+import com.ge.bo.repository.TrainingRequestRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.Collection;
+
+/**
+ * FO Training Request(비정기 교육 신청, Step1~4) 접수 서비스
+ * - 처리 순서: reCAPTCHA 검증 → 날짜 파싱 → JSON 직렬화 → insert
+ * - TrainingRegistrationService 의 레이어 구조를 그대로 본떠 작성(reCAPTCHA 공용 서비스 재사용).
+ * - 신청자가 입력한 값을 그대로 보존하는 이력성 저장이라 코드값 변환/공통코드 검증은 하지 않는다.
+ * - 메일 발송은 스코프 제외.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class TrainingRequestService {
+
+    private final TrainingRequestRepository trainingRequestRepository;
+    private final RecaptchaService recaptchaService;
+    private final ObjectMapper objectMapper;
+
+    /**
+     * 교육 신청 접수 처리 — reCAPTCHA 검증 → 저장 → 결과 반환
+     *
+     * @param request  폼 요청 (Bean Validation 통과 후 진입)
+     * @param clientIp 요청자 IP (컨트롤러에서 X-Forwarded-For 우선 추출)
+     * @return 저장된 신청 id
+     */
+    @Transactional
+    public TrainingRequestSubmitResponse submit(TrainingRequestSubmitRequest request, String clientIp) {
+
+        // 1) reCAPTCHA 검증 (실패 시 BusinessException 발생 → 400)
+        recaptchaService.verify(request.recaptchaToken());
+
+        // 2) 희망 교육 일자 파싱("yyyy-MM-dd")
+        LocalDate scheduleStart = parseDate(request.scheduleStart(), "교육 시작일");
+        LocalDate scheduleEnd = parseDate(request.scheduleEnd(), "교육 종료일");
+
+        // 3) 저장 (append-only)
+        TrainingRequest entity = TrainingRequest.builder()
+                // Step1
+                .trainingTrack(blankToNull(request.trainingTrack()))
+                .firstName(request.firstName())
+                .lastName(blankToNull(request.lastName()))
+                .company(request.company())
+                .streetAddress(request.streetAddress())
+                .address2(blankToNull(request.address2()))
+                .city(request.city())
+                .state(request.state())
+                .zip(request.zip())
+                .phone(request.phone())
+                .email(request.email())
+                .title(blankToNull(request.title()))
+                .cellPhone(blankToNull(request.cellPhone()))
+                .salesContact(blankToNull(request.salesContact()))
+                // Step2
+                .sessionCount(request.sessionCount())
+                .sessionDays(request.sessionDays())
+                .scheduleStart(scheduleStart)
+                .scheduleEnd(scheduleEnd)
+                .studentCount(request.studentCount())
+                // Step3 — Virtual 이면 장소/담당자 항목은 전부 비어 있어 NULL 로 저장된다
+                .trainingFormat(request.trainingFormat())
+                .locationName(blankToNull(request.locationName()))
+                .locationStreetAddress(blankToNull(request.locationStreetAddress()))
+                .locationAddress2(blankToNull(request.locationAddress2()))
+                .locationCity(blankToNull(request.locationCity()))
+                .locationState(blankToNull(request.locationState()))
+                .locationZip(blankToNull(request.locationZip()))
+                .contactPerson(blankToNull(request.contactPerson()))
+                .contactDetails(blankToNull(request.contactDetails()))
+                // Step4 — JSONB 컬럼은 JSON 문자열로 직렬화해 저장
+                .selectedProducts(toJson(request.selectedProducts()))
+                .jobTitles(toJsonOrNull(request.jobTitles()))
+                .studentInvolvement(toJsonOrNull(request.studentInvolvement()))
+                .vfdUnderstanding(blankToNull(request.vfdUnderstanding()))
+                .vfdUnderstandingTopics(toJsonOrNull(request.vfdUnderstandingTopics()))
+                .comments(blankToNull(request.comments()))
+                .consentChecked(request.consentChecked())
+                .createdIp(clientIp)
+                .build();
+
+        TrainingRequest saved = trainingRequestRepository.save(entity);
+
+        // 개인정보(이름/이메일 등)는 로그에 남기지 않고 추적용 식별값만 기록
+        log.info("Training Request 접수 저장 완료 - id={}, trainingFormat={}, productCount={}",
+                saved.getId(), saved.getTrainingFormat(), request.selectedProducts().size());
+
+        return new TrainingRequestSubmitResponse(saved.getId());
+    }
+
+    /** "yyyy-MM-dd" 파싱. 형식 불량 시 400. */
+    private LocalDate parseDate(String value, String fieldLabel) {
+        try {
+            return LocalDate.parse(value.trim());
+        } catch (DateTimeParseException e) {
+            throw BusinessException.badRequest(fieldLabel + " 형식이 올바르지 않습니다.");
+        }
+    }
+
+    /** 필수 JSONB 컬럼용 — 객체를 JSON 문자열로 직렬화 */
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            log.error("Training Request JSON 직렬화 실패: {}", e.getMessage());
+            throw BusinessException.badRequest("신청 정보 형식이 올바르지 않습니다.");
+        }
+    }
+
+    /** 선택 JSONB 컬럼용 — 값이 없으면 NULL 로 저장 */
+    private String toJsonOrNull(Collection<?> value) {
+        return (value == null || value.isEmpty()) ? null : toJson(value);
+    }
+
+    /** 선택 문자열 필드 — 공백/빈 문자열은 NULL 로 저장 */
+    private String blankToNull(String value) {
+        return StringUtils.isBlank(value) ? null : value.trim();
+    }
+}
