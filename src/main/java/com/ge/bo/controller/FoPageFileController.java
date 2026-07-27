@@ -49,6 +49,10 @@ public class FoPageFileController {
     HttpHeaders headers = new HttpHeaders();
     headers.setContentDisposition(contentDisposition);
     headers.setContentType(MediaType.parseMediaType(result.mimeType()));
+    // page_file은 id별로 내용이 불변(수정 없이 업로드/삭제만 존재)이라 무기한 캐시 + ETag로
+    // 슬라이드 순환 등 재생 반복 시 브라우저가 매번 재요청하지 않고 캐시를 재사용하게 한다.
+    headers.setCacheControl("public, max-age=31536000, immutable");
+    headers.setETag("\"pf-" + id + "\"");
 
     return ResponseEntity.ok()
             .headers(headers)
