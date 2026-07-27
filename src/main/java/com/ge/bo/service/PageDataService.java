@@ -2294,19 +2294,31 @@ public class PageDataService {
         List<SlugRelation> fetchRelations = slugRelationRepository.findByMasterSlugAndRelationDir(slug, "FETCH");
         if (fetchRelations.isEmpty()) return content;
 
-        // TABLE 타입(ARRAY_CONTAINS/CATEGORY 제외) FETCH는 row마다 개별 쿼리하지 않고 relation당 1회만 조회한다(N+1 방지).
+        // TABLE 타입(ARRAY_CONTAINS 제외) FETCH는 row마다 개별 쿼리하지 않고 relation당 1회만 조회한다(N+1 방지).
         // 이번 배치(content)에서 실제 참조된 masterValue만 모아 IN 조건 1건으로 조회 — 기존 applyTableFetchBatch와 동일한 패턴을 재사용한다.
         Map<Long, Map<String, Object>> tableFetchCache = new HashMap<>();
+        // CATEGORY 타입도 레벨별 배치 조회(batchResolveCategoryFetch)로 N+1 방지 — 옵션 목록(73건 등)에서
+        // 행마다 parentId를 한 단계씩 개별 SELECT하던 것을 "레벨 단위로 묶어서 IN 조회"하는 방식으로 전환한다.
+        // fetch_fields 없는 CATEGORY(collectCategoryRecordAtDepth 사용)는 이번 배치 대상에서 제외 —
+        // categoryFetchCache에 키가 없으면 아래 row-loop에서 기존 개별 방식(resolveCategoryFetch)으로 폴백한다.
+        Map<Long, Map<String, Object>> categoryFetchCache = new HashMap<>();
         for (SlugRelation rel : fetchRelations) {
             boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
             boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
-            if (isArrayContains || isCategory) continue; // ARRAY_CONTAINS/CATEGORY는 이번 범위 제외, 기존 방식 유지
+            if (isArrayContains) continue; // ARRAY_CONTAINS는 이번 범위 제외, 기존 방식 유지
 
             List<String> masterValues = content.stream()
                 .map(item -> extractField(item.getDataJson(), rel.getMasterKey()))
                 .filter(v -> v != null && !v.isBlank())
                 .distinct()
                 .toList();
+
+            if (isCategory) {
+                if (StringUtils.hasText(rel.getFetchFields())) {
+                    categoryFetchCache.put(rel.getId(), batchResolveCategoryFetch(rel, masterValues, siteId));
+                }
+                continue;
+            }
             tableFetchCache.put(rel.getId(), batchResolveTableFetch(rel, masterValues, siteId));
         }
 
@@ -2332,10 +2344,15 @@ public class PageDataService {
                     if (masterValue == null || masterValue.isBlank()) continue;
 
                     // 반환값: fetch_fields 있으면 매칭 1건=String/2건 이상=List<String>, 없으면 Map<String,Object> 전체 객체
-                    // TABLE 타입은 위에서 relation당 1회 미리 조회해둔 tableFetchCache에서 조회(row별 쿼리 제거)
-                    fetchedValue = isCategory
-                        ? resolveCategoryFetch(rel, masterValue)
-                        : tableFetchCache.getOrDefault(rel.getId(), Collections.emptyMap()).get(masterValue);
+                    // TABLE/CATEGORY(fetch_fields 있음) 타입은 위에서 relation당 배치로 미리 조회해둔 캐시에서 조회(row별 쿼리 제거)
+                    // CATEGORY인데 캐시에 키가 없으면(fetch_fields 없어 배치 미지원) 기존 개별 방식(resolveCategoryFetch)으로 폴백
+                    if (isCategory) {
+                        fetchedValue = categoryFetchCache.containsKey(rel.getId())
+                            ? categoryFetchCache.get(rel.getId()).get(masterValue)
+                            : resolveCategoryFetch(rel, masterValue);
+                    } else {
+                        fetchedValue = tableFetchCache.getOrDefault(rel.getId(), Collections.emptyMap()).get(masterValue);
+                    }
                 }
 
                 if (fetchedValue != null) {
@@ -2413,6 +2430,171 @@ public class PageDataService {
             if (!values.isEmpty()) {
                 resultMap.put(entry.getKey(), values.size() == 1 ? values.get(0) : values);
             }
+        }
+        return resultMap;
+    }
+
+    /**
+     * CATEGORY 유형 FETCH 배치 조회(relation당 쿼리 개수를 "레벨(depth) 수"만큼으로 축소) — applyFetch()에서 row-loop 밖으로 뺀 조회 로직
+     * 기존 resolveCategoryFetch()는 row(연결 레코드)마다 collectFullCategoryPath()를 개별 호출해 parentId를 한 단계씩
+     * 타고 올라가며 매 단계마다 SELECT를 날렸다(옵션 73건 × 평균 5~6단계 = 400+ 쿼리, 12.7초). 이 메서드는 그 트리 순회를
+     * "라운드(=depth 레벨)" 단위로 묶어서, 같은 라운드에 있는 모든 행의 parentId를 모아 IN 조건 1건으로 한 번에 조회한다.
+     * (여러 행이 같은 조상을 공유하면 IN 조회 결과 파싱을 자연히 공유하는 효과도 생긴다.)
+     *
+     * 주의: fetch_fields 없는 CATEGORY(collectCategoryRecordAtDepth 사용, 카테고리 레코드 전체 Map 반환)는
+     * 이번 배치 대상이 아니다 — 호출부(applyFetch)에서 StringUtils.hasText(rel.getFetchFields())로 미리 걸러서
+     * 이 메서드에 진입하지 않도록 하고, 그 경우엔 기존 resolveCategoryFetch()로 개별 폴백한다.
+     *
+     * 정확성 규칙: 아래 로직은 resolveCategoryFetch()/collectFullCategoryPath()의 잘라내기·합치기 로직(availableDepth,
+     * fromDepth, includeLeaf, extractFieldMulti)과 100% 동일해야 한다 — 순수 성능 리팩토링이며 동작 변경이 아니다.
+     *
+     * @param rel          FETCH 관계(CATEGORY 타입, fetch_fields 있음)
+     * @param masterValues 이번 배치에서 실제 사용된 masterValue 목록(중복 제거된 값)
+     * @param siteId       미사용 — resolveCategoryFetch()도 site 스코프를 적용하지 않으므로(카테고리는 공통 트리로 취급),
+     *                     동작 동일성을 위해 배치 버전에서도 site 조건을 적용하지 않는다. batchResolveTableFetch와 시그니처만 맞춤.
+     * @return masterValue → fetchedValue 매핑(String 또는 List<String>, resolveCategoryFetch와 동일 규칙). 매칭 없으면 빈 Map
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> batchResolveCategoryFetch(SlugRelation rel, List<String> masterValues, Long siteId) {
+        if (masterValues.isEmpty()) return Collections.emptyMap();
+
+        int targetDepth = rel.getCategoryDepth() != null ? rel.getCategoryDepth() : 1;
+        int fromDepth = rel.getCategoryDepthFrom() != null ? rel.getCategoryDepthFrom() : targetDepth;
+
+        // 1. 연결 레코드 배치 조회 — masterValues 전체를 IN 조건 1건으로 조회(resolveCategoryFetch가 row마다 날리던 SELECT 1건을 제거)
+        String masterIdList = masterValues.stream().distinct()
+            .map(v -> "'" + v.replace("'", "''") + "'")
+            .collect(java.util.stream.Collectors.joining(","));
+
+        StringBuilder sql1 = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        appendSlaveKeyInCondition(sql1, rel.getSlaveKey(), masterIdList);
+        Map<String, String> filterParams = new LinkedHashMap<>();
+        if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
+            appendSlaveFilter(sql1, rel.getSlaveFilter(), filterParams);
+        }
+
+        Query q1 = entityManager.createNativeQuery(sql1.toString());
+        q1.setParameter("slaveSlug", rel.getSlaveSlug());
+        filterParams.forEach(q1::setParameter);
+
+        List<Object> r1 = q1.getResultList();
+        if (r1.isEmpty()) return Collections.emptyMap();
+
+        // slaveKey 값 기준 그룹핑(masterValue → 매칭된 연결 레코드 목록) — resolveCategoryFetch의 r1(단일 masterValue용 row 목록)과 동일 역할
+        Map<String, List<Map<String, Object>>> grouped = groupSlaveRecordsByKey(r1, rel.getSlaveKey());
+        if (grouped.isEmpty()) return Collections.emptyMap();
+
+        // 2. 레벨별 배치로 parentId 트리 순회 — 연결 레코드(리프) 1건을 "행(row)"으로 취급해 fullPath를 누적한다.
+        //    행 식별자(rowId) = masterValue + "#" + 인덱스 (같은 masterValue에 연결 레코드가 여러 건 매칭될 수 있으므로)
+        List<String> rowIds = new ArrayList<>();
+        Map<String, Map<String, Object>> leafRecords = new LinkedHashMap<>();   // rowId → 연결 레코드(리프)
+        Map<String, String> rowMasterValue = new LinkedHashMap<>();             // rowId → 원래 masterValue(결과 집계용)
+        for (Map.Entry<String, List<Map<String, Object>>> entry : grouped.entrySet()) {
+            String masterValue = entry.getKey();
+            List<Map<String, Object>> records = entry.getValue();
+            for (int i = 0; i < records.size(); i++) {
+                String rowId = masterValue + "#" + i;
+                rowIds.add(rowId);
+                leafRecords.put(rowId, records.get(i));
+                rowMasterValue.put(rowId, masterValue);
+            }
+        }
+
+        Map<String, List<String>> pathAccumulator = new LinkedHashMap<>(); // rowId → 누적 경로(상위→하위 순, collectFullCategoryPath와 동일)
+        Map<String, Map<String, Object>> cursor = new LinkedHashMap<>();   // rowId → 현재 커서 레코드
+        Map<String, String> parentKeyPath = new LinkedHashMap<>();         // rowId → 현재 커서의 parentId 경로
+        Set<String> active = new LinkedHashSet<>(rowIds);
+        for (String rowId : rowIds) {
+            pathAccumulator.put(rowId, new ArrayList<>());
+            Map<String, Object> leaf = leafRecords.get(rowId);
+            cursor.put(rowId, leaf);
+            // 첫 번째 hop(연결 레코드 → 카테고리)도 이후 hop과 동일하게 자동 탐지 — collectFullCategoryPath와 동일
+            parentKeyPath.put(rowId, autoDetectParentKeyPath(leaf));
+        }
+
+        for (int guard = 0; guard < 10 && !active.isEmpty(); guard++) {
+            // 이번 라운드에 위로 올라갈 행들의 parentId를 모으고 중복 제거(같은 조상을 공유하는 행이면 쿼리 결과도 자연히 공유됨)
+            Map<String, String> rowParentId = new LinkedHashMap<>(); // rowId → 이번 라운드에 조회할 parentId
+            Set<String> parentIdSet = new LinkedHashSet<>();
+            for (String rowId : active) {
+                String pid = extractField(cursor.get(rowId), parentKeyPath.get(rowId));
+                if (pid == null || pid.isBlank()) continue; // parentId 없음 → 더 이상 올라갈 곳 없음(해당 행은 이번 라운드에서 종료)
+                rowParentId.put(rowId, pid);
+                parentIdSet.add(pid);
+            }
+            if (rowParentId.isEmpty()) break; // 올라갈 행이 하나도 없으면 전체 종료
+
+            String parentIdList = parentIdSet.stream()
+                .map(id -> "'" + id.replace("'", "''") + "'")
+                .collect(java.util.stream.Collectors.joining(","));
+            // 원본(resolveCategoryFetch)의 "data_json->>'id' = :parentId" 개별 조회를 IN 조건 1건으로 묶음 — 조건식은 동일(top-level id)
+            StringBuilder sqlLevel = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+            appendSlaveKeyInCondition(sqlLevel, "id", parentIdList);
+            Query qLevel = entityManager.createNativeQuery(sqlLevel.toString());
+            qLevel.setParameter("slaveSlug", rel.getSlaveSlug());
+            List<Object> levelRows = qLevel.getResultList();
+
+            // id → dataJson 맵 구성
+            Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
+            for (Object row : levelRows) {
+                try {
+                    Map<String, Object> dataJson = objectMapper.readValue(row.toString(),
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                    String id = extractField(dataJson, "id");
+                    if (id != null) byId.put(id, dataJson);
+                } catch (Exception e) {
+                    log.warn("CATEGORY FETCH 배치 카테고리 레코드 파싱 실패: {}", e.getMessage());
+                }
+            }
+
+            // 각 행의 커서를 부모로 갱신 + 이름 누적, 다음 라운드로 넘어갈 행 집합 갱신
+            Set<String> nextActive = new LinkedHashSet<>();
+            for (String rowId : active) {
+                String pid = rowParentId.get(rowId);
+                if (pid == null) continue; // 이번 라운드에 parentId가 없던 행 — 이미 종료 처리됨
+                Map<String, Object> parentDataJson = byId.get(pid);
+                if (parentDataJson == null) continue; // 조상 레코드 없음(원본의 rows.isEmpty() → break와 동일하게 해당 행 종료)
+
+                String name = extractFieldMulti(parentDataJson, rel.getFetchFields());
+                if (name != null) pathAccumulator.get(rowId).add(0, name); // 상위일수록 앞에 추가(collectFullCategoryPath와 동일)
+                cursor.put(rowId, parentDataJson);
+                parentKeyPath.put(rowId, autoDetectParentKeyPath(parentDataJson));
+                nextActive.add(rowId);
+            }
+            active = nextActive;
+        }
+
+        // includeLeaf=true(opt-in)면 리프(연결 레코드) 자기 이름을 경로 가장 끝에 추가 — collectFullCategoryPath와 동일
+        boolean includeLeaf = Boolean.TRUE.equals(rel.getIncludeLeaf());
+        if (includeLeaf) {
+            for (String rowId : rowIds) {
+                String leafName = extractFieldMulti(leafRecords.get(rowId), rel.getFetchFields());
+                if (leafName != null) pathAccumulator.get(rowId).add(leafName);
+            }
+        }
+
+        // 3. resolveCategoryFetch() 후반부(availableDepth 계산 → fromDepth~availableDepth 잘라 " > "로 합침)와 100% 동일한 로직 적용
+        Map<String, List<String>> resultsByMaster = new LinkedHashMap<>(); // masterValue → 매칭된 연결 레코드(row)별 결과 문자열 목록
+        for (String rowId : rowIds) {
+            List<String> fullPath = pathAccumulator.get(rowId);
+            if (fullPath.isEmpty()) continue;
+            int availableDepth = Math.min(fullPath.size(), targetDepth);
+            List<String> rangeNames = new ArrayList<>();
+            for (int d = Math.max(1, fromDepth); d <= availableDepth; d++) {
+                rangeNames.add(fullPath.get(d - 1));
+            }
+            if (!rangeNames.isEmpty()) {
+                resultsByMaster.computeIfAbsent(rowMasterValue.get(rowId), k -> new ArrayList<>())
+                    .add(String.join(" > ", rangeNames));
+            }
+        }
+
+        // 매칭된 row가 1건이면 String, 2건 이상이면 List<String> 그대로 반환 — resolveCategoryFetch와 동일 규칙(FE가 fetchSeparator로 합침)
+        Map<String, Object> resultMap = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : resultsByMaster.entrySet()) {
+            List<String> results = entry.getValue();
+            if (results.isEmpty()) continue;
+            resultMap.put(entry.getKey(), results.size() == 1 ? results.get(0) : results);
         }
         return resultMap;
     }
@@ -2668,11 +2850,9 @@ public class PageDataService {
         int fromDepth = rel.getCategoryDepthFrom() != null ? rel.getCategoryDepthFrom() : targetDepth;
         boolean hasFetchFields = StringUtils.hasText(rel.getFetchFields());
 
-        // slaveKey 기반 linkParentKeyPath: "product.id" → "product.parentId"
-        int lastDot = rel.getSlaveKey().lastIndexOf('.');
-        String linkParentKeyPath = lastDot >= 0
-            ? rel.getSlaveKey().substring(0, lastDot + 1) + "parentId"
-            : "parentId";
+        // 연결 레코드 → 카테고리 부모로 가는 parentId 경로는 slaveKey 문자열로 유추하지 않고
+        // collectCategoryRecordAtDepth()/collectFullCategoryPath() 내부에서 실제 레코드 구조를 보고
+        // autoDetectParentKeyPath()로 자동 탐지한다 (slave_key="id"처럼 점이 없어도 정확히 동작하도록 통일)
 
         // 연결 레코드 조회
         StringBuilder sql1 = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
@@ -2695,7 +2875,7 @@ public class PageDataService {
             try {
                 Map<String, Object> linkDataJson = objectMapper.readValue(r1.get(0).toString(),
                     new com.fasterxml.jackson.core.type.TypeReference<>() {});
-                return collectCategoryRecordAtDepth(linkDataJson, rel.getSlaveSlug(), targetDepth, linkParentKeyPath);
+                return collectCategoryRecordAtDepth(linkDataJson, rel.getSlaveSlug(), targetDepth);
             } catch (Exception e) {
                 log.warn("CATEGORY FETCH 연결 레코드 파싱 실패: {}", e.getMessage());
                 return null;
@@ -2714,7 +2894,7 @@ public class PageDataService {
                 log.warn("CATEGORY FETCH 연결 레코드 파싱 실패: {}", e.getMessage());
                 continue;
             }
-            List<String> fullPath = collectFullCategoryPath(linkDataJson, rel, linkParentKeyPath);
+            List<String> fullPath = collectFullCategoryPath(linkDataJson, rel);
             if (fullPath.isEmpty()) continue;
             // depth가 섞인 행(예: 조상이 부족한 카테고리)도 있는 만큼만 잘라서 표시 — targetDepth보다 짧다고 통째로 skip하지 않음
             int availableDepth = Math.min(fullPath.size(), targetDepth);
@@ -2733,17 +2913,18 @@ public class PageDataService {
     /**
      * fetch_fields 없는 CATEGORY 타입 전용 — depth에 해당하는 카테고리 레코드 전체 Map 반환
      * 연결 레코드에서 최상위까지 순회 후 역순 정렬, targetDepth번째 레코드 반환
-     * 카테고리 레코드 내 parentId 경로는 autoDetectParentKeyPath()로 자동 탐지
+     * 연결 레코드(첫 hop 포함) 및 카테고리 레코드 내 parentId 경로 모두 autoDetectParentKeyPath()로 자동 탐지
+     * (slave_key 문자열("id"처럼 점이 없는 경우 등)에 기대지 않고 실제 레코드 구조를 보고 판단)
      */
     @SuppressWarnings("unchecked")
     private Map<String, Object> collectCategoryRecordAtDepth(
-            Map<String, Object> linkDataJson, String slaveSlug,
-            int targetDepth, String linkParentKeyPath) {
+            Map<String, Object> linkDataJson, String slaveSlug, int targetDepth) {
 
         // 연결 레코드 → 최상위까지 순서대로 수집 (소분류→중분류→대분류 순)
         List<Map<String, Object>> records = new ArrayList<>();
         Map<String, Object> cursor = linkDataJson;
-        String currentParentKeyPath = linkParentKeyPath;
+        // 첫 번째 hop(연결 레코드 → 카테고리)도 이후 hop과 동일하게 자동 탐지
+        String currentParentKeyPath = autoDetectParentKeyPath(cursor);
 
         for (int guard = 0; guard < 10; guard++) {
             String parentId = extractField(cursor, currentParentKeyPath);
@@ -2798,18 +2979,20 @@ public class PageDataService {
     /**
      * 연결 레코드 → 최상위 카테고리까지 전체 경로 수집 (대분류가 앞, 중분류가 뒤)
      * parentId가 비어있을 때까지 거슬러 올라감 (무한루프 방지: 최대 10단계)
-     * 카테고리 레코드 간 parentId 경로는 레코드마다 autoDetectParentKeyPath()로 자동 탐지한다
-     * (collectCategoryRecordAtDepth()와 동일한 방식 — fetch_fields에 콤마가 포함돼도 안전)
+     * 첫 번째 hop(연결 레코드 → 카테고리)을 포함해 모든 hop의 parentId 경로를 레코드마다 autoDetectParentKeyPath()로
+     * 자동 탐지한다 (collectCategoryRecordAtDepth()와 동일한 방식 — fetch_fields에 콤마가 포함돼도 안전,
+     * slave_key="id"처럼 점이 없어 연결 레코드 내부 parentId가 중첩되어 있어도 정확히 동작)
      * rel.includeLeaf가 true면 연결 레코드(리프) 자기 자신의 이름을 경로 가장 끝(가장 깊은 depth)에 추가한다.
      * includeLeaf 미설정/false면 기존과 완전히 동일하게 동작(리프 이름 미포함)한다.
      */
     @SuppressWarnings("unchecked")
     private List<String> collectFullCategoryPath(
-            Map<String, Object> linkDataJson, SlugRelation rel, String linkParentKeyPath) {
+            Map<String, Object> linkDataJson, SlugRelation rel) {
 
         List<String> path = new ArrayList<>();
         Map<String, Object> cursor = linkDataJson;
-        String currentParentKeyPath = linkParentKeyPath; // 첫 번째: 연결 레코드 → 카테고리
+        // 첫 번째 hop(연결 레코드 → 카테고리)도 이후 hop과 동일하게 자동 탐지
+        String currentParentKeyPath = autoDetectParentKeyPath(cursor);
 
         for (int guard = 0; guard < 10; guard++) {
             String parentId = extractField(cursor, currentParentKeyPath);
