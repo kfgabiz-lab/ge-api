@@ -2951,11 +2951,69 @@ public class PageDataService {
         }
 
         // includeLeaf=true(opt-in)면 리프(연결 레코드) 자기 이름을 경로 가장 끝에 추가 — collectFullCategoryPath와 동일
+        // category-data의 리프는 두 종류다:
+        //   1) 카테고리 노드(depth1/depth2) — 자기 JSON에 category.title이 있고 product 객체 자체가 없다.
+        //      category.title은 카테고리 자기 자신의 고유 필드라 오염 위험이 없으므로 항상 신뢰하고 우선 시도한다
+        //      (product-data 조인 불필요).
+        //   2) 제품 junction(depth3) — 자기 JSON에 category 객체는 없고 product 객체만 있다. 이 경우에만
+        //      product.product_name이 필요한데, junction의 product_name 필드는 구버전 데이터에 우연히 남아있어
+        //      오염될 수 있으므로 절대 참조하지 않고 반드시 product.id를 FK로 삼아 product-data 테이블을 조인해서
+        //      실제 제품명을 가져온다.
         boolean includeLeaf = Boolean.TRUE.equals(rel.getIncludeLeaf());
         if (includeLeaf) {
+            // 0. category.title 우선 시도(카테고리 노드 리프) — 있으면 즉시 채우고 product-data 조회 대상에서 제외
+            Set<String> resolvedByCategoryTitle = new LinkedHashSet<>();
             for (String rowId : rowIds) {
-                String leafName = extractFieldMulti(leafRecords.get(rowId), rel.getFetchFields());
-                if (leafName != null) pathAccumulator.get(rowId).add(leafName);
+                String categoryTitle = extractField(leafRecords.get(rowId), "category.title");
+                if (categoryTitle == null || categoryTitle.isBlank()) continue;
+                pathAccumulator.get(rowId).add(categoryTitle);
+                resolvedByCategoryTitle.add(rowId);
+            }
+
+            // 1. category.title로 못 채운 리프(제품 junction)만 product.id 수집(중복 제거) — id 없는 리프는 이름 없음으로 건너뜀
+            Map<String, String> rowProductId = new LinkedHashMap<>(); // rowId → product.id
+            Set<String> productIdSet = new LinkedHashSet<>();
+            for (String rowId : rowIds) {
+                if (resolvedByCategoryTitle.contains(rowId)) continue;
+                String productId = extractField(leafRecords.get(rowId), "product.id");
+                if (productId == null || productId.isBlank()) continue;
+                rowProductId.put(rowId, productId);
+                productIdSet.add(productId);
+            }
+
+            if (!productIdSet.isEmpty()) {
+                // 2. product-data를 product.id로 배치 조회(N+1 방지) — appendSlaveKeyInCondition 재사용(SQL Injection 방지)
+                String productIdList = productIdSet.stream()
+                    .map(id -> "'" + id.replace("'", "''") + "'")
+                    .collect(java.util.stream.Collectors.joining(","));
+                StringBuilder sqlProduct = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+                appendSlaveKeyInCondition(sqlProduct, "id", productIdList);
+                Query qProduct = entityManager.createNativeQuery(sqlProduct.toString());
+                qProduct.setParameter("slaveSlug", "product-data");
+                List<Object> productRows = qProduct.getResultList();
+
+                // product.id → product-data dataJson 맵 구성
+                Map<String, Map<String, Object>> productById = new LinkedHashMap<>();
+                for (Object row : productRows) {
+                    try {
+                        Map<String, Object> dataJson = objectMapper.readValue(row.toString(),
+                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                        String id = extractField(dataJson, "id");
+                        if (id != null) productById.put(id, dataJson);
+                    } catch (Exception e) {
+                        log.warn("CATEGORY FETCH 리프 product-data 파싱 실패: {}", e.getMessage());
+                    }
+                }
+
+                // 3. 각 리프의 product.id로 product-data에서 실제 제품명 추출(category-data 자기 JSON은 이 단계에서 전혀 참조하지 않음)
+                for (String rowId : rowIds) {
+                    String productId = rowProductId.get(rowId);
+                    if (productId == null) continue;
+                    Map<String, Object> productDataJson = productById.get(productId);
+                    if (productDataJson == null) continue;
+                    String leafName = extractField(productDataJson, "product.product_name");
+                    if (leafName != null) pathAccumulator.get(rowId).add(leafName);
+                }
             }
         }
 
@@ -2963,6 +3021,9 @@ public class PageDataService {
         Map<String, List<String>> resultsByMaster = new LinkedHashMap<>(); // masterValue → 매칭된 연결 레코드(row)별 결과 문자열 목록
         for (String rowId : rowIds) {
             List<String> fullPath = pathAccumulator.get(rowId);
+            // 조상 체인 완전성 검사 — 자기(리프) 실제 depth만큼 조상을 다 못 찾았으면(체인이 끊겼으면)
+            // 이 rowId는 결과 자체를 만들지 않고 완전히 건너뛴다(_fetchedRel{relationId} 키 자체가 안 생김)
+            if (isCategoryChainBroken(leafRecords.get(rowId), fullPath.size(), includeLeaf)) continue;
             if (fullPath.isEmpty()) continue;
             int availableDepth = Math.min(fullPath.size(), targetDepth);
             List<String> rangeNames = new ArrayList<>();
@@ -3271,6 +3332,7 @@ public class PageDataService {
         // fetch_fields 있음 → depth에 해당하는 이름 문자열 추출 (합치지 않음)
         // 카테고리 레코드 간 parentId 경로는 collectFullCategoryPath() 내부에서 레코드마다 autoDetectParentKeyPath()로 자동 탐지한다
         // (기존 deriveCategoryParentKeyPath()는 fetch_fields에 콤마가 포함되면 lastIndexOf('.') 파싱이 깨져 제거됨)
+        boolean includeLeaf = Boolean.TRUE.equals(rel.getIncludeLeaf());
         List<String> results = new ArrayList<>();
         for (Object row : r1) {
             Map<String, Object> linkDataJson;
@@ -3281,6 +3343,9 @@ public class PageDataService {
                 continue;
             }
             List<String> fullPath = collectFullCategoryPath(linkDataJson, rel);
+            // 조상 체인 완전성 검사 — 자기(연결 레코드) 실제 depth만큼 조상을 다 못 찾았으면(체인이 끊겼으면)
+            // 이 행은 결과 자체를 만들지 않고 완전히 건너뛴다(batchResolveCategoryFetch()와 동일 원칙)
+            if (isCategoryChainBroken(linkDataJson, fullPath.size(), includeLeaf)) continue;
             if (fullPath.isEmpty()) continue;
             // depth가 섞인 행(예: 조상이 부족한 카테고리)도 있는 만큼만 잘라서 표시 — targetDepth보다 짧다고 통째로 skip하지 않음
             int availableDepth = Math.min(fullPath.size(), targetDepth);
@@ -3406,9 +3471,38 @@ public class PageDataService {
         }
 
         // includeLeaf=true(opt-in)일 때만 리프(연결 레코드) 자기 자신의 이름을 경로 가장 끝에 추가 — 기본 false면 기존 동작과 완전히 동일
+        // category-data의 리프는 두 종류다:
+        //   1) 카테고리 노드(depth1/depth2) — 자기 JSON에 category.title이 있고 product 객체 자체가 없다.
+        //      category.title은 카테고리 자기 자신의 고유 필드라 오염 위험이 없으므로 항상 신뢰하고 우선 시도한다
+        //      (product-data 조인 불필요).
+        //   2) 제품 junction(depth3) — 자기 JSON에 category 객체는 없고 product 객체만 있다. 이 경우에만
+        //      product.product_name이 필요한데, junction의 product_name 필드는 구버전 데이터에 우연히 남아있어
+        //      오염될 수 있으므로 절대 참조하지 않고 반드시 product.id를 FK로 삼아 product-data 테이블을 조인해서
+        //      실제 제품명을 가져온다(batchResolveCategoryFetch()의 includeLeaf 배치 로직과 동일 원칙, 이 경로는 개별 폴백이라 단건 조회).
         if (Boolean.TRUE.equals(rel.getIncludeLeaf())) {
-            String leafName = extractFieldMulti(linkDataJson, rel.getFetchFields());
-            if (leafName != null) path.add(leafName);
+            String categoryTitle = extractField(linkDataJson, "category.title");
+            if (categoryTitle != null && !categoryTitle.isBlank()) {
+                path.add(categoryTitle);
+            } else {
+                String productId = extractField(linkDataJson, "product.id");
+                if (productId != null && !productId.isBlank()) {
+                    String sqlProduct = "SELECT data_json::text FROM page_data WHERE data_slug = 'product-data'"
+                        + " AND data_json->>'id' = :productId LIMIT 1";
+                    Query qProduct = entityManager.createNativeQuery(sqlProduct);
+                    qProduct.setParameter("productId", productId);
+                    List<Object> productRows = qProduct.getResultList();
+                    if (!productRows.isEmpty()) {
+                        try {
+                            Map<String, Object> productDataJson = objectMapper.readValue(productRows.get(0).toString(),
+                                new com.fasterxml.jackson.core.type.TypeReference<>() {});
+                            String leafName = extractField(productDataJson, "product.product_name");
+                            if (leafName != null) path.add(leafName);
+                        } catch (Exception e) {
+                            log.warn("CATEGORY FETCH 리프 product-data 파싱 실패: {}", e.getMessage());
+                        }
+                    }
+                }
+            }
         }
 
         return path;
@@ -3507,6 +3601,37 @@ public class PageDataService {
             if (value != null) return value;
         }
         return null;
+    }
+
+    /**
+     * CATEGORY FETCH 조상 체인 완전성 검사 — 자기(리프/연결) 레코드의 실제 depth 값만큼 조상을 다 찾았는지 판정한다.
+     * parentId를 타고 올라가다 중간 조상 레코드가 DB에 없어 climb이 일찍 끊기면, 그때까지 찾은 것만("있는 만큼만")으로
+     * 결과를 만들지 않고 해당 행 자체를 결과에서 제외하기 위한 판별 로직이다.
+     *
+     * 비교 기준:
+     * - 자기 레코드의 실제 depth 값을 category.depth(카테고리 레코드 자기 자신인 경우) 우선, 없으면 product.depth
+     *   (product 섹션을 가진 연결/junction 레코드인 경우) 순서로 추출한다(extractFieldMulti 재사용).
+     * - includeLeaf=true면 fullPath에 리프 자기 이름까지 포함되므로 기대 길이는 selfDepth 그대로.
+     * - includeLeaf=false면 fullPath가 조상 이름만 담으므로 기대 길이는 selfDepth-1(조상 개수만).
+     * - depth 값을 추출하지 못하거나(구조상 depth 필드가 없음) 정수가 아니면 완전성 판단이 불가능하므로,
+     *   무리하게 제외하지 않고 false(끊기지 않음 = 기존처럼 있는 만큼 표시)로 안전 폴백한다.
+     *
+     * @param selfDataJson 자기(리프/연결) 레코드 dataJson — 배치 버전은 leafRecords.get(rowId), 개별 버전은 linkDataJson
+     * @param fullPathSize climb으로 완성한 fullPath의 길이
+     * @param includeLeaf  rel.getIncludeLeaf() 값
+     * @return true면 조상 체인이 끊긴 것(제외 대상), false면 체인이 완전하거나 판단 불가(기존 동작 폴백)
+     */
+    private boolean isCategoryChainBroken(Map<String, Object> selfDataJson, int fullPathSize, boolean includeLeaf) {
+        String raw = extractFieldMulti(selfDataJson, "category.depth,product.depth");
+        if (raw == null) return false; // depth 값 추출 불가 → 완전성 검사 생략(안전 폴백)
+        int selfDepth;
+        try {
+            selfDepth = Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return false; // 숫자가 아니면 완전성 검사 생략(안전 폴백)
+        }
+        int expectedSize = includeLeaf ? selfDepth : selfDepth - 1;
+        return fullPathSize != expectedSize;
     }
 
     /**
