@@ -228,3 +228,24 @@ UPDATE page_data
 SET data_json = data_json - 'page_type'
 WHERE data_slug = 'product-data'
   AND id IN (1727, 1728, 1729, 1730);
+
+---
+
+## 4. `site.locale` 컬럼 추가 (사이트별 로케일 설정 작업)
+
+### 4-1. `site.locale` 컬럼 추가 (`ddl-auto: update`로 자동 반영, 참고용)
+
+로컬은 Hibernate `ddl-auto: update`가 자동 실행하지만, dev/prod(`ddl-auto: validate`)는 수동 실행 필요.
+
+```sql
+ALTER TABLE site ADD COLUMN locale TEXT;
+```
+
+### 4-2. `site.label.locale` 메시지키 등록 (사용자가 직접 실행)
+
+사이트관리 화면의 locale select 필드 라벨 번역용 — `site.label.timezone` 선례(1-1) 동일 패턴.
+
+```sql
+INSERT INTO message_resource ("key", ko, en, is_active, resource_type, created_by, created_at, updated_by, updated_at)
+VALUES ('site.label.locale', '로케일', 'Locale', true, 'WORD', 'system', now(), 'system', now());
+```

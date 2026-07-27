@@ -29,6 +29,7 @@ public class PageDataResponse {
   private LocalDateTime createdAt;
   private String updatedBy;
   private LocalDateTime updatedAt;
+  private Long count;
 
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -44,6 +45,7 @@ public class PageDataResponse {
                 .createdAt(entity.getCreatedAt())
                 .updatedBy(entity.getUpdatedBy())
                 .updatedAt(entity.getUpdatedAt())
+                .count(entity.getCount())
                 .build();
   }
 
@@ -58,6 +60,7 @@ public class PageDataResponse {
                 .createdAt(this.createdAt)
                 .updatedBy(this.updatedBy)
                 .updatedAt(this.updatedAt)
+                .count(this.count)
                 .build();
   }
 
@@ -72,6 +75,7 @@ public class PageDataResponse {
                 .createdAt(this.createdAt)
                 .updatedBy(updatedByName)
                 .updatedAt(this.updatedAt)
+                .count(this.count)
                 .build();
   }
 

@@ -54,6 +54,7 @@ public class SiteService {
         .description(request.getDescription() != null ? request.getDescription().trim() : null)
         .domain(request.getDomain() != null ? request.getDomain().trim() : null)
         .timezone(request.getTimezone() != null ? request.getTimezone().trim() : null)
+        .locale(request.getLocale() != null ? request.getLocale().trim() : null)
         .isActive(request.getIsActive())
         .build();
 
@@ -73,6 +74,7 @@ public class SiteService {
     site.setDescription(request.getDescription() != null ? request.getDescription().trim() : null);
     site.setDomain(request.getDomain() != null ? request.getDomain().trim() : null);
     site.setTimezone(request.getTimezone() != null ? request.getTimezone().trim() : null);
+    site.setLocale(request.getLocale() != null ? request.getLocale().trim() : null);
     site.setActive(request.getIsActive());
 
     SiteDto.Response response = toResponse(siteRepository.save(site));
@@ -146,6 +148,7 @@ public class SiteService {
         .description(site.getDescription())
         .domain(site.getDomain())
         .timezone(site.getTimezone())
+        .locale(site.getLocale())
         .isActive(site.isActive())
         .createdBy(site.getCreatedBy())
         .createdAt(site.getCreatedAt())

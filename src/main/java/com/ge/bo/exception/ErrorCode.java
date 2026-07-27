@@ -70,6 +70,9 @@ public enum ErrorCode {
     /* 접속이력 */
     LOGIN_LOG_NOT_FOUND(HttpStatus.NOT_FOUND, "LOGIN_LOG_NOT_FOUND", "해당 접속이력을 찾을 수 없습니다."),
 
+    /* Training 신청 내역(관리자 조회) */
+    TRAINING_REGISTRATION_NOT_FOUND(HttpStatus.NOT_FOUND, "TRAINING_REGISTRATION_NOT_FOUND", "해당 Training 신청 내역을 찾을 수 없습니다."),
+
     /* Slug 레지스트리 */
     SLUG_REGISTRY_NOT_FOUND(HttpStatus.NOT_FOUND, "SLUG_REGISTRY_NOT_FOUND", "해당 slug를 찾을 수 없습니다."),
     SLUG_REGISTRY_SLUG_DUPLICATE(HttpStatus.CONFLICT, "SLUG_REGISTRY_SLUG_DUPLICATE", "이미 사용 중인 slug입니다."),
