@@ -102,6 +102,12 @@ public enum ErrorCode {
     MESSAGE_RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "MESSAGE_RESOURCE_NOT_FOUND", "다국어 항목을 찾을 수 없습니다."),
     DUPLICATE_MESSAGE_KEY(HttpStatus.CONFLICT, "DUPLICATE_MESSAGE_KEY", "이미 사용 중인 번역 키입니다."),
 
+    /* 콘텐츠 배치 이력 */
+    CONTENTS_BATCH_LOG_NOT_FOUND(HttpStatus.NOT_FOUND, "CONTENTS_BATCH_LOG_NOT_FOUND", "해당 배치 이력을 찾을 수 없습니다."),
+
+    /* 연동 콘텐츠 (blog/articles/press → integration_contents 외부연동) */
+    INTEGRATION_CONTENTS_FIELD_MISSING(HttpStatus.BAD_REQUEST, "INTEGRATION_CONTENTS_FIELD_MISSING", "title/content 값이 없어 외부연동 데이터를 저장할 수 없습니다."),
+
     /* 공통 */
     DATA_INTEGRITY_VIOLATION(HttpStatus.CONFLICT, "DATA_INTEGRITY", "데이터 무결성 제약조건 위반이 발생했습니다.");
 

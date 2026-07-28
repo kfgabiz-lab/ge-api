@@ -99,6 +99,11 @@ public class SecurityConfig {
                           .requestMatchers("/api/v1/cryptoTest/**").permitAll() // 암복호화 테스트 허용
                           .requestMatchers("/api/v1/public/**").permitAll() // 공개 API — 인증 없이 허용
                           .requestMatchers("/api/v1/fo/**").permitAll() // FO API — 비로그인 전체 허용
+                          // 콘텐츠배치 EAI 트리거 — IF 적재 완료 후 EAI가 직접 호출
+                          .requestMatchers("/api/v1/contents-batch/run-all").permitAll()
+                          .requestMatchers("/api/v1/contents-batch/catalog/run").permitAll()
+                          .requestMatchers("/api/v1/contents-batch/ssq/run").permitAll()
+                          .requestMatchers("/api/v1/contents-batch/certi/run").permitAll()
                           // 다국어 리소스 — 비로그인 조회 허용
                           .requestMatchers(HttpMethod.GET, "/api/v1/message-resources").permitAll()
                           // 관리자 API — 인증 필요 (@PreAuthorize로 SUPER_ADMIN 제한)
@@ -132,6 +137,11 @@ public class SecurityConfig {
                           .requestMatchers("/api/v1/export/**").permitAll() // 엑셀다운로드 테스트 허용
                           .requestMatchers("/api/v1/public/**").permitAll() // 공개 API — 인증 없이 허용
                           .requestMatchers("/api/v1/fo/**").permitAll() // FO API — 비로그인 전체 허용
+                          // 콘텐츠배치 EAI 트리거 — IF 적재 완료 후 EAI가 직접 호출
+                          .requestMatchers("/api/v1/contents-batch/run-all").permitAll()
+                          .requestMatchers("/api/v1/contents-batch/catalog/run").permitAll()
+                          .requestMatchers("/api/v1/contents-batch/ssq/run").permitAll()
+                          .requestMatchers("/api/v1/contents-batch/certi/run").permitAll()
                           // 다국어 리소스 — 비로그인 조회 허용
                           .requestMatchers(HttpMethod.GET, "/api/v1/message-resources").permitAll()
                           // 관리자 API — 인증 필요 (@PreAuthorize로 SUPER_ADMIN 제한)

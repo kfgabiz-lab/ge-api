@@ -60,6 +60,7 @@ public class PageDataService {
   private final SlugRelationRepository slugRelationRepository;
   private final ValidationRuleRepository validationRuleRepository;
   private final SiteTimeZoneResolver siteTimeZoneResolver;
+  private final IntegrationContentsSyncService integrationContentsSyncService;
 
   @PersistenceContext
     private EntityManager entityManager;
@@ -923,6 +924,9 @@ public class PageDataService {
     updateIdQuery.setParameter("id", newId);
     updateIdQuery.executeUpdate();
 
+        // blog/articles/press 등록 시 integration_contents 반영
+    integrationContentsSyncService.syncUpsert(slug, newId, request.getDataJson());
+
     return getById(slug, newId);
   }
 
@@ -963,6 +967,10 @@ public class PageDataService {
     updateQuery.setParameter("id", id);
     updateQuery.setParameter("slug", slug);
     updateQuery.executeUpdate();
+
+        // blog/articles/press 수정 시 integration_contents 반영
+    integrationContentsSyncService.syncUpsert(slug, id, request.getDataJson());
+
     return getById(slug, id);
   }
 
@@ -1043,6 +1051,9 @@ public class PageDataService {
     pageFileService.deleteByDataId(id);
 
     pageDataRepository.deleteByIdAndDataSlug(id, slug);
+
+        // page_data 삭제가 성공했을 때만 integration_contents 반영 — 물리삭제 없이 is_visible=false만 처리
+    integrationContentsSyncService.syncSoftDelete(slug, id);
   }
 
     /**
