@@ -3,6 +3,7 @@ package com.ge.bo.controller;
 import com.ge.bo.dto.DownloadCenterCategoryCountResponse;
 import com.ge.bo.dto.DownloadCenterDocTypeCountResponse;
 import com.ge.bo.dto.DownloadCenterContentPageResponse;
+import com.ge.bo.dto.FoDocumentSearchResponse;
 import com.ge.bo.service.DownloadCenterService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -65,6 +66,20 @@ public class FoDownloadCenterController {
     @GetMapping("/doctype-counts")
     public ResponseEntity<List<DownloadCenterDocTypeCountResponse>> getDocTypeCounts() {
         return ResponseEntity.ok(downloadCenterService.getDocTypeCounts());
+    }
+
+    /**
+     * FO 통합검색용 문서 키워드 검색
+     * GET /api/v1/fo/download-center/search?q={키워드}&limit={기본10}
+     * - q: 제목(nahp_title 우선, 없으면 doc_title) 부분일치. null/blank 이면 {total:0, items:[]} 즉시 반환(전체 덤프 금지).
+     * - limit: 반환 상위 건수(기본 10). total 은 limit 무관 전체 매칭 건수.
+     * - 응답: { total, items[](기존 Download Center 카드 구조 = 버전/파일 중첩 포함) }.
+     */
+    @GetMapping("/search")
+    public ResponseEntity<FoDocumentSearchResponse> searchDocuments(
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "10") int limit) {
+        return ResponseEntity.ok(downloadCenterService.searchDocuments(q, limit));
     }
 
     /** "C,M,R" → ["C","M","R"] (공백/빈값 제거). null/blank → null(필터 미적용). */

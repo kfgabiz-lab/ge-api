@@ -6,6 +6,7 @@ import com.ge.bo.dto.DownloadCenterContentPageResponse;
 import com.ge.bo.dto.DownloadCenterContentResponse;
 import com.ge.bo.dto.DownloadCenterFileResponse;
 import com.ge.bo.dto.DownloadCenterVersionResponse;
+import com.ge.bo.dto.FoDocumentSearchResponse;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
@@ -122,6 +123,74 @@ public class DownloadCenterService {
 
         int totalPages = (int) Math.ceil((double) total / safeSize);
         return new DownloadCenterContentPageResponse(content, total, totalPages, safePage, safeSize);
+    }
+
+    /**
+     * FO 통합검색용 문서 키워드 검색 — 제목(nahp_title 우선, 없으면 doc_title) 부분일치.
+     * - q null/blank 이면 전체 덤프 방지를 위해 즉시 {0, []} 반환.
+     * - 게이트는 목록 조회와 동일한 MASTER_GATE(노출 + 미삭제 + 영상 제외 + 노출 버전/파일 존재) 재사용.
+     * - 정렬: doc_type 공통코드(DOC_TYPE) sort_order → source_updated_at DESC → id DESC.
+     *   ⚠️ 리스크: 하드코딩 라벨의 'O'(Tech Data)와 DB 공통코드 'T'(Tech Data) 불일치 가능성이 있으나,
+     *   code_detail LEFT JOIN + NULLS LAST 로 매칭 실패해도 결과 누락 없이 맨 뒤로 정렬해 방어한다(현재 Tech Data 0건).
+     * - 상위 N id 조회 후 loadContents(pageIds) 로 버전/파일 중첩을 완성(pageIds 순서 보존).
+     *
+     * @param q     검색 키워드
+     * @param limit 반환 상위 건수(<=0 이면 10)
+     */
+    @Transactional(readOnly = true)
+    public FoDocumentSearchResponse searchDocuments(String q, int limit) {
+        // q 빈값(null/공백)이면 전체 덤프 방지를 위해 즉시 빈 결과 반환
+        if (q == null || q.isBlank()) {
+            return new FoDocumentSearchResponse(0L, new ArrayList<>());
+        }
+        int safeLimit = limit <= 0 ? 10 : limit;
+
+        // LIKE 와일드카드 이스케이프 — '\' 를 먼저 이스케이프한 뒤 '%'/'_' 를 이스케이프하고 %...% 로 감싼다(PageDataService.searchProducts 동일 방식)
+        String escaped = q.trim()
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+        String kw = "%" + escaped + "%";
+
+        // ① 전체 매칭 건수(total) — limit 무관
+        Query countQuery = entityManager.createNativeQuery(
+            "SELECT count(*) FROM contents_master m"
+            + " WHERE" + MASTER_GATE
+            + " AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'");
+        countQuery.setParameter("q", kw);
+        long total = ((Number) countQuery.getSingleResult()).longValue();
+        if (total == 0) {
+            return new FoDocumentSearchResponse(0L, new ArrayList<>());
+        }
+
+        // ② 상위 N master.id — doc_type 공통코드(DOC_TYPE) 순서 정렬(LEFT JOIN + NULLS LAST 방어)
+        Query idQuery = entityManager.createNativeQuery(
+            "SELECT m.id FROM contents_master m"
+            + " LEFT JOIN code_detail cd"
+            + "        ON cd.code = m.doc_type"
+            + "       AND cd.is_active = true"
+            + "       AND cd.group_id = (SELECT id FROM code_group WHERE group_code = 'DOC_TYPE')"
+            + " WHERE" + MASTER_GATE
+            + " AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
+            + " ORDER BY cd.sort_order ASC NULLS LAST,"
+            + "          m.source_updated_at DESC NULLS LAST,"
+            + "          m.id DESC"
+            + " LIMIT :limit");
+        idQuery.setParameter("q", kw);
+        idQuery.setParameter("limit", safeLimit);
+
+        @SuppressWarnings("unchecked")
+        List<Object> idRows = idQuery.getResultList();
+        List<Long> pageIds = new ArrayList<>();
+        for (Object o : idRows) {
+            pageIds.add(((Number) o).longValue());
+        }
+
+        // ③ 버전/파일 중첩 로딩(기존 loadContents 재사용, pageIds 순서 보존)
+        List<DownloadCenterContentResponse> items =
+            pageIds.isEmpty() ? new ArrayList<>() : loadContents(pageIds);
+
+        return new FoDocumentSearchResponse(total, items);
     }
 
     // 정렬 절 — newest(기본)/oldest/title.
