@@ -25,6 +25,9 @@ repositories {
 }
 
 dependencies {
+    // .env 파일을 Spring Environment로 자동 로드 (실행 방식과 무관하게 동작 — IDE Run 버튼 포함)
+    implementation 'me.paulschwarz:spring-dotenv:4.0.0'
+
     // Spring Boot 기본
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-security'
@@ -35,7 +38,10 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql'
 
     // JSONB ↔ String 변환 (Hibernate 6 + PostgreSQL JSONB 타입 지원)
-    implementation 'io.hypersistence:hypersistence-utils-hibernate-63:3.9.0'
+    // JSONB ↔ String 변환 — Hibernate 6.6.15(Spring Boot 3.5.0)와 호환되는 최신 버전으로 교체.
+    // 3.9.0은 이후 Hibernate 6.6.x 패치와의 바인딩 호환성 문제로 jsonb 컬럼 저장 시
+    // "column is of type jsonb but expression is of type character varying" 오류가 발생
+    implementation 'io.hypersistence:hypersistence-utils-hibernate-63:3.15.4'
 
     // JWT 토큰 처리
     implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
@@ -62,6 +68,9 @@ dependencies {
 
     // java mail
     implementation 'org.springframework.boot:spring-boot-starter-mail'
+
+    // HTML sanitize/파싱 — SSQ version_desc 정제, data-oembed-url 추출용
+    implementation 'org.jsoup:jsoup:1.18.1'
 
     // redis
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'

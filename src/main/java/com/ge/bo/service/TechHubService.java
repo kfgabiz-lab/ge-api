@@ -37,7 +37,8 @@ public class TechHubService {
     private EntityManager entityManager;
 
     // 영상 콘텐츠 공통 게이트(master) + "노출 버전 존재" 조건. :cats/:q/:certStds 는 호출부에서 조건부로 덧붙인다.
-    private static final String MASTER_GATE =
+    // 통합 미디어 검색(MediaSearchService)에서도 Tech Hub 블록 게이트로 그대로 재사용하기 위해 public 으로 공개한다(동작 불변, 가시성만 확대).
+    public static final String MASTER_GATE =
         " m.doc_type = 'V' AND m.expose = true AND m.is_deleted = false"
       + " AND EXISTS (SELECT 1 FROM contents_version v WHERE v.contents_id = m.id"
       + "   AND v.version_expose = true AND v.is_deleted = false AND v.video_url IS NOT NULL AND v.video_url <> '')";

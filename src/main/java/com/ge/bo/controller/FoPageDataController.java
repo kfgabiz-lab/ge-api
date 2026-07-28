@@ -45,6 +45,24 @@ public class FoPageDataController {
     }
 
     /**
+     * 목록 조회 — 게시기간(dateRange) 등 날짜 조건을 분단위(최대 14자리, datetime)까지 정확히 비교하는 전용 조회
+     * GET /api/v1/fo/page-data/{slug}/datetime-range
+     * Query Params/응답 형태는 search()와 완전히 동일 — drs_(dateRangeStatus) 비교 정밀도만 다르다.
+     * (search()가 공유하는 8자리 날짜 절삭 비교 공통로직(appendWhereConditions)은 12곳 회귀 위험으로 그대로 두고,
+     *  이 API는 완전히 별도 경로(PageDataService.searchDatetimeRange)로 FO 게시기간 조회 전용으로 분리했다.)
+     */
+    @GetMapping("/datetime-range")
+    public ResponseEntity<PageDataListResponse> searchDatetimeRange(
+            @PathVariable String slug,
+            @RequestParam Map<String, String> allParams,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "false") boolean unpaged,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.ok(pageDataService.searchDatetimeRange(slug, allParams, page, size, siteId, unpaged));
+    }
+
+    /**
      * 상세 단건 조회 — 목록(search) content[0]과 동일한 PageDataResponse 반환
      * GET /api/v1/fo/page-data/{slug}/{id}
      * 데이터가 없거나 상태 게이트 조건을 통과하지 못하면 404

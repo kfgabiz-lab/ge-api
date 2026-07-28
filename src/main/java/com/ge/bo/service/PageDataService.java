@@ -6,6 +6,7 @@ import com.ge.bo.dto.AdjacentResponse;
 import com.ge.bo.dto.CategoryLv2RowResponse;
 import com.ge.bo.dto.CategoryProductRowResponse;
 import com.ge.bo.dto.DevicesTreeRowResponse;
+import com.ge.bo.dto.FoProductSearchResponse;
 import com.ge.bo.dto.ProductInsightRowResponse;
 import com.ge.bo.dto.PageDataListResponse;
 import com.ge.bo.dto.PageDataRequest;
@@ -61,6 +62,7 @@ public class PageDataService {
   private final SlugRelationRepository slugRelationRepository;
   private final ValidationRuleRepository validationRuleRepository;
   private final SiteTimeZoneResolver siteTimeZoneResolver;
+  private final IntegrationContentsSyncService integrationContentsSyncService;
 
   @PersistenceContext
     private EntityManager entityManager;
@@ -262,6 +264,156 @@ public class PageDataService {
 
     if (unpaged) {
       // COUNT를 생략했으므로(totalElements=-1) SELECT로 실제 받은 건수를 그대로 사용한다.
+      int actualCount = content.size();
+      return PageDataListResponse.builder()
+                    .content(content)
+                    .totalElements(actualCount)
+                    .totalPages(1)
+                    .page(0)
+                    .size(actualCount)
+                    .last(true)
+                    .first(true)
+                    .build();
+    }
+
+    int totalPages = (int) Math.ceil((double) totalElements / size);
+    return PageDataListResponse.builder()
+                .content(content)
+                .totalElements(totalElements)
+                .totalPages(totalPages)
+                .page(page)
+                .size(size)
+                .last((page + 1) >= totalPages)
+                .first(page == 0)
+                .build();
+  }
+
+    /**
+     * FO 게시기간(dateRange) 분단위 정밀 조회 — search()와 완전히 동일한 목록 조회이나,
+     * drs_ 접두사(dateRangeStatus) 조건만 8자리(날짜) 절삭 비교가 아니라 분단위(최대 14자리, datetime)까지 정확히 비교한다.
+     * <p>
+     * WHY 완전 별도 메서드인가: search()가 내부에서 호출하는 appendWhereConditions/:today 는 blog·press·event 게시상태
+     * 판정(condexpr_...today())과 팝업/인사이트 조회 등 12곳이 함께 공유하는 공통 로직이라, 절삭 비교 방식을 바꾸면
+     * 그 12곳 전체가 회귀 위험에 노출된다. 그래서 FO 게시기간(post_period 등 dateRange) 조회 전용으로 WHERE 절 생성
+     * (appendWhereConditionsDatetime)과 "지금" 값 바인딩(bindNowIfPresent/:nowValue)만 새로 만들고, 나머지 조회
+     * 파이프라인(relFilter/joinFilter, 정렬, 페이지네이션, FETCH 관계, 응답 매핑)은 search()와 동일하게 유지한다.
+     * drs_ 이외의 필터 문법(eq_/ne_/condexpr_/month_/year_/has_markets_/dot notation/_from,_to 등)은 search()와 100% 동일하게 지원한다.
+     *
+     * @param unpaged true면 LIMIT/OFFSET 없이 조건에 맞는 전체 행을 한 번에 반환(size 무시)
+     */
+  @Transactional(readOnly = true)
+    public PageDataListResponse searchDatetimeRange(String slug, Map<String, String> allParams, int page, int size, Long siteId, boolean unpaged) {
+        // 검색 조건 파라미터 추출 — search()와 동일 (rel_/joinr_,joink_,joinv_/일반 파라미터 분리)
+    Map<String, String> relFilterParams = new LinkedHashMap<>();
+    Map<String, String> joinFilterParams = new LinkedHashMap<>();
+    Map<String, String> searchParams = new LinkedHashMap<>();
+    allParams.forEach((key, value) -> {
+      if (RESERVED_PARAMS.contains(key) || value == null || value.isBlank()) return;
+      if (key.startsWith("rel_")) relFilterParams.put(key, value);
+      else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
+      else searchParams.put(key, value);
+    });
+
+        // WHERE 절 동적 생성 — drs_(게시기간) 조건만 분단위 정밀 비교(appendWhereConditionsDatetime), 나머지는 search()와 동일
+    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug");
+    if (siteId != null) {
+      whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
+    }
+    appendWhereConditionsDatetime(whereClause, searchParams);
+
+        // FILTER slug_relation 처리 — search()와 동일
+    if (!relFilterParams.isEmpty()) {
+      Set<Long> filterIds = resolveFilterRelationIds(relFilterParams);
+      if (filterIds != null) {
+        if (filterIds.isEmpty()) return buildEmptyResponse(page, size);
+        String idList = filterIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        whereClause.append(" AND id IN (").append(idList).append(")");
+      }
+    }
+
+        // 조인 검색 처리 — search()와 동일
+    if (!joinFilterParams.isEmpty()) {
+      Set<Long> joinIds = resolveJoinFilterIds(joinFilterParams);
+      if (joinIds != null) {
+        if (joinIds.isEmpty()) return buildEmptyResponse(page, size);
+        String idList = joinIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        whereClause.append(" AND id IN (").append(idList).append(")");
+      }
+    }
+
+        // 전체 건수 조회 — unpaged면 COUNT 생략(search()와 동일 최적화)
+    long totalElements = -1;
+    if (!unpaged) {
+      String countSql = "SELECT COUNT(*) FROM page_data " + whereClause;
+      Query countQuery = entityManager.createNativeQuery(countSql);
+      countQuery.setParameter("slug", slug);
+      if (siteId != null) {
+        countQuery.setParameter("siteId", siteId);
+      }
+      bindSearchParams(countQuery, searchParams);
+      bindTodayIfPresent(countQuery, countSql, siteId); // condexpr_ 등 :today 사용 조건 하위호환용
+      bindNowIfPresent(countQuery, countSql, siteId);   // drs_ 정밀 비교용 :nowValue
+      totalElements = ((Number) countQuery.getSingleResult()).longValue();
+
+      if (totalElements == 0) {
+        return buildEmptyResponse(page, size);
+      }
+    }
+
+        // 정렬 조건 파싱 — search()와 동일
+    String orderBy = " ORDER BY created_at DESC";
+    String sortParam = allParams.get("sort");
+    if (sortParam != null && !sortParam.isBlank()) {
+      String[] parts = sortParam.split(",", 2);
+      String sortCol = parts[0].trim();
+      String sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
+      if (sortCol.contains(".")) {
+        String[] segs = sortCol.split("\\.");
+        if (isValidSegments(segs)) {
+          orderBy = " ORDER BY " + buildJsonPath(segs) + " " + sortDir;
+        }
+      } else if (sortCol.matches("[a-zA-Z0-9_]+")) {
+        String auditCol = toAuditColumn(sortCol);
+        if (auditCol != null) {
+          orderBy = " ORDER BY " + auditCol + " " + sortDir;
+        } else {
+          orderBy = " ORDER BY data_json->>'" + sortCol + "' " + sortDir;
+        }
+      }
+    }
+
+        // 데이터 조회 — search()와 동일
+    String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
+                + " created_by, created_at, updated_by, updated_at, \"count\" "
+                + "FROM page_data " + whereClause
+                + orderBy
+                + (unpaged ? "" : " LIMIT :size OFFSET :offset");
+    Query dataQuery = entityManager.createNativeQuery(dataSql);
+    dataQuery.setParameter("slug", slug);
+    if (!unpaged) {
+      dataQuery.setParameter("size", size);
+      dataQuery.setParameter("offset", (long) page * size);
+    }
+    if (siteId != null) {
+      dataQuery.setParameter("siteId", siteId);
+    }
+    bindSearchParams(dataQuery, searchParams);
+    bindTodayIfPresent(dataQuery, dataSql, siteId);
+    bindNowIfPresent(dataQuery, dataSql, siteId);
+
+    @SuppressWarnings("unchecked")
+        List<Object[]> rows = dataQuery.getResultList();
+
+    Map<Long, String> userNameMap = buildUserNameMap(rows, 4, 6);
+
+    List<PageDataResponse> content = rows.stream()
+                .map(row -> mapRowToResponse(row, userNameMap))
+                .toList();
+
+    applyExclude(content, allParams.get("exclude"));
+    content = applyFetch(slug, content, siteId);
+
+    if (unpaged) {
       int actualCount = content.size();
       return PageDataListResponse.builder()
                     .content(content)
@@ -563,6 +715,140 @@ public class PageDataService {
             ));
         }
         return result;
+    }
+
+    /**
+     * FO 제품 키워드 검색 — product-data 중 공개(is_visible=001) 상태에서 제품명/제품설명이 키워드와 부분일치하는 제품 조회
+     * - 공개 게이트는 is_visible='001'만 사용(order_status 미적용) — devices-tree(카테고리 라벨용 buildCategoryDeviceTree)가
+     *   is_visible만 게이트하므로 검색 결과와 카테고리 라벨의 정합성을 맞춘다.
+     * - q(키워드)가 null/공백이고 categoryIds도 비어있으면 즉시 빈 결과(total=0, items=[]) 반환 — 전체 덤프 방지.
+     * - categoryIds(depth2 category-data row_id 목록)가 있으면 제품↔category-data(depth=3 junction) 매핑을 EXISTS로 필터.
+     *   q 없이 categoryIds만 있으면 ILIKE 절을 제외하고 카테고리 매칭 결과를 노출(Products 탭 카테고리 필터 성격).
+     * - LIKE 와일드카드(%, _)와 이스케이프 문자(\)는 사용자 입력에서 이스케이프한 뒤 %...% 로 감싸 :kw 로 바인딩하고
+     *   ILIKE ... ESCAPE '\' 로 대소문자 무시 부분일치 검색을 한다(파라미터 바인딩 + 와일드카드 이스케이프 둘 다 적용).
+     * - image는 product_info.image 배열의 첫 원소(미디어 ID) 스칼라(->>0)가 숫자로 파싱되면 프록시 URL, 아니면 null
+     *   (FoProductGroupService.resolveFirstImageUrl과 동일 규칙).
+     * - total은 동일 WHERE로 COUNT(*)를 별도 조회 — items의 limit과 무관한 전체 매칭 건수(Products 탭 "99+" 표기용).
+     *
+     * @param q           검색 키워드(원본 사용자 입력)
+     * @param categoryIds depth2 category-data row_id(page_data.id) 목록 — 비어있지 않으면 제품↔카테고리 매핑(EXISTS)으로 필터.
+     *                    복수 depth2 매핑으로 인한 제품행 중복을 막기 위해 JOIN+IN 대신 EXISTS로 dedup 한다.
+     * @param offset      페이징 offset(0부터)
+     * @param limit       반환할 최대 카드 건수
+     * @param siteId      사이트 스코프(없으면 전체 대상) — null이면 site_id 조건 자체 생략
+     */
+    @Transactional(readOnly = true)
+    public FoProductSearchResponse searchProducts(String q, List<Long> categoryIds, int offset, int limit, Long siteId) {
+        boolean hasCategories = categoryIds != null && !categoryIds.isEmpty();
+        boolean hasKeyword = q != null && !q.isBlank();
+
+        // q 빈값(null/공백)이고 카테고리 필터도 없으면 전체 덤프 방지를 위해 즉시 빈 결과 반환
+        if (!hasKeyword && !hasCategories) {
+            return new FoProductSearchResponse(0L, java.util.Collections.emptyList());
+        }
+
+        // LIKE 와일드카드 이스케이프 — '\' 를 먼저 이스케이프한 뒤 '%'/'_' 를 이스케이프하고 %...% 로 감싼다
+        String kw = null;
+        if (hasKeyword) {
+            String escaped = q.trim()
+                    .replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_");
+            kw = "%" + escaped + "%";
+        }
+
+        // 공통 WHERE — 공개 게이트 + 사이트 스코프(siteId != null 일 때만)
+        String siteCond = siteId != null ? " AND (site_id = :siteId OR site_id IS NULL)" : "";
+        String whereClause = " FROM page_data"
+            + " WHERE data_slug = 'product-data'"
+            + "  AND data_json->'product'->>'is_visible' = '001'"
+            + siteCond;
+        // 키워드가 있으면 제품명/설명 ILIKE 절 추가(키워드 없이 카테고리만이면 이 절 제외)
+        if (hasKeyword) {
+            whereClause += "  AND ( data_json->'product'->>'product_name'        ILIKE :kw ESCAPE '\\'"
+                + "     OR data_json->'product'->>'product_description' ILIKE :kw ESCAPE '\\' )";
+        }
+        // 카테고리 필터가 있으면 제품↔category-data(depth=3, junction) 매핑을 EXISTS로 append
+        // - junction(j)은 visibility 게이트하지 않음(findDevicesTree와 동일). 빈 리스트면 이 절 자체를 넣지 않아 빈 IN 을 회피.
+        if (hasCategories) {
+            String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
+            whereClause += " AND EXISTS ("
+                + " SELECT 1 FROM page_data j"
+                + " WHERE j.data_slug = 'category-data'"
+                + "  AND j.data_json->'product'->>'depth' = '3'"
+                + "  AND (j.data_json->'product'->>'id')::bigint = page_data.id"
+                + "  AND (j.data_json->'product'->>'parentId')::bigint IN (:categoryIds)"
+                + junctionSiteCond
+                + " )";
+        }
+
+        // 전체 매칭 건수(total) — items의 limit/offset과 무관
+        String countSql = "SELECT COUNT(*)" + whereClause;
+        Query countQuery = entityManager.createNativeQuery(countSql);
+        if (hasKeyword) {
+            countQuery.setParameter("kw", kw);
+        }
+        if (hasCategories) {
+            countQuery.setParameter("categoryIds", categoryIds);
+        }
+        if (siteId != null) {
+            countQuery.setParameter("siteId", siteId);
+        }
+        long total = ((Number) countQuery.getSingleResult()).longValue();
+        if (total == 0) {
+            return new FoProductSearchResponse(0L, java.util.Collections.emptyList());
+        }
+
+        // 목록(items) — 최신 수정순, 동률 시 id 오름차순, offset 이후 상위 limit 건
+        String listSql = "SELECT id,"
+            + "  data_json->'product'->>'product_name'        AS product_name,"
+            + "  data_json->'product'->>'product_description' AS product_description,"
+            + "  data_json->'product_info'->'image'->>0       AS image_media_id,"
+            + "  data_json->'seo'->>'slug'                     AS slug"
+            + whereClause
+            + " ORDER BY updated_at DESC NULLS LAST, id ASC"
+            + " LIMIT :limit OFFSET :offset";
+        Query listQuery = entityManager.createNativeQuery(listSql);
+        if (hasKeyword) {
+            listQuery.setParameter("kw", kw);
+        }
+        if (hasCategories) {
+            listQuery.setParameter("categoryIds", categoryIds);
+        }
+        if (siteId != null) {
+            listQuery.setParameter("siteId", siteId);
+        }
+        listQuery.setParameter("limit", limit);
+        listQuery.setParameter("offset", offset);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = listQuery.getResultList();
+
+        List<FoProductSearchResponse.Item> items = new ArrayList<>();
+        for (Object[] row : rows) {
+            items.add(new FoProductSearchResponse.Item(
+                row[0] != null ? ((Number) row[0]).longValue() : null,
+                row[1] != null ? row[1].toString() : null,
+                row[2] != null ? row[2].toString() : null,
+                resolveMediaProxyUrl(row[3]),
+                row[4] != null ? row[4].toString() : null
+            ));
+        }
+        return new FoProductSearchResponse(total, items);
+    }
+
+    /**
+     * 미디어 ID 스칼라(product_info.image->>0)를 FO 프록시 이미지 URL로 변환
+     * - 값이 숫자로 파싱되면 "/api/v1/fo/page-files/{id}", 아니면 null (FoProductGroupService.resolveFirstImageUrl과 동일 규칙)
+     */
+    private String resolveMediaProxyUrl(Object mediaIdValue) {
+        if (mediaIdValue == null) return null;
+        try {
+            long mediaId = Long.parseLong(mediaIdValue.toString().trim());
+            return "/api/v1/fo/page-files/" + mediaId;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**
@@ -952,6 +1238,9 @@ public class PageDataService {
     updateIdQuery.setParameter("id", newId);
     updateIdQuery.executeUpdate();
 
+        // blog/articles/press 등록 시 integration_contents 반영
+    integrationContentsSyncService.syncUpsert(slug, newId, request.getDataJson(), siteId);
+
     return getById(slug, newId);
   }
 
@@ -992,6 +1281,10 @@ public class PageDataService {
     updateQuery.setParameter("id", id);
     updateQuery.setParameter("slug", slug);
     updateQuery.executeUpdate();
+
+        // blog/articles/press 수정 시 integration_contents 반영
+    integrationContentsSyncService.syncUpsert(slug, id, request.getDataJson(), existing.getSiteId());
+
     return getById(slug, id);
   }
 
@@ -1072,6 +1365,9 @@ public class PageDataService {
     pageFileService.deleteByDataId(id);
 
     pageDataRepository.deleteByIdAndDataSlug(id, slug);
+
+        // page_data 삭제가 성공했을 때만 integration_contents 반영 — 물리삭제 없이 is_visible=false만 처리
+    integrationContentsSyncService.syncSoftDelete(slug, id);
   }
 
     /**
@@ -1542,6 +1838,19 @@ public class PageDataService {
   private void bindTodayIfPresent(Query query, String sql, Long siteId) {
     if (sql.contains(":today")) {
       query.setParameter("today", resolveTodayParam(siteId));
+    }
+  }
+
+    /** FO 게시기간(dateRange) 분단위 정밀 비교용 "지금" 값 — resolveTodayParam(8자리, 날짜만)의 분단위(14자리, YYYYMMDDHHmmss) 버전
+     *  appendWhereConditionsDatetime(신규 FO 전용 경로) 에서만 사용 — 기존 12곳이 공유하는 :today(8자리)와는 완전히 별개 */
+  private String resolveNowParam(Long siteId) {
+    return LocalDateTime.now(resolveZone(siteId)).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+  }
+
+    /** sql에 :nowValue 플레이스홀더가 실제로 쓰였을 때만 바인딩 — bindTodayIfPresent의 분단위 정밀 버전 */
+  private void bindNowIfPresent(Query query, String sql, Long siteId) {
+    if (sql.contains(":nowValue")) {
+      query.setParameter("nowValue", resolveNowParam(siteId));
     }
   }
 
@@ -2058,6 +2367,334 @@ public class PageDataService {
         if (!end.isEmpty())   whereClause.append(" AND data_json->>'").append(key).append("' <= :p_").append(key).append("_end");
       } else {
         // ILIKE 부분 일치 (최상위 + 1단계 중첩 동시 검색)
+        whereClause.append(" AND (data_json->>'").append(key).append("' ILIKE :p_").append(key)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND kv.value->>'").append(key).append("' ILIKE :p_").append(key).append("))");
+      }
+    });
+  }
+
+    /**
+     * FO 게시기간(dateRange) 전용 WHERE 절 추가 — appendWhereConditions와 동일한 필터 문법을 그대로 지원하되,
+     * drs_ 접두사(dateRangeStatus)만 8자리(날짜) 절삭 비교 대신 분단위(최대 14자리, datetime)까지 정확히 비교한다.
+     * <p>
+     * 기존 12곳이 공유하는 appendWhereConditions(날짜 8자리 절삭 비교)는 회귀 위험 때문에 절대 수정하지 않고,
+     * 이 메서드는 완전히 별도 경로로 FO 게시기간 조회 전용(searchDatetimeRange)에서만 사용한다.
+     * drs_ 이외 접두사/문법(condval_/month_/year_/has_markets_/condexpr_/eq_/ne_/dot notation/_from,_to,_gte,_lte/|/plain)은
+     * appendWhereConditions와 100% 동일하게 복제했다 — FO 소비처가 drs_(게시기간)와 eq_(정확일치) 등을 함께 쓰기 때문에
+     * 필터 기능 자체는 그대로 유지해야 한다.
+     * <p>
+     * 8자리(날짜만) 값과 분단위(datetime) 값이 섞여 있어도 정확히 비교되도록, stored 값에서 숫자만 추출한 뒤
+     * 정확히 8자리(날짜만 저장된 레거시 값)면 normalizeDateFrom/normalizeDateTo 와 동일한 규칙으로
+     * 시작 조건은 000000(자정), 종료 조건은 235959(당일 끝)를 패딩해 :nowValue(14자리, YYYYMMDDHHmmss)와 비교한다.
+     */
+  private void appendWhereConditionsDatetime(StringBuilder whereClause, Map<String, String> searchParams) {
+    searchParams.forEach((key, value) -> {
+      // drs_ 접두사 → dateRangeStatus 날짜 범위 쿼리 (분단위 정밀 비교 버전)
+      // 형식: drs_{rangeKey}=before|in_range|after
+      if (key.startsWith("drs_")) {
+        String rangeKey = key.substring(4);
+        if (rangeKey.contains(".")) {
+          // dot notation: 명시적 경로 지정 → _from/_to 분리 키로 탐색
+          String[] segs = rangeKey.split("\\.");
+          if (!isValidSegments(segs)) return;
+          String[] fromSegs = segs.clone(); fromSegs[fromSegs.length - 1] = fromSegs[fromSegs.length - 1] + "_from";
+          String[] toSegs   = segs.clone(); toSegs[toSegs.length - 1]     = toSegs[toSegs.length - 1]     + "_to";
+          String fromPart = buildJsonPath(fromSegs);
+          String toPart   = buildJsonPath(toSegs);
+          // 숫자만 추출 후 8자리(날짜만)면 시작 000000/종료 235959 패딩(normalizeDateFrom/To와 동일 규칙) → :nowValue(14자리)와 비교
+          String fromDigits = "regexp_replace(" + fromPart + ", '[^0-9]', '', 'g')";
+          String toDigits   = "regexp_replace(" + toPart   + ", '[^0-9]', '', 'g')";
+          String fromCmp = "(CASE WHEN char_length(" + fromDigits + ") = 8 THEN " + fromDigits + " || '000000' ELSE " + fromDigits + " END)";
+          String toCmp   = "(CASE WHEN char_length(" + toDigits   + ") = 8 THEN " + toDigits   + " || '235959' ELSE " + toDigits   + " END)";
+          String now = ":nowValue";
+          switch (value) {
+            case "before":
+              whereClause.append(" AND ").append(fromCmp).append(" > ").append(now);
+              break;
+            case "in_range":
+              whereClause.append(" AND ").append(fromCmp).append(" <= ").append(now)
+                         .append(" AND ").append(toCmp).append(" >= ").append(now);
+              break;
+            case "after":
+              whereClause.append(" AND ").append(toCmp).append(" < ").append(now);
+              break;
+            default: break;
+          }
+        } else {
+          // 단순 키: _from/_to 분리 키로 최상위 + 1단계 중첩 동시 탐색
+          if (!rangeKey.matches("[a-zA-Z0-9_]+")) return;
+          String fromRootDigits   = "regexp_replace(data_json->>'" + rangeKey + "_from', '[^0-9]', '', 'g')";
+          String toRootDigits     = "regexp_replace(data_json->>'" + rangeKey + "_to', '[^0-9]', '', 'g')";
+          String fromNestedDigits = "regexp_replace(kv.value->>'" + rangeKey + "_from', '[^0-9]', '', 'g')";
+          String toNestedDigits   = "regexp_replace(kv.value->>'" + rangeKey + "_to', '[^0-9]', '', 'g')";
+          String fromRootCmp   = "(CASE WHEN char_length(" + fromRootDigits   + ") = 8 THEN " + fromRootDigits   + " || '000000' ELSE " + fromRootDigits   + " END)";
+          String toRootCmp     = "(CASE WHEN char_length(" + toRootDigits     + ") = 8 THEN " + toRootDigits     + " || '235959' ELSE " + toRootDigits     + " END)";
+          String fromNestedCmp = "(CASE WHEN char_length(" + fromNestedDigits + ") = 8 THEN " + fromNestedDigits + " || '000000' ELSE " + fromNestedDigits + " END)";
+          String toNestedCmp   = "(CASE WHEN char_length(" + toNestedDigits   + ") = 8 THEN " + toNestedDigits   + " || '235959' ELSE " + toNestedDigits   + " END)";
+          String now    = ":nowValue";
+          String nested = " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ";
+          switch (value) {
+            case "before":
+              whereClause.append(" AND (")
+                  .append(fromRootCmp).append(" > ").append(now)
+                  .append(nested).append(fromNestedCmp).append(" > ").append(now).append(")")
+                  .append(")");
+              break;
+            case "in_range":
+              whereClause.append(" AND (")
+                  .append(fromRootCmp).append(" <= ").append(now).append(" AND ").append(toRootCmp).append(" >= ").append(now)
+                  .append(nested)
+                  .append(fromNestedCmp).append(" <= ").append(now).append(" AND ").append(toNestedCmp).append(" >= ").append(now).append(")")
+                  .append(")");
+              break;
+            case "after":
+              whereClause.append(" AND (")
+                  .append(toRootCmp).append(" < ").append(now)
+                  .append(nested).append(toNestedCmp).append(" < ").append(now).append(")")
+                  .append(")");
+              break;
+            default: break;
+          }
+        }
+        return;
+      }
+
+      // condval_ 접두사 → condexpr_의 동반 파라미터(선택된 옵션 값)일 뿐, 단독으로는 조건을 만들지 않음
+      if (key.startsWith("condval_")) return;
+
+      // month_ 접두사 → 게시월(MM)만 비교, 연도 무관 (최상위 + 1단계 중첩 동시 탐색) — appendWhereConditions와 동일
+      if (key.startsWith("month_")) {
+        String fieldKey = key.substring(6);
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        if (!value.matches("0[1-9]|1[0-2]")) return;
+        String paramName = "p_" + key;
+        String topMonth = "substring(regexp_replace(data_json->>'" + fieldKey + "', '[^0-9]', '', 'g'), 5, 2)";
+        String nestedMonth = "substring(regexp_replace(kv.value->>'" + fieldKey + "', '[^0-9]', '', 'g'), 5, 2)";
+        whereClause.append(" AND (").append(topMonth).append(" = :").append(paramName)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND ").append(nestedMonth).append(" = :").append(paramName).append("))");
+        return;
+      }
+
+      // year_ 접두사 → 게시연도(YYYY)만 비교 (최상위 + 1단계 중첩 동시 탐색) — appendWhereConditions와 동일
+      if (key.startsWith("year_")) {
+        String fieldKey = key.substring(5);
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        if (!value.matches("[0-9]{4}")) return;
+        String paramName = "p_" + key;
+        String topYear = "substring(regexp_replace(data_json->>'" + fieldKey + "', '[^0-9]', '', 'g'), 1, 4)";
+        String nestedYear = "substring(regexp_replace(kv.value->>'" + fieldKey + "', '[^0-9]', '', 'g'), 1, 4)";
+        whereClause.append(" AND (").append(topYear).append(" = :").append(paramName)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND ").append(nestedYear).append(" = :").append(paramName).append("))");
+        return;
+      }
+
+      // has_markets_ 접두사 → CSV(콤마구분) 다중값 필드 토큰 매칭 (최상위 + 1단계 중첩 동시 탐색) — appendWhereConditions와 동일
+      if (key.startsWith("has_markets_")) {
+        String fieldKey = key.substring("has_markets_".length());
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        if (!value.matches("[0-9]{3}")) return;
+        String paramName = "p_" + key;
+        String topLike = "(',' || COALESCE(data_json->>'" + fieldKey + "','') || ',') LIKE :" + paramName;
+        String nestedLike = "(',' || COALESCE(kv.value->>'" + fieldKey + "','') || ',') LIKE :" + paramName;
+        whereClause.append(" AND (").append(topLike)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND ").append(nestedLike).append("))");
+        return;
+      }
+
+      // condexpr_ 접두사 → 조건식(evalConditionExpr 문법 재사용) 기반 파생값 검색 — appendWhereConditions와 동일(today() 판정은 기존과 동일하게 8자리 :today 유지)
+      if (key.startsWith("condexpr_")) {
+        String fk = key.substring("condexpr_".length());
+        if (!fk.matches("[a-zA-Z0-9_]+")) return;
+        String selectedVal = searchParams.get("condval_" + fk);
+        if (selectedVal == null) return;
+        String[] ternary = splitTernaryExpr(value);
+        if (ternary == null) return;
+        boolean matched;
+        if (selectedVal.equals(ternary[1])) matched = true;
+        else if (selectedVal.equals(ternary[2])) matched = false;
+        else return;
+
+        List<CondToken> tokens = parseConditionExpr(ternary[0]);
+        if (tokens.isEmpty()) return;
+
+        String today = ":today";
+        List<String> topParts = new ArrayList<>();
+        List<String> nestedParts = new ArrayList<>();
+        int idx = 0;
+        for (CondToken t : tokens) {
+          String pName = "p_cond_" + fk + "_" + idx;
+          String sqlOp = "!=".equals(t.op()) ? "<>" : t.op();
+          if (t.isToday()) {
+            topParts.add("substring(regexp_replace(data_json->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
+            nestedParts.add("substring(regexp_replace(kv.value->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
+          } else {
+            topParts.add("data_json->>'" + t.key() + "' " + sqlOp + " :" + pName);
+            nestedParts.add("kv.value->>'" + t.key() + "' " + sqlOp + " :" + pName);
+          }
+          idx++;
+        }
+        String condExpr = "((" + String.join(" AND ", topParts) + ")"
+            + " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ("
+            + String.join(" AND ", nestedParts) + ")))";
+        if (matched) {
+          whereClause.append(" AND ").append(condExpr);
+        } else {
+          whereClause.append(" AND NOT COALESCE(").append(condExpr).append(", FALSE)");
+        }
+        return;
+      }
+
+      // eq_ 접두사 → 정확 일치 — appendWhereConditions와 동일
+      if (key.startsWith("eq_")) {
+        String fieldKey = key.substring(3);
+        if (fieldKey.contains(".")) {
+          String[] segments = fieldKey.split("\\.");
+          if (!isValidSegments(segments)) return;
+          String paramName = "p_" + key.replace(".", "_");
+          whereClause.append(" AND ").append(buildJsonPath(segments)).append(" = :").append(paramName);
+        } else {
+          if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+          whereClause.append(" AND (data_json->>'").append(fieldKey).append("' = :p_").append(key)
+              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv1")
+              .append(" WHERE jsonb_typeof(kv1.value) = 'object'")
+              .append(" AND (kv1.value->>'").append(fieldKey).append("' = :p_").append(key)
+              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(kv1.value) kv2")
+              .append(" WHERE jsonb_typeof(kv2.value) = 'object'")
+              .append(" AND kv2.value->>'").append(fieldKey).append("' = :p_").append(key).append("))))");
+        }
+        return;
+      }
+
+      // ne_ 접두사 → 부정 일치(최상위 전용) — appendWhereConditions와 동일
+      if (key.startsWith("ne_")) {
+        String fieldKey = key.substring(3);
+        if (!fieldKey.matches("[a-zA-Z0-9_]+")) return;
+        whereClause.append(" AND data_json->>'").append(fieldKey).append("' IS DISTINCT FROM :p_").append(key);
+        return;
+      }
+
+      // dot notation 파라미터 → 경로 기반 직접 검색 — appendWhereConditions와 동일
+      if (key.contains(".")) {
+        String[] segments = key.split("\\.");
+        if (!isValidSegments(segments)) return;
+        String paramName = "p_" + key.replace(".", "_");
+        String jsonPath  = buildJsonPath(segments);
+        if (value.contains("~")) {
+          String[] parts = value.split("~", 2);
+          String start = parts[0].trim();
+          String end   = parts.length > 1 ? parts[1].trim() : "";
+          if (!start.isEmpty()) whereClause.append(" AND ").append(jsonPath).append(" >= :").append(paramName).append("_start");
+          if (!end.isEmpty())   whereClause.append(" AND ").append(jsonPath).append(" <= :").append(paramName).append("_end");
+        } else {
+          whereClause.append(" AND ").append(jsonPath).append(" ILIKE :").append(paramName);
+        }
+        return;
+      }
+
+      // _from 접미사 → dateRange 시작일 이상 조건 — appendWhereConditions와 동일(문자열 그대로 비교, 절삭 없음)
+      if (key.endsWith("_from")) {
+        if (!key.matches("[a-zA-Z0-9_]+")) return;
+        String paramName = "p_" + key;
+        String baseKey = key.substring(0, key.length() - 5);
+        String auditCol = toAuditDateColumn(baseKey);
+        if (auditCol != null) {
+          whereClause.append(" AND ").append(auditCol).append(" >= CAST(:").append(paramName).append(" AS timestamptz)");
+        } else {
+          whereClause.append(" AND (data_json->>'").append(key).append("' >= :").append(paramName)
+              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+              .append(" AND kv.value->>'").append(key).append("' >= :").append(paramName).append("))");
+        }
+        return;
+      }
+
+      // _to 접미사 → dateRange 종료일 이하 조건 — appendWhereConditions와 동일
+      if (key.endsWith("_to")) {
+        if (!key.matches("[a-zA-Z0-9_]+")) return;
+        String paramName = "p_" + key;
+        String baseKey = key.substring(0, key.length() - 3);
+        String auditCol = toAuditDateColumn(baseKey);
+        if (auditCol != null) {
+          whereClause.append(" AND ").append(auditCol).append(" <= CAST(:").append(paramName).append(" AS timestamptz)");
+        } else {
+          whereClause.append(" AND (data_json->>'").append(key).append("' <= :").append(paramName)
+              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+              .append(" AND kv.value->>'").append(key).append("' <= :").append(paramName).append("))");
+        }
+        return;
+      }
+
+      // _gte 접미사 → 단일 date 컬럼 범위 검색 시작 조건 — appendWhereConditions와 동일
+      if (key.endsWith("_gte")) {
+        if (!key.matches("[a-zA-Z0-9_]+")) return;
+        String fieldKey = key.substring(0, key.length() - 4);
+        String paramName = "p_" + key;
+        String auditCol = toAuditDateColumn(fieldKey);
+        if (auditCol != null) {
+          whereClause.append(" AND ").append(auditCol).append(" >= CAST(:").append(paramName).append(" AS timestamptz)");
+        } else {
+          whereClause.append(" AND (data_json->>'").append(fieldKey).append("' >= :").append(paramName)
+              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+              .append(" AND kv.value->>'").append(fieldKey).append("' >= :").append(paramName).append("))");
+        }
+        return;
+      }
+
+      // _lte 접미사 → 단일 date 컬럼 범위 검색 종료 조건 — appendWhereConditions와 동일
+      if (key.endsWith("_lte")) {
+        if (!key.matches("[a-zA-Z0-9_]+")) return;
+        String fieldKey = key.substring(0, key.length() - 4);
+        String paramName = "p_" + key;
+        String auditCol = toAuditDateColumn(fieldKey);
+        if (auditCol != null) {
+          whereClause.append(" AND ").append(auditCol).append(" <= CAST(:").append(paramName).append(" AS timestamptz)");
+        } else {
+          whereClause.append(" AND (data_json->>'").append(fieldKey).append("' <= :").append(paramName)
+              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+              .append(" AND kv.value->>'").append(fieldKey).append("' <= :").append(paramName).append("))");
+        }
+        return;
+      }
+
+      // | 구분자 → OR 다중 필드 ILIKE — appendWhereConditions와 동일
+      if (key.contains("|")) {
+        String[] fields = key.split("\\|");
+        if (!Arrays.stream(fields).allMatch(f -> f.matches("[a-zA-Z0-9_]+"))) return;
+        String paramName = "p_or_" + key.replace("|", "__");
+        String topLevel = Arrays.stream(fields)
+            .map(f -> "data_json->>'" + f + "' ILIKE :" + paramName)
+            .collect(java.util.stream.Collectors.joining(" OR "));
+        String nested = Arrays.stream(fields)
+            .map(f -> "kv.value->>'" + f + "' ILIKE :" + paramName)
+            .collect(java.util.stream.Collectors.joining(" OR "));
+        whereClause.append(" AND (")
+            .append(topLevel)
+            .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+            .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+            .append(" AND (").append(nested).append(")))");
+        return;
+      }
+
+      // 단순 키 (기존 방식 유지) — appendWhereConditions와 동일
+      if (!key.matches("[a-zA-Z0-9_]+")) return;
+      if (value.contains("~")) {
+        String[] parts = value.split("~", 2);
+        String start = parts[0].trim();
+        String end   = parts.length > 1 ? parts[1].trim() : "";
+        if (!start.isEmpty()) whereClause.append(" AND data_json->>'").append(key).append("' >= :p_").append(key).append("_start");
+        if (!end.isEmpty())   whereClause.append(" AND data_json->>'").append(key).append("' <= :p_").append(key).append("_end");
+      } else {
         whereClause.append(" AND (data_json->>'").append(key).append("' ILIKE :p_").append(key)
             .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
             .append(" WHERE jsonb_typeof(kv.value) = 'object'")

@@ -51,7 +51,7 @@ server:
 
 # CORS — 개발서버 FE 주소
 cors:
-  allowed-origins: "http://10.153.10.150:3002,http://10.153.10.150:3001,http://10.153.9.150,https://nahpdev.ls-electric.com"
+  allowed-origins: "http://10.153.10.150:3002,http://10.153.10.150:3001,http://10.153.9.150,https://nahpdev.ls-electric.com,https://nahpdev-web.ls-electric.com/,https://afd-lse-nahp-dev-crg4emfxbvfnbddy.a01.azurefd.net"
 
 # 파일 업로드 루트 경로
 file:

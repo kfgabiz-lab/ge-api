@@ -76,6 +76,7 @@ public class ExternalApiClient {
      * @return ApiCallResult — 성공/실패 여부, 상태코드, 데이터, 오류 메시지 포함
      */
     public <T> ApiCallResult<T> call(ApiCallRequest request, Class<T> responseType) {
+        log.debug("외부 API 요청 method={} url={} body={}", request.getMethod(), request.getUrl(), request.getBody());
         try {
             RestClient.RequestBodySpec spec = restClient
                 .method(request.getMethod())
@@ -89,15 +90,19 @@ public class ExternalApiClient {
                 ? spec.body(request.getBody()).retrieve().toEntity(responseType)
                 : spec.retrieve().toEntity(responseType);
 
+            log.debug("외부 API 응답 url={} status={} body={}",
+                request.getUrl(), response.getStatusCode().value(), response.getBody());
             return ApiCallResult.success(response.getStatusCode().value(), response.getBody());
 
         } catch (HttpClientErrorException e) {
             // 4xx 오류 (잘못된 요청, 인증 실패 등)
-            log.warn("외부 API 클라이언트 오류 [{}] url={}", e.getStatusCode().value(), request.getUrl());
+            log.warn("외부 API 클라이언트 오류 [{}] url={} body={}",
+                e.getStatusCode().value(), request.getUrl(), e.getResponseBodyAsString());
             return ApiCallResult.failure(e.getStatusCode().value(), e.getMessage());
         } catch (HttpServerErrorException e) {
             // 5xx 오류 (외부 서버 문제)
-            log.warn("외부 API 서버 오류 [{}] url={}", e.getStatusCode().value(), request.getUrl());
+            log.warn("외부 API 서버 오류 [{}] url={} body={}",
+                e.getStatusCode().value(), request.getUrl(), e.getResponseBodyAsString());
             return ApiCallResult.failure(e.getStatusCode().value(), "외부 서버 오류");
         } catch (ResourceAccessException e) {
             // 네트워크 오류 (타임아웃, 연결 거부 등)
