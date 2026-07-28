@@ -1210,7 +1210,7 @@ public class PageDataService {
     updateIdQuery.executeUpdate();
 
         // blog/articles/press 등록 시 integration_contents 반영
-    integrationContentsSyncService.syncUpsert(slug, newId, request.getDataJson());
+    integrationContentsSyncService.syncUpsert(slug, newId, request.getDataJson(), siteId);
 
     return getById(slug, newId);
   }
@@ -1254,7 +1254,7 @@ public class PageDataService {
     updateQuery.executeUpdate();
 
         // blog/articles/press 수정 시 integration_contents 반영
-    integrationContentsSyncService.syncUpsert(slug, id, request.getDataJson());
+    integrationContentsSyncService.syncUpsert(slug, id, request.getDataJson(), existing.getSiteId());
 
     return getById(slug, id);
   }

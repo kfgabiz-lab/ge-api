@@ -48,4 +48,12 @@ public class IntegrationContents {
   /** 컨텐츠 원본 id — page_data.id */
   @Column(name = "content_id", nullable = false, length = 20)
   private String contentId;
+
+  /** 파일 id — data_json 내 image 배열의 첫 값 */
+  @Column(name = "file_id")
+  private Long fileId;
+
+  /** 사이트 id — page_data.site_id */
+  @Column(name = "site_id")
+  private Long siteId;
 }
