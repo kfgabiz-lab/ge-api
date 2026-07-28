@@ -1,5 +1,6 @@
 package com.ge.bo.dto;
 
+import com.ge.bo.common.validation.MaxByteLength;
 import jakarta.validation.constraints.*;
 
 import java.util.List;
@@ -9,7 +10,8 @@ import java.util.List;
  * TrainingRegistrationRequest 패턴을 본떠 작성 — FE Step1~4 입력값을 한 번에 받는다.
  * - Step3 의 교육장소/현장담당자 항목은 In-Person 일 때만 입력되는 값이라 서버 필수 검증 대상이 아니다
  *   (필수 여부는 FE Step3 에서 trainingFormat 에 따라 조건부 검증).
- * - JSON 배열 필드(selectedProducts/jobTitles/...)는 서비스에서 JSON 문자열로 직렬화해 JSONB 컬럼에 저장한다.
+ * - selectedProducts(객체 배열)는 서비스에서 JSON 문자열로 직렬화해 JSONB 컬럼에 저장하고,
+ *   jobTitles/studentInvolvement/vfdUnderstandingTopics(단순 문자열 배열)는 그대로 text[] 컬럼에 저장한다.
  */
 public record TrainingRequestSubmitRequest(
 
@@ -106,6 +108,8 @@ public record TrainingRequestSubmitRequest(
 
         List<String> vfdUnderstandingTopics,
 
+        /** 기타 요청사항 — dc 규정상 최대 2000byte (문자 수가 아니라 UTF-8 byte 기준) */
+        @MaxByteLength(value = 2000, message = "요청사항은 최대 2000byte까지 입력할 수 있습니다.")
         String comments,
 
         @AssertTrue(message = "개인정보 수집 및 이용에 동의해주세요.") Boolean consentChecked,

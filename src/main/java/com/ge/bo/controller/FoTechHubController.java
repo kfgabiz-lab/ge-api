@@ -1,6 +1,7 @@
 package com.ge.bo.controller;
 
 import com.ge.bo.dto.TechHubCategoryCountResponse;
+import com.ge.bo.dto.TechHubCertCountResponse;
 import com.ge.bo.dto.TechHubContentPageResponse;
 import com.ge.bo.dto.TechHubDetailResponse;
 import com.ge.bo.service.TechHubService;
@@ -29,18 +30,21 @@ public class FoTechHubController {
 
     /**
      * Tech Hub 목록(카드) 조회
-     * GET /api/v1/fo/tech-hub/contents?q={키워드}&categories={LV2코드,콤마구분}&page=0&size=12
+     * GET /api/v1/fo/tech-hub/contents?q={키워드}&categories={LV2코드,콤마구분}&certs={ul,iec}&page=0&size=12
      * - categories: LV2 카테고리 코드 콤마구분(그룹 내 OR). 미지정 시 전체.
+     * - certs: 인증 코드 콤마구분(ul/iec, 그룹 내 OR). 미지정 시 전체(기존 동작 유지) → 카테고리와는 AND.
      * - 정렬 source_updated_at DESC, 페이지 크기 기본 12.
      */
     @GetMapping("/contents")
     public ResponseEntity<TechHubContentPageResponse> getContents(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String categories,
+            @RequestParam(required = false) String certs,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size) {
         List<String> categoryL2Ids = parseCsv(categories);
-        return ResponseEntity.ok(techHubService.getContents(q, categoryL2Ids, page, size));
+        List<String> certCodes = parseCsv(certs);
+        return ResponseEntity.ok(techHubService.getContents(q, categoryL2Ids, certCodes, page, size));
     }
 
     /**
@@ -63,6 +67,16 @@ public class FoTechHubController {
     @GetMapping("/category-counts")
     public ResponseEntity<List<TechHubCategoryCountResponse>> getCategoryCounts() {
         return ResponseEntity.ok(techHubService.getCategoryCounts());
+    }
+
+    /**
+     * 인증(UL/IEC)별 콘텐츠 건수(필터 패널 숫자)
+     * GET /api/v1/fo/tech-hub/cert-counts
+     * - UL/IEC 두 항목 항상 반환(0 포함). IEC/UL 동시 취득 콘텐츠는 양쪽에 가산.
+     */
+    @GetMapping("/cert-counts")
+    public ResponseEntity<List<TechHubCertCountResponse>> getCertCounts() {
+        return ResponseEntity.ok(techHubService.getCertCounts());
     }
 
     /** "L01-12,L02-01" → ["L01-12","L02-01"] (공백/빈값 제거). null/blank → null(필터 미적용). */

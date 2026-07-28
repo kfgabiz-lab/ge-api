@@ -1,6 +1,7 @@
 package com.ge.bo.service;
 
 import com.ge.bo.dto.TechHubCategoryCountResponse;
+import com.ge.bo.dto.TechHubCertCountResponse;
 import com.ge.bo.dto.TechHubChapterResponse;
 import com.ge.bo.dto.TechHubContentPageResponse;
 import com.ge.bo.dto.TechHubContentResponse;
@@ -14,7 +15,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 
 /**
  * FO Tech Hub(Support > Tech Hub) 콘텐츠 조회 서비스.
@@ -32,28 +36,49 @@ public class TechHubService {
     @PersistenceContext
     private EntityManager entityManager;
 
-    // 영상 콘텐츠 공통 게이트(master) + "노출 버전 존재" 조건. :cats/:q 는 호출부에서 조건부로 덧붙인다.
+    // 영상 콘텐츠 공통 게이트(master) + "노출 버전 존재" 조건. :cats/:q/:certStds 는 호출부에서 조건부로 덧붙인다.
     private static final String MASTER_GATE =
         " m.doc_type = 'V' AND m.expose = true AND m.is_deleted = false"
       + " AND EXISTS (SELECT 1 FROM contents_version v WHERE v.contents_id = m.id"
       + "   AND v.version_expose = true AND v.is_deleted = false AND v.video_url IS NOT NULL AND v.video_url <> '')";
 
+    // 인증(Certification) 원천값 — contents_master.attrs 안의 문자열 코드. 전용 컬럼 없음.
+    private static final String CERT_STANDARD_EXPR = "m.attrs->>'video_prod_standard'";
+
     /**
-     * Tech Hub 목록(카드) 조회 — 키워드(제목 LIKE) + LV2 카테고리 필터 + source_updated_at DESC 페이징.
+     * 인증 코드(FO 필터 id) → video_prod_standard 코드값 매핑.
+     * '3'(IEC/UL 동시 취득)은 UL·IEC 양쪽에 모두 해당하므로 두 목록에 함께 들어간다.
+     * 비교는 문자열 IN 으로만 한다(정수 캐스팅 시 비숫자 값 유입되면 쿼리 자체가 예외).
+     */
+    private static final Map<String, List<String>> CERT_STANDARD_CODES = Map.of(
+        "iec", List.of("1", "3"),
+        "ul",  List.of("2", "3")
+    );
+
+    // cert-counts 응답 순서(FO 필터 패널 표기 순서와 동일: UL → IEC).
+    private static final List<String> CERT_ORDER = List.of("ul", "iec");
+
+    /**
+     * Tech Hub 목록(카드) 조회 — 키워드(제목 LIKE) + LV2 카테고리 필터 + 인증 필터 + source_updated_at DESC 페이징.
+     * 필터 그룹 간은 AND, 그룹 내 다중선택은 OR(IN) — 카테고리 필터와 동일 사상.
      *
      * @param q               키워드(제목 nahp_title/doc_title ILIKE). null/blank 이면 미적용.
      * @param categoryL2Ids   선택된 LV2 코드 목록(그룹 내 OR = IN). null/empty 이면 미적용.
+     * @param certs           선택된 인증 코드 목록(ul/iec, 그룹 내 OR). null/empty/미인식 이면 미적용(기존 동작 유지).
      * @param page            0-based 페이지
      * @param size            페이지 크기(기본 12)
      */
     @Transactional(readOnly = true)
-    public TechHubContentPageResponse getContents(String q, List<String> categoryL2Ids, int page, int size) {
+    public TechHubContentPageResponse getContents(String q, List<String> categoryL2Ids, List<String> certs,
+                                                  int page, int size) {
         int safeSize = size <= 0 ? 12 : size;
         int safePage = Math.max(page, 0);
         boolean hasQ = q != null && !q.isBlank();
         boolean hasCats = categoryL2Ids != null && !categoryL2Ids.isEmpty();
+        List<String> certStds = resolveCertStandardCodes(certs);
+        boolean hasCerts = certStds != null;
 
-        // 공통 WHERE(게이트 + 조건부 키워드/카테고리)
+        // 공통 WHERE(게이트 + 조건부 키워드/카테고리/인증)
         StringBuilder where = new StringBuilder(" WHERE").append(MASTER_GATE);
         if (hasQ) {
             where.append(" AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q");
@@ -62,12 +87,17 @@ public class TechHubService {
             where.append(" AND EXISTS (SELECT 1 FROM contents_category cf"
                 + " WHERE cf.contents_id = m.id AND cf.category_l2_id IN (:cats))");
         }
+        if (hasCerts) {
+            // attrs 없거나 값이 매핑 밖(NULL 포함)이면 자동 제외 — 인증 필터 선택 시 미분류 콘텐츠는 노출하지 않는다.
+            where.append(" AND ").append(CERT_STANDARD_EXPR).append(" IN (:certStds)");
+        }
 
         // ① 전체 건수
         Query countQuery = entityManager.createNativeQuery(
             "SELECT count(*) FROM contents_master m" + where);
         if (hasQ) countQuery.setParameter("q", "%" + q.trim() + "%");
         if (hasCats) countQuery.setParameter("cats", categoryL2Ids);
+        if (hasCerts) countQuery.setParameter("certStds", certStds);
         long total = ((Number) countQuery.getSingleResult()).longValue();
 
         // ② 현재 페이지 카드 목록
@@ -100,6 +130,7 @@ public class TechHubService {
         Query query = entityManager.createNativeQuery(sql);
         if (hasQ) query.setParameter("q", "%" + q.trim() + "%");
         if (hasCats) query.setParameter("cats", categoryL2Ids);
+        if (hasCerts) query.setParameter("certStds", certStds);
         query.setParameter("size", safeSize);
         query.setParameter("offset", safePage * safeSize);
 
@@ -262,5 +293,56 @@ public class TechHubService {
             ));
         }
         return result;
+    }
+
+    /**
+     * 인증(UL/IEC)별 노출 영상 콘텐츠 건수 — 필터 패널 숫자용.
+     * - 게이트는 getCategoryCounts 와 동일(MASTER_GATE). video_prod_standard 코드값으로 GROUP BY 한 뒤
+     *   '3'(IEC/UL 동시)을 UL·IEC 양쪽에 가산하므로 두 count 합 ≠ 전체 건수일 수 있다.
+     * - UL/IEC 두 항목을 항상 순회해 매칭 없으면 count=0 으로 채워 반환한다(FE가 두 옵션 모두 렌더링).
+     */
+    @Transactional(readOnly = true)
+    public List<TechHubCertCountResponse> getCertCounts() {
+        String sql = "SELECT " + CERT_STANDARD_EXPR + " AS cert_std, count(*)::int"
+            + " FROM contents_master m"
+            + " WHERE" + MASTER_GATE
+            + " GROUP BY " + CERT_STANDARD_EXPR;
+
+        Query query = entityManager.createNativeQuery(sql);
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+        // 원천 코드값 → 건수 맵(값 없는 콘텐츠는 key=null 로 모이며 어느 인증에도 가산되지 않는다).
+        Map<String, Integer> countByStandard = new LinkedHashMap<>();
+        for (Object[] r : rows) {
+            if (r[0] == null) continue;
+            countByStandard.put(r[0].toString(), r[1] != null ? ((Number) r[1]).intValue() : 0);
+        }
+
+        List<TechHubCertCountResponse> result = new ArrayList<>();
+        for (String certCode : CERT_ORDER) {
+            int count = 0;
+            for (String std : CERT_STANDARD_CODES.get(certCode)) {
+                count += countByStandard.getOrDefault(std, 0);
+            }
+            result.add(new TechHubCertCountResponse(certCode, count));
+        }
+        return result;
+    }
+
+    /**
+     * 요청 인증 코드(ul/iec) → 조회할 video_prod_standard 코드값 목록.
+     * - 그룹 내 다중선택은 합집합(OR) — UL+IEC 동시 선택 시 ('1','2','3').
+     * - 인식 못한 토큰은 무시하며, 유효 토큰이 하나도 없으면 null(필터 미적용 = 기존 동작).
+     */
+    private static List<String> resolveCertStandardCodes(List<String> certs) {
+        if (certs == null || certs.isEmpty()) return null;
+        LinkedHashSet<String> standards = new LinkedHashSet<>();
+        for (String cert : certs) {
+            if (cert == null) continue;
+            List<String> mapped = CERT_STANDARD_CODES.get(cert.trim().toLowerCase());
+            if (mapped != null) standards.addAll(mapped);
+        }
+        return standards.isEmpty() ? null : new ArrayList<>(standards);
     }
 }

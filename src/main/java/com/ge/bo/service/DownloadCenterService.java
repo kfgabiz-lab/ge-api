@@ -37,7 +37,7 @@ public class DownloadCenterService {
     private EntityManager entityManager;
 
     // 공통 게이트(master): 노출 + 미삭제 + 영상 제외 + "노출 버전 & 노출 파일 존재".
-    // :q / :docTypes / :cats 는 호출부에서 조건부로 덧붙인다.
+    // :q / :docTypes / :cats / :productCodes 는 호출부에서 조건부로 덧붙인다.
     private static final String MASTER_GATE =
         " m.expose = true AND m.is_deleted = false AND m.doc_type <> 'V'"
       + " AND EXISTS (SELECT 1 FROM contents_version v"
@@ -59,27 +59,42 @@ public class DownloadCenterService {
     // OS/Firmware 는 대응 doc_type 이 없어 제외(FE 정적 표시, count=0 고정).
     private static final List<String> DOC_TYPE_ORDER = List.of("C", "M", "D", "S", "R", "O");
 
+    // sort=doctype 용 문서유형 우선순위 식.
+    // 기획서(제품상세 Downloads 섹션) 지정 순서 = Catalogs > Manuals > Certificates > Software > Tech Data > Drawings.
+    // ⚠️ 위 DOC_TYPE_ORDER(= /doctype-counts 응답 나열 순서)와는 순서가 다르므로 재사용하지 않는다.
+    // 미정의 doc_type 은 7(맨 뒤)로 밀어 정렬이 깨지지 않게 한다.
+    private static final String DOC_TYPE_PRIORITY_CASE =
+        " CASE m.doc_type WHEN 'C' THEN 1 WHEN 'M' THEN 2 WHEN 'R' THEN 3"
+      + " WHEN 'S' THEN 4 WHEN 'O' THEN 5 WHEN 'D' THEN 6 ELSE 7 END";
+
 
     /**
-     * Download Center 목록(카드) 조회 — 키워드 + docType + LV2 카테고리 필터 + 정렬 페이징.
+     * Download Center 목록(카드) 조회 — 키워드 + docType + LV2 카테고리 + LV3 제품코드 필터 + 정렬 페이징.
      *
-     * @param q          키워드(제목 nahp_title/doc_title ILIKE). null/blank 이면 미적용.
-     * @param categories 선택된 LV2 코드 목록(그룹 내 OR = IN). null/empty 이면 미적용.
-     * @param docTypes   선택된 문서유형 코드 목록(IN). null/empty 이면 미적용.
-     * @param sort       정렬: newest(기본)/oldest/title.
-     * @param page       0-based 페이지.
-     * @param size       페이지 크기(기본 12).
+     * @param q            키워드(제목 nahp_title/doc_title ILIKE). null/blank 이면 미적용.
+     * @param categories   선택된 LV2 코드 목록(그룹 내 OR = IN). null/empty 이면 미적용.
+     * @param docTypes     선택된 문서유형 코드 목록(IN). null/empty 이면 미적용.
+     * @param productCodes 선택된 LV3 제품코드 목록(예: "L01-02-01", 그룹 내 OR = IN). null/empty 이면 미적용.
+     *                     제품상세 Downloads 섹션에서 "현재 제품과 연계된 파일만" 거를 때 사용한다.
+     *                     한 제품(slug)이 복수 product_code 를 갖는 경우가 있어 다중값을 받는다.
+     *                     categories(LV2)와는 AND 로 결합된다.
+     * @param sort         정렬: doctype(문서유형 우선순위)/newest(기본)/oldest/title/title_desc.
+     * @param page         0-based 페이지.
+     * @param size         페이지 크기(기본 12).
      */
     @Transactional(readOnly = true)
     public DownloadCenterContentPageResponse getContents(
-            String q, List<String> categories, List<String> docTypes, String sort, int page, int size) {
+            String q, List<String> categories, List<String> docTypes, List<String> productCodes,
+            String sort, int page, int size) {
         int safeSize = size <= 0 ? 12 : size;
         int safePage = Math.max(page, 0);
         boolean hasQ = q != null && !q.isBlank();
         boolean hasCats = categories != null && !categories.isEmpty();
         boolean hasDocTypes = docTypes != null && !docTypes.isEmpty();
+        boolean hasProductCodes = productCodes != null && !productCodes.isEmpty();
 
-        // 공통 WHERE(게이트 + 조건부 키워드/문서유형/카테고리)
+        // 공통 WHERE(게이트 + 조건부 키워드/문서유형/카테고리/제품코드)
+        // ⚠️ 이 where 문자열을 ①건수 쿼리와 ②id 목록 쿼리가 공유하므로 조건은 양쪽에 항상 동일하게 반영된다.
         StringBuilder where = new StringBuilder(" WHERE").append(MASTER_GATE);
         if (hasQ) {
             where.append(" AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q");
@@ -91,6 +106,11 @@ public class DownloadCenterService {
             where.append(" AND EXISTS (SELECT 1 FROM contents_category cc"
                 + " WHERE cc.contents_id = m.id AND cc.category_l2_id IN (:cats))");
         }
+        if (hasProductCodes) {
+            // LV2 조건과 동일한 EXISTS 패턴 — 한 콘텐츠가 여러 제품에 매핑돼도 행 중복이 생기지 않는다.
+            where.append(" AND EXISTS (SELECT 1 FROM contents_category cc3"
+                + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes))");
+        }
 
         // ① 전체 건수
         Query countQuery = entityManager.createNativeQuery(
@@ -98,6 +118,7 @@ public class DownloadCenterService {
         if (hasQ) countQuery.setParameter("q", "%" + q.trim() + "%");
         if (hasDocTypes) countQuery.setParameter("docTypes", docTypes);
         if (hasCats) countQuery.setParameter("cats", categories);
+        if (hasProductCodes) countQuery.setParameter("productCodes", productCodes);
         long total = ((Number) countQuery.getSingleResult()).longValue();
 
         // ② 현재 페이지 master.id 목록(정렬 적용)
@@ -107,6 +128,7 @@ public class DownloadCenterService {
         if (hasQ) idQuery.setParameter("q", "%" + q.trim() + "%");
         if (hasDocTypes) idQuery.setParameter("docTypes", docTypes);
         if (hasCats) idQuery.setParameter("cats", categories);
+        if (hasProductCodes) idQuery.setParameter("productCodes", productCodes);
         idQuery.setParameter("size", safeSize);
         idQuery.setParameter("offset", safePage * safeSize);
 
@@ -124,12 +146,19 @@ public class DownloadCenterService {
         return new DownloadCenterContentPageResponse(content, total, totalPages, safePage, safeSize);
     }
 
-    // 정렬 절 — newest(기본)/oldest/title.
+    // 정렬 절 — doctype/newest(기본)/oldest/title/title_desc.
+    // ⚠️ 미정의 값은 400 이 아니라 조용히 newest 로 처리된다(default 분기). 새 정렬을 추가할 때는
+    //    반드시 여기 case 를 먼저 넣어야 하며, FE 가 보내는 값과 철자가 다르면 "정렬이 안 먹는" 게 아니라
+    //    "최신순으로 보이는" 증상이 되므로 오진하기 쉽다.
     private String orderByClause(String sort) {
         String key = sort == null ? "" : sort.trim().toLowerCase();
         return switch (key) {
+            // 문서유형 우선순위 → 동일 유형 내에서는 등록일시 내림차순(기획서 명시).
+            case "doctype" -> " ORDER BY" + DOC_TYPE_PRIORITY_CASE
+                + ", m.source_updated_at DESC NULLS LAST, m.id DESC";
             case "oldest" -> " ORDER BY m.source_updated_at ASC NULLS LAST, m.id ASC";
             case "title" -> " ORDER BY COALESCE(m.nahp_title, m.doc_title) ASC, m.id ASC";
+            case "title_desc" -> " ORDER BY COALESCE(m.nahp_title, m.doc_title) DESC, m.id DESC";
             default -> " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC"; // newest
         };
     }

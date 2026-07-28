@@ -14,11 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
-import java.util.Collection;
 
 /**
  * FO Training Request(비정기 교육 신청, Step1~4) 접수 서비스
- * - 처리 순서: reCAPTCHA 검증 → 날짜 파싱 → JSON 직렬화 → insert
+ * - 처리 순서: reCAPTCHA 검증 → 날짜 파싱 → selectedProducts JSON 직렬화 → insert
  * - TrainingRegistrationService 의 레이어 구조를 그대로 본떠 작성(reCAPTCHA 공용 서비스 재사용).
  * - 신청자가 입력한 값을 그대로 보존하는 이력성 저장이라 코드값 변환/공통코드 검증은 하지 않는다.
  * - 메일 발송은 스코프 제외.
@@ -82,12 +81,13 @@ public class TrainingRequestService {
                 .locationZip(blankToNull(request.locationZip()))
                 .contactPerson(blankToNull(request.contactPerson()))
                 .contactDetails(blankToNull(request.contactDetails()))
-                // Step4 — JSONB 컬럼은 JSON 문자열로 직렬화해 저장
+                // Step4 — selectedProducts만 구조화된 객체 배열이라 JSONB(JSON 문자열 직렬화) 저장,
+                // 나머지 3개는 단순 문자열 배열이라 text[]로 그대로 저장
                 .selectedProducts(toJson(request.selectedProducts()))
-                .jobTitles(toJsonOrNull(request.jobTitles()))
-                .studentInvolvement(toJsonOrNull(request.studentInvolvement()))
+                .jobTitles(request.jobTitles())
+                .studentInvolvement(request.studentInvolvement())
                 .vfdUnderstanding(blankToNull(request.vfdUnderstanding()))
-                .vfdUnderstandingTopics(toJsonOrNull(request.vfdUnderstandingTopics()))
+                .vfdUnderstandingTopics(request.vfdUnderstandingTopics())
                 .comments(blankToNull(request.comments()))
                 .consentChecked(request.consentChecked())
                 .createdIp(clientIp)
@@ -119,11 +119,6 @@ public class TrainingRequestService {
             log.error("Training Request JSON 직렬화 실패: {}", e.getMessage());
             throw BusinessException.badRequest("신청 정보 형식이 올바르지 않습니다.");
         }
-    }
-
-    /** 선택 JSONB 컬럼용 — 값이 없으면 NULL 로 저장 */
-    private String toJsonOrNull(Collection<?> value) {
-        return (value == null || value.isEmpty()) ? null : toJson(value);
     }
 
     /** 선택 문자열 필드 — 공백/빈 문자열은 NULL 로 저장 */

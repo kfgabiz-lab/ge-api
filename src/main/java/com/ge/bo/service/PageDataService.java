@@ -13,6 +13,7 @@ import com.ge.bo.dto.PageDataResponse;
 import com.ge.bo.dto.PopupResponse;
 import com.ge.bo.dto.TrainingProductNodeResponse;
 import com.ge.bo.dto.TrainingProductOptionResponse;
+import com.ge.bo.dto.TrainingProductTreeItemResponse;
 import com.ge.bo.dto.TrainingProductTreeResponse;
 import com.ge.bo.exception.BusinessException;
 import com.ge.bo.entity.AdminUser;
@@ -657,7 +658,9 @@ public class PageDataService {
             + "  vp.data_json->'product'->>'product_name'          AS product_name,"
             + "  vp.data_json->'product_info'->>'image'            AS image,"
             + "  vp.data_json->'product_info'->>'info_description' AS info_description,"
-            + "  vp.data_json->'seo'->>'slug'                      AS slug"
+            + "  vp.data_json->'seo'->>'slug'                      AS slug,"
+            // 기획서 product-lv2.png 9번 — Design Awards 배지 판정용. 위 컬럼들과 동일한 vp.data_json 레코드에서 함께 뽑는다(추가 조인 없음)
+            + "  vp.data_json->'product'->>'awards'                AS awards"
             + " FROM visible_product vp"
             + " ORDER BY"
             + "  CASE WHEN vp.sort_order ~ '^[0-9]+$' THEN vp.sort_order::int END ASC NULLS LAST,"
@@ -677,7 +680,8 @@ public class PageDataService {
                 row[1] != null ? row[1].toString() : null,
                 row[2] != null ? row[2].toString() : null,
                 row[3] != null ? row[3].toString() : null,
-                row[4] != null ? row[4].toString() : null
+                row[4] != null ? row[4].toString() : null,
+                row[5] != null ? row[5].toString() : null
             ));
         }
         return result;
@@ -699,7 +703,10 @@ public class PageDataService {
           + "  lv2.data_json->'category'->>'title' AS lv2_title,"
           + "  p.id AS product_id,"
           + "  p.data_json->'product'->>'product_name' AS product_name,"
-          + "  p.data_json->'product'->>'product_type' AS product_type"
+          + "  p.data_json->'product'->>'product_type' AS product_type,"
+          // j.id = category-data depth3 연결행 PK. currDtlMgmt-data 의 power_list/automation_list 에
+          // 저장되는 값이라 FO 가 "연결제품 id → 제품명" 을 해석할 때 필요하다(계층 응답에는 담을 자리가 없어 평면 행으로 내려준다).
+          + "  j.id AS join_id"
           + " FROM page_data lv2"
           + " JOIN page_data lv1"
           + "   ON lv1.data_slug = 'category-data'"
@@ -728,7 +735,29 @@ public class PageDataService {
 
         List<TrainingProductNodeResponse> power = buildTrainingTree(rows, "P");
         List<TrainingProductNodeResponse> automation = buildTrainingTree(rows, "A");
-        return new TrainingProductTreeResponse(power, automation);
+        return new TrainingProductTreeResponse(power, automation, buildTrainingTreeItems(rows));
+    }
+
+    /**
+     * findTrainingProductTree 조회 결과(flat row)를 그대로 평면 DTO 목록으로 변환한다.
+     * 계층 조립(buildTrainingTree)과 동일한 행을 쓰므로 추가 조회가 없고, 같은 has_training='001' 게이트가 적용된 상태다.
+     * 같은 제품이 여러 Lv2 아래에 연결되면 연결행(j.id)마다 1건씩 나온다(중복 제거하지 않음 — 호출부가 id 기준으로 판단).
+     */
+    private List<TrainingProductTreeItemResponse> buildTrainingTreeItems(List<Object[]> rows) {
+        List<TrainingProductTreeItemResponse> items = new ArrayList<>(rows.size());
+        for (Object[] row : rows) {
+            items.add(new TrainingProductTreeItemResponse(
+                row[7] != null ? ((Number) row[7]).longValue() : null,
+                row[0] != null ? ((Number) row[0]).longValue() : null,
+                row[1] != null ? row[1].toString() : null,
+                row[2] != null ? ((Number) row[2]).longValue() : null,
+                row[3] != null ? row[3].toString() : null,
+                row[4] != null ? ((Number) row[4]).longValue() : null,
+                row[5] != null ? row[5].toString() : null,
+                row[6] != null ? row[6].toString() : null
+            ));
+        }
+        return items;
     }
 
     /**

@@ -33,7 +33,9 @@ public class CodeDetail {
   @Column(nullable = false, length = 30)
     private String code;
 
-  @Column(nullable = false, length = 50)
+  /* 코드명 — nameMsgKey 지정 시 message_resource.ko 값이 저장된다.
+     영문 원문을 ko/en 양쪽에 그대로 쓰는 코드(교육 신청 Step4 옵션 등)가 50자를 넘겨 100자로 확장. */
+  @Column(nullable = false, length = 100)
     private String name;
 
   @Column(name = "name_msg_key", length = 255)

@@ -42,11 +42,13 @@ CREATE TABLE IF NOT EXISTS training_request (
     contact_person          VARCHAR(50),
     contact_details         VARCHAR(400),
     -- Step4: Training Class Details
+    -- ※ selected_products 만 {id,name,type,groupId,groupTitle} 구조의 객체 배열이라 JSONB.
+    --   나머지 3개는 단순 문자열 배열이라 PostgreSQL 네이티브 배열(text[])로 저장한다.
     selected_products       JSONB         NOT NULL,
-    job_titles              JSONB,
-    student_involvement     JSONB,
+    job_titles              TEXT[],
+    student_involvement     TEXT[],
     vfd_understanding       VARCHAR(10),
-    vfd_understanding_topics JSONB,
+    vfd_understanding_topics TEXT[],
     comments                TEXT,
     consent_checked         BOOLEAN       NOT NULL,
     -- 감사
@@ -59,4 +61,7 @@ CREATE INDEX IF NOT EXISTS training_request_created_at_idx ON training_request (
 
 COMMENT ON TABLE  training_request IS 'FO Training Request(비정기 교육 신청) 저장(이력성 append-only)';
 COMMENT ON COLUMN training_request.selected_products IS 'Step4 선택 제품 목록 JSON 배열 [{id,name,type,groupId,groupTitle}]';
+COMMENT ON COLUMN training_request.job_titles IS '수강자 직무(VFD 조건부, 선택) — text[] 배열';
+COMMENT ON COLUMN training_request.student_involvement IS '수강자 업무 관여도(VFD 조건부, 선택) — text[] 배열';
 COMMENT ON COLUMN training_request.vfd_understanding IS 'VFD 이해도 질문 응답(Yes/No, VFD 제품 선택 시에만 노출)';
+COMMENT ON COLUMN training_request.vfd_understanding_topics IS 'VFD 이해 희망 주제(선택) — text[] 배열';

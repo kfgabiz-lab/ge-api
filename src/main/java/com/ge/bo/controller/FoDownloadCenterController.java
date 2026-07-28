@@ -28,23 +28,29 @@ public class FoDownloadCenterController {
 
     /**
      * Download Center 목록(카드) 조회
-     * GET /api/v1/fo/download-center/contents?q={키워드}&categories={LV2코드,콤마}&docTypes={유형코드,콤마}&sort=newest&page=0&size=12
+     * GET /api/v1/fo/download-center/contents?q={키워드}&categories={LV2코드,콤마}&docTypes={유형코드,콤마}&productCodes={LV3제품코드,콤마}&sort=newest&page=0&size=12
      * - categories: LV2 카테고리 코드 콤마구분(그룹 내 OR). 미지정 시 전체.
      * - docTypes: 문서유형 코드 콤마구분(IN). 미지정 시 전체.
-     * - sort: newest(기본)/oldest/title. 페이지 크기 기본 12.
+     * - productCodes: LV3 제품코드(contents_category.category_l3_id, 예: L01-02-01) 콤마구분(IN). 미지정 시 전체.
+     *   제품상세(/product/[slug]) Downloads 섹션에서 "현재 제품과 연계된 파일만" 거를 때 사용.
+     *   한 제품 slug 가 복수 product_code 를 가질 수 있어 다중값을 받는다. categories 와는 AND 결합.
+     * - sort: doctype(문서유형 우선순위 → 동일 유형 내 등록일시 내림차순)/newest(기본)/oldest/title/title_desc.
+     *   페이지 크기 기본 12.
      */
     @GetMapping("/contents")
     public ResponseEntity<DownloadCenterContentPageResponse> getContents(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String categories,
             @RequestParam(required = false) String docTypes,
+            @RequestParam(required = false) String productCodes,
             @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size) {
         List<String> categoryL2Ids = parseCsv(categories);
         List<String> docTypeList = parseCsv(docTypes);
+        List<String> productCodeList = parseCsv(productCodes);
         return ResponseEntity.ok(
-            downloadCenterService.getContents(q, categoryL2Ids, docTypeList, sort, page, size));
+            downloadCenterService.getContents(q, categoryL2Ids, docTypeList, productCodeList, sort, page, size));
     }
 
     /**

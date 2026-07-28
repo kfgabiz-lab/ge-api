@@ -8,7 +8,7 @@ public record CodeDetailRequest(
     String code,
 
     /* msgKey가 있으면 BE에서 ko 텍스트를 채우므로 nullable */
-    @Size(max = 50, message = "코드명은 50자 이하로 입력해주세요.")
+    @Size(max = 100, message = "코드명은 100자 이하로 입력해주세요.")
     String name,
 
     /* 다국어 키 (선택) — message_resource.key */
