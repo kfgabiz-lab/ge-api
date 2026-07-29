@@ -22,5 +22,6 @@ public record DownloadCenterFileResponse(
         Long fileSize,
         String fileSizeText,
         String sourceSystem,
-        String filePath
+        String filePath,
+        String sourceFilePath
 ) {}

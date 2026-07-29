@@ -244,7 +244,7 @@ public class DownloadCenterService {
             + "  c.category_l1_id, c.category_l2_id,"
             + "  v.id            AS version_id, v.version_name, v.sort_key,"
             + "  f.id            AS file_id, f.file_name, f.file_ext, f.file_size,"
-            + "  f.source_system, f.file_path"
+            + "  f.source_system, f.file_path, f.source_file_path"
             + " FROM contents_master m"
             + " JOIN contents_version v ON v.contents_id = m.id"
             + "   AND v.version_expose = true AND v.is_deleted = false"
@@ -291,7 +291,8 @@ public class DownloadCenterService {
                 r[12] != null ? ((Number) r[12]).longValue() : null,
                 r[12] != null ? formatFileSize(((Number) r[12]).longValue()) : null,
                 r[13] != null ? r[13].toString() : null,
-                r[14] != null ? r[14].toString() : null));
+                r[14] != null ? r[14].toString() : null,
+                r[15] != null ? r[15].toString() : null));
         }
 
         // pageIds(정렬 결과) 순서대로 재정렬해 반환.
