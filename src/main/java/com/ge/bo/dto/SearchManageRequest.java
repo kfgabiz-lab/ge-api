@@ -11,5 +11,9 @@ public record SearchManageRequest(
     @Size(max = 500, message = "URL은 500자 이하로 입력해주세요.")
     String url,
 
-    Boolean active
+    Boolean active,
+
+    /** 분류(페이지 섹션) — code_detail(group_code='PAGE_SECTION') 코드값. 선택 입력. */
+    @Size(max = 30, message = "분류 코드는 30자 이하로 입력해주세요.")
+    String pageSection
 ) {}

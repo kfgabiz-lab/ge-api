@@ -49,6 +49,7 @@ public class SearchManageService {
         SearchManage entity = SearchManage.builder()
             .url(request.url().trim())
             .active(request.active() != null ? request.active() : true)
+            .pageSection(normalizePageSection(request.pageSection()))
             .build();
 
         return SearchManageResponse.from(searchManageRepository.save(entity));
@@ -63,6 +64,11 @@ public class SearchManageService {
         entity.setUrl(request.url().trim());
         if (request.active() != null) {
             entity.setActive(request.active());
+        }
+        // pageSection 은 active 와 동일한 컨벤션 — 요청에 필드 자체가 없으면(null) 기존 값 유지,
+        // 빈 문자열로 명시 전달되면 정규화되어 null 로 클리어된다.
+        if (request.pageSection() != null) {
+            entity.setPageSection(normalizePageSection(request.pageSection()));
         }
 
         return SearchManageResponse.from(entity);
@@ -83,6 +89,9 @@ public class SearchManageService {
 
         SearchManageText text = SearchManageText.builder()
             .searchManage(entity)
+            // title 은 선택 입력 — 미전송/공백이면 빈 문자열이 아니라 NULL 로 저장한다.
+            // (FO page-search 의 "title 있는 행 우선" 판정이 빈 문자열을 '있음'으로 오인하지 않도록)
+            .title(normalizeTitle(request.title()))
             .text(request.text().trim())
             .build();
         entity.getTexts().add(text);
@@ -107,6 +116,16 @@ public class SearchManageService {
     }
 
     /* ══════════ 헬퍼 ══════════ */
+
+    /** 검색텍스트 제목 정규화 — null/공백이면 null(컬럼이 nullable 이고 기존 데이터도 전부 NULL) */
+    private String normalizeTitle(String title) {
+        return (title == null || title.isBlank()) ? null : title.trim();
+    }
+
+    /** 분류(page_section) 정규화 — null/공백이면 null(FK 아닌 얕은 참조 코드값, 선택 입력) */
+    private String normalizePageSection(String pageSection) {
+        return (pageSection == null || pageSection.isBlank()) ? null : pageSection.trim();
+    }
 
     private SearchManage findOrThrow(Long id) {
         return searchManageRepository.findById(id)

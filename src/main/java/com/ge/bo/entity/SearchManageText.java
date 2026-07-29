@@ -30,6 +30,14 @@ public class SearchManageText {
     @JoinColumn(name = "search_manage_id", nullable = false)
     private SearchManage searchManage;
 
+    /**
+     * 검색결과 노출용 제목 — nullable.
+     * 뒤늦게 추가된 컬럼이라 기존 데이터는 전부 NULL 이다. 신규 등록 시에도 선택 입력이므로 NOT NULL 로 올리면 안 된다.
+     * (FO page-search 는 title 이 NULL 이면 소속 search_manage.url 을 대신 노출한다)
+     */
+    @Column(length = 200)
+    private String title;
+
     /** 검색용 텍스트 */
     @Column(columnDefinition = "TEXT", nullable = false)
     private String text;

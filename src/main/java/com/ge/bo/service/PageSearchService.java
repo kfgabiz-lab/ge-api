@@ -3,6 +3,8 @@ package com.ge.bo.service;
 import com.ge.bo.common.search.SearchSqlSupport;
 import com.ge.bo.dto.PageSearchItemResponse;
 import com.ge.bo.dto.PageSearchResponse;
+import com.ge.bo.entity.CodeDetail;
+import com.ge.bo.repository.CodeDetailRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
@@ -12,25 +14,43 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
- * FO 통합검색 Pages 탭 서비스 — integration_contents 중 "type 이 없는(NULL/빈문자)" 행만 검색한다.
+ * FO 통합검색 Pages 탭 서비스 — 관리자 기능 "검색관리"(search_manage / search_manage_text)를 원천으로 한다.
  *
  * <p>데이터 성격
- *  - type 'B'(BLOG)/'P'(PRESS)/'A'(ARTICLE) 는 {@link MediaSearchService} 담당이고, 그 외(type 미지정)가 Pages 대상이다.
- *  - 이 행들은 content_id 가 비어 있어 원본 page_data 를 역참조하지 않는다. 본 테이블의 title/content 만 사용한다.
- *  - 상세 링크(url)는 이번 라운드 응답 대상에서 제외.</p>
+ *  <ul>
+ *    <li>search_manage = 검색결과에 노출할 페이지 1건(url + 사용여부). search_manage_text = 그 페이지를 찾게 해 줄
+ *        검색용 텍스트(선택 제목 title + 필수 본문 text) N건. 즉 1:N 이다.</li>
+ *    <li>text/title 은 BO 관리화면의 일반 input/textarea 로 입력되는 <b>평문</b>이다(HTML 아님).
+ *        그래서 Media 처럼 HTML 엔티티 인코딩({@code qHtml})이나 태그 제거를 하지 않는다.
+ *        실데이터로도 확인함(text 값: "1", "2", "213123213", "222").</li>
+ *    <li>site 스코프 컬럼이 없어 X-Site-Id 는 사용하지 않는다.</li>
+ *  </ul>
+ * </p>
  *
  * <p>쿼리 구조
- *  - Media 와 달리 CTE 3단(base/agg/pg)이 필요 없다. Media 가 CTE 를 쓴 이유는 결과 0행일 때도
- *    sourceCounts 1행을 남겨야 했기 때문인데, Pages 는 0행이면 total 0 이 정답이라 그 제약이 없다.
- *    따라서 {@code COUNT(*) OVER ()} 를 얹은 단일 쿼리로 목록 + 전체건수를 동시에 얻는다.
- *  - 정렬은 updated_at DESC, id DESC. 동일 시각 데이터가 존재하므로 id tie-break 가 필수다
- *    (Media 와 동일 규약이며 기존 인덱스 정렬키와도 일치).</p>
- *
- * <p>키워드 매칭은 원문 컬럼 그대로 수행한다(WHERE 에 평문화 표현식을 쓰면 인덱스/일관성이 깨진다).
- * 평문화는 SELECT 절의 스니펫에만 적용한다.</p>
+ *  <ul>
+ *    <li>Media 의 CTE 3단(base/agg/pg)은 sourceCounts 를 0행일 때도 남기기 위한 장치였고 Pages 엔 불필요하다.
+ *        대신 1:N 을 URL 1행으로 줄이는 <b>중복 제거</b>가 핵심이라 서브쿼리 1단 + ROW_NUMBER 를 쓴다.</li>
+ *    <li>중복 제거: {@code ROW_NUMBER() OVER (PARTITION BY m.url ORDER BY (t.title IS NULL), t.created_at DESC, t.id DESC)}
+ *        → 같은 URL 의 매칭 텍스트 중 <b>title 이 있는 것 우선</b>, 그다음 최신 등록 순으로 대표 1건을 고른다.
+ *        PARTITION 키를 m.id 가 아니라 m.url 로 둬야 서로 다른 관리행이 같은 url 을 가리켜도 1건으로 합쳐진다.</li>
+ *    <li>전체 건수는 중복 제거가 끝난 바깥 쿼리에서 {@code count(*) OVER ()} 로 센다.
+ *        안쪽에서 세면 "텍스트 건수"가 잡혀 totalElements 가 부풀려진다.</li>
+ *    <li>INNER JOIN 이라 검색텍스트가 0건인 페이지는 노출되지 않는다.
+ *        어떤 키워드로도 찾을 수 없는 페이지이므로 q 유무와 무관하게 결과 집합을 일관되게 유지한 것.</li>
+ *    <li>분류(page_section) — search_manage.page_section 은 code_detail(group_code='PAGE_SECTION')을
+ *        FK 없이 얕은 참조하는 코드값 문자열이다(DownloadCenterService 의 doc_type 패턴과 동일).
+ *        목록에는 LEFT JOIN 으로 표시명(sectionName)을 붙이고, sections 파라미터로 필터링하며,
+ *        sectionCounts 로 분류별 건수(키워드만 적용, sections 필터는 미적용)를 함께 내려준다.</li>
+ *  </ul>
+ * </p>
  */
 @Slf4j
 @Service
@@ -40,44 +60,46 @@ public class PageSearchService {
     @PersistenceContext
     private EntityManager entityManager;
 
-    // 본문 스니펫 최대 길이 — HTML 태그를 제거한 "평문" 기준 글자수. Media 와 동일 값.
-    // 0 이하이면 캡만 해제되어 평문 본문 전체가 내려간다(태그 제거는 캡과 무관하게 항상 적용).
+    private final CodeDetailRepository codeDetailRepository;
+
+    // 스니펫(=검색텍스트 본문) 최대 길이. 평문이라 태그 제거 없이 단순 캡만 한다. Media 와 동일 값.
     private static final int SNIPPET_MAX_CHARS = 200;
+
+    // 분류 공통코드 그룹 — code_group.group_code. sectionCounts 의 키 목록/순서는 여기 속한
+    // 활성(is_active=true) code_detail 을 sort_order 순으로 조회해 만든다(하드코딩 금지).
+    private static final String PAGE_SECTION_GROUP_CODE = "PAGE_SECTION";
 
     /**
      * Pages 검색.
      *
-     * @param q      키워드(원본 사용자 입력). null/blank 이면 LIKE 절 미적용(전체 노출).
-     * @param page   0-based 페이지(음수면 0으로 보정)
-     * @param size   페이지 크기(0 이하이면 10으로 보정)
-     * @param siteId 사이트 스코프(X-Site-Id, null 허용) — 있을 때만 (site_id=:siteId OR site_id IS NULL) 적용.
+     * @param q        키워드(원본 사용자 입력). null/blank 이면 LIKE 절 미적용(활성 페이지 전체 노출).
+     * @param sections 분류 필터 CSV(예 "MARKETS,SERVICE"). null/blank 이면 필터 미적용(전체).
+     *                 Media 의 sources 파라미터와 동일한 CSV 스타일.
+     * @param page     0-based 페이지(음수면 0으로 보정)
+     * @param size     페이지 크기(0 이하이면 10으로 보정)
      */
     @Transactional(readOnly = true)
-    public PageSearchResponse search(String q, int page, int size, Long siteId) {
+    public PageSearchResponse search(String q, String sections, int page, int size) {
         int safeSize = size <= 0 ? 10 : size;
         int safePage = Math.max(page, 0);
 
         boolean hasKeyword = q != null && !q.isBlank();
-        boolean hasSite = siteId != null;
 
-        // 키워드 패턴 — 공용 규칙(SearchSqlSupport) 사용. Media 와 완전히 동일하다.
-        // kw     : 평문 컬럼(ic.title)용 — LIKE 이스케이프만
-        // kwHtml : HTML 원문 컬럼(ic.content)용 — 엔티티 인코딩 후 LIKE 이스케이프
-        String kw = null;
-        String kwHtml = null;
-        if (hasKeyword) {
-            String trimmed = q.trim();
-            kw = SearchSqlSupport.toLikePattern(trimmed);
-            kwHtml = SearchSqlSupport.toHtmlLikePattern(trimmed);
-        }
+        // 키워드 패턴 — 공용 규칙(SearchSqlSupport.toLikePattern) 재사용.
+        // 대상 컬럼(title/text)이 모두 평문이므로 raw q 만 쓴다(HTML 인코딩 변형 미사용).
+        String kw = hasKeyword ? SearchSqlSupport.toLikePattern(q.trim()) : null;
 
-        Query query = entityManager.createNativeQuery(buildSql(hasKeyword, hasSite));
+        // 분류 필터 파싱 — 미지정/빈 값이면 필터 없이 전체 노출.
+        Set<String> sectionTokens = parseSections(sections);
+        boolean hasSections = !sectionTokens.isEmpty();
+
+        // ① 목록 + 전체건수(sections 필터 반영) — 단일 네이티브 쿼리
+        Query query = entityManager.createNativeQuery(buildSql(hasKeyword, hasSections));
         if (hasKeyword) {
             query.setParameter("q", kw);
-            query.setParameter("qHtml", kwHtml);
         }
-        if (hasSite) {
-            query.setParameter("siteId", siteId);
+        if (hasSections) {
+            query.setParameter("sections", new ArrayList<>(sectionTokens));
         }
         if (SNIPPET_MAX_CHARS > 0) {
             query.setParameter("snippetCap", SNIPPET_MAX_CHARS);
@@ -91,47 +113,146 @@ public class PageSearchService {
         List<PageSearchItemResponse> content = new ArrayList<>();
         for (Object[] r : rows) {
             Long id = r[0] != null ? ((Number) r[0]).longValue() : null;
-            String title = r[1] != null ? r[1].toString() : null;
-            String snippet = r[2] != null ? r[2].toString() : null;
-            content.add(new PageSearchItemResponse(id, title, snippet));
+            String url = r[1] != null ? r[1].toString() : null;
+            String title = r[2] != null ? r[2].toString() : null;
+            String snippet = r[3] != null ? r[3].toString() : null;
+            String section = r[4] != null ? r[4].toString() : null;
+            String sectionName = r[5] != null ? r[5].toString() : null;
+
+            // [임시 폴백] title 컬럼이 뒤늦게 추가돼 기존 데이터는 전부 NULL 이다.
+            // 그대로 내리면 FO 카드 제목이 빈칸이 되므로 url 로 대체한다.
+            // → 운영 정책 확정 시(예: title 없는 행은 아예 제외) 이 한 줄만 바꾸면 된다.
+            if (title == null || title.isBlank()) {
+                title = url;
+            }
+
+            content.add(new PageSearchItemResponse(id, url, title, snippet, section, sectionName));
         }
 
-        // totalElements = 첫 행의 count(*) OVER (). 결과가 0행이면 전체도 0건이다.
-        long total = rows.isEmpty() ? 0L : toLong(rows.get(0)[3]);
+        // totalElements = 중복 제거(+sections 필터) 후 바깥 쿼리의 count(*) OVER (). 결과가 0행이면 전체도 0건이다.
+        long total = rows.isEmpty() ? 0L : toLong(rows.get(0)[6]);
         int totalPages = (int) Math.ceil((double) total / safeSize);
 
-        return new PageSearchResponse(content, total, totalPages, safePage, safeSize);
+        // ② 분류별 건수(sectionCounts) — 키워드만 적용(sections 필터 미적용), URL 중복 제거 후 GROUP BY
+        Map<String, Long> sectionCounts = buildSectionCounts(hasKeyword, kw);
+
+        return new PageSearchResponse(content, total, totalPages, safePage, safeSize, sectionCounts);
     }
 
-    /** 목록 + 전체건수 단일 네이티브 쿼리. */
-    private String buildSql(boolean hasKeyword, boolean hasSite) {
-        // 스니펫: 평문화 → 캡 순서(캡을 먼저 하면 태그 중간이 잘려 FE 에 태그 조각이 그대로 노출된다).
-        // 캡 지점이 단어 사이 공백에 걸리면 끝에 공백이 남으므로 자른 뒤 한 번 더 btrim 한다.
-        String plainExpr = SearchSqlSupport.buildPlainTextExpr("ic.content");
+    /** URL 중복 제거 + 분류 표시명 조인 + sections 필터 + 목록 + 전체건수 단일 네이티브 쿼리. */
+    private String buildSql(boolean hasKeyword, boolean hasSections) {
+        // 스니펫: 평문이라 태그 제거 불필요. 길이 캡만 적용하고 잘린 끝의 공백을 정리한다.
         String snippetExpr = SNIPPET_MAX_CHARS > 0
-                ? "btrim(left(" + plainExpr + ", :snippetCap))::text"
-                : plainExpr + "::text";
+                ? "btrim(left(t.text, :snippetCap))::text"
+                : "t.text::text";
+
+        StringBuilder inner = new StringBuilder();
+        inner.append("SELECT m.id AS id,")
+             .append("  m.url::text AS url,")
+             .append("  t.title::text AS title,")
+             .append("  ").append(snippetExpr).append(" AS snippet,")
+             .append("  m.updated_at AS sort_at,")
+             .append("  m.page_section::text AS page_section,")
+             .append("  cd.name::text AS section_name,")
+             // URL 단위 대표행 선정: title 보유 행 우선((t.title IS NULL) 이 false=0 → 앞으로), 그다음 최신 등록순.
+             .append("  ROW_NUMBER() OVER (PARTITION BY m.url")
+             .append("    ORDER BY (t.title IS NULL), t.created_at DESC, t.id DESC) AS rn")
+             .append(" FROM search_manage m")
+             .append(" JOIN search_manage_text t ON t.search_manage_id = m.id")
+             // 분류 표시명 — FK 없는 얕은 참조(DownloadCenterService doc_type 패턴과 동일). 매칭 실패해도 NULL 로 방어.
+             .append(" LEFT JOIN code_detail cd")
+             .append("        ON cd.code = m.page_section")
+             .append("       AND cd.is_active = true")
+             .append("       AND cd.group_id = (SELECT id FROM code_group WHERE group_code = '")
+             .append(PAGE_SECTION_GROUP_CODE).append("')")
+             .append(" WHERE m.is_active = true");
+        if (hasKeyword) {
+            // title/text 모두 평문 → raw q 하나로 매칭. ILIKE 로 대소문자 무시.
+            inner.append(" AND (t.title ILIKE :q ESCAPE '\\' OR t.text ILIKE :q ESCAPE '\\')");
+        }
+        if (hasSections) {
+            inner.append(" AND m.page_section IN (:sections)");
+        }
 
         StringBuilder sb = new StringBuilder();
-        sb.append("SELECT ic.id,")
-          .append("  ic.title::text AS title,")
-          .append("  ").append(snippetExpr).append(" AS snippet,")
-          // 윈도우 함수로 페이징 전 전체 건수를 함께 가져온다(별도 count 쿼리 불필요).
+        sb.append("SELECT x.id, x.url, x.title, x.snippet, x.page_section, x.section_name,")
+          // 중복 제거(rn=1) + sections 필터 이후에 세야 목록과 일치하는 건수가 된다.
           .append("  count(*) OVER () AS total_count")
-          .append(" FROM integration_contents ic")
-          // Pages = type 미지정 행. NULL 과 빈문자를 모두 대상으로 본다.
-          .append(" WHERE ic.is_visible = true AND (ic.type IS NULL OR ic.type = '')");
-        if (hasSite) {
-            sb.append(" AND (ic.site_id = :siteId OR ic.site_id IS NULL)");
-        }
-        if (hasKeyword) {
-            // ic.title 은 평문 저장 → raw q. ic.content 는 HTML 원문(& 가 &amp; 로 저장) → 엔티티 인코딩된 q.
-            sb.append(" AND (ic.title ILIKE :q ESCAPE '\\' OR ic.content ILIKE :qHtml ESCAPE '\\')");
-        }
-        // 동일 updated_at 데이터가 존재하므로 id DESC tie-break 필수.
-        sb.append(" ORDER BY ic.updated_at DESC, ic.id DESC")
+          .append(" FROM (").append(inner).append(") x")
+          .append(" WHERE x.rn = 1")
+          // 페이지(=관리행) 자체의 최신 갱신 순. 동일 시각이 존재할 수 있어 id DESC tie-break 필수(Media 와 동일 규약).
+          .append(" ORDER BY x.sort_at DESC, x.id DESC")
           .append(" LIMIT :size OFFSET :offset");
         return sb.toString();
+    }
+
+    /**
+     * 분류별 건수(sectionCounts) 조회.
+     * - 키워드(q)만 적용하고 sections 필터는 적용하지 않는다(선택 필터를 바꿔도 값이 흔들리지 않아야 함).
+     * - 목록과 동일하게 URL 기준 중복 제거(ROW_NUMBER rn=1) 후 page_section 으로 GROUP BY 해야
+     *   목록 합계와 어긋나지 않는다.
+     * - 키 목록/순서는 PAGE_SECTION 그룹의 활성 코드를 sort_order 순으로 조회해 만들고(하드코딩 금지),
+     *   0건인 분류도 0으로 채운다. page_section 이 NULL 인 행은 어느 키에도 매칭되지 않아 카운트에서 빠진다.
+     */
+    private Map<String, Long> buildSectionCounts(boolean hasKeyword, String kw) {
+        // ① 키 목록/순서 — PAGE_SECTION 그룹의 활성 코드를 sort_order 순으로 조회해 0으로 초기화
+        Map<String, Long> counts = new LinkedHashMap<>();
+        List<CodeDetail> details =
+            codeDetailRepository.findAllByGroup_GroupCodeAndActiveTrueOrderBySortOrderAsc(PAGE_SECTION_GROUP_CODE);
+        for (CodeDetail detail : details) {
+            counts.put(detail.getCode(), 0L);
+        }
+
+        // ② URL 중복 제거 후 page_section 별 집계(sections 필터 미적용)
+        Query query = entityManager.createNativeQuery(buildSectionCountsSql(hasKeyword));
+        if (hasKeyword) {
+            query.setParameter("q", kw);
+        }
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+        for (Object[] r : rows) {
+            if (r[0] == null) continue; // page_section NULL 인 그룹 — sectionCounts 에는 반영하지 않음
+            String code = r[0].toString();
+            if (counts.containsKey(code)) {
+                counts.put(code, toLong(r[1]));
+            }
+        }
+        return counts;
+    }
+
+    /** URL 중복 제거 후 page_section 별 GROUP BY 집계 쿼리(sections 필터 없음). */
+    private String buildSectionCountsSql(boolean hasKeyword) {
+        StringBuilder inner = new StringBuilder();
+        inner.append("SELECT m.page_section::text AS page_section,")
+             .append("  ROW_NUMBER() OVER (PARTITION BY m.url")
+             .append("    ORDER BY (t.title IS NULL), t.created_at DESC, t.id DESC) AS rn")
+             .append(" FROM search_manage m")
+             .append(" JOIN search_manage_text t ON t.search_manage_id = m.id")
+             .append(" WHERE m.is_active = true");
+        if (hasKeyword) {
+            inner.append(" AND (t.title ILIKE :q ESCAPE '\\' OR t.text ILIKE :q ESCAPE '\\')");
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("SELECT x.page_section, count(*) AS cnt")
+          .append(" FROM (").append(inner).append(") x")
+          .append(" WHERE x.rn = 1")
+          .append(" GROUP BY x.page_section");
+        return sb.toString();
+    }
+
+    /** sections CSV → 대문자 토큰 집합(순서 보존). null/blank 이면 빈 집합(=필터 미적용). */
+    private Set<String> parseSections(String sections) {
+        Set<String> result = new LinkedHashSet<>();
+        if (sections == null || sections.isBlank()) {
+            return result;
+        }
+        for (String raw : sections.split(",")) {
+            String tok = raw.trim().toUpperCase();
+            if (!tok.isEmpty()) result.add(tok);
+        }
+        return result;
     }
 
     private long toLong(Object value) {

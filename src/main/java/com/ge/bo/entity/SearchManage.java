@@ -34,6 +34,10 @@ public class SearchManage {
     @Builder.Default
     private Boolean active = true;
 
+    /** 분류(페이지 섹션) — code_detail(group_code='PAGE_SECTION')의 code 값을 얕은 참조(FK 아님)로 저장. null 허용. */
+    @Column(name = "page_section", length = 30)
+    private String pageSection;
+
     /** 등록된 검색텍스트 목록 — cascade ALL + orphanRemoval로 일괄 저장/삭제 처리 */
     @OneToMany(mappedBy = "searchManage", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("createdAt DESC")

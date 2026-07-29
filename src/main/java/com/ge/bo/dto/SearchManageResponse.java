@@ -14,6 +14,8 @@ public record SearchManageResponse(
     Long id,
     String url,
     Boolean active,
+    /** 분류(페이지 섹션) — code_detail(group_code='PAGE_SECTION') 코드값. 미지정이면 null */
+    String pageSection,
     Integer textCount,
     List<SearchManageTextResponse> texts,
     String createdBy,
@@ -24,7 +26,7 @@ public record SearchManageResponse(
     /** 목록 조회용 — texts 빈 배열 */
     public static SearchManageResponse fromList(SearchManage e) {
         return new SearchManageResponse(
-            e.getId(), e.getUrl(), e.getActive(),
+            e.getId(), e.getUrl(), e.getActive(), e.getPageSection(),
             e.getTexts().size(), List.of(),
             e.getCreatedBy(), e.getCreatedAt(), e.getUpdatedBy(), e.getUpdatedAt()
         );
@@ -36,7 +38,7 @@ public record SearchManageResponse(
             .map(SearchManageTextResponse::from)
             .toList();
         return new SearchManageResponse(
-            e.getId(), e.getUrl(), e.getActive(),
+            e.getId(), e.getUrl(), e.getActive(), e.getPageSection(),
             textList.size(), textList,
             e.getCreatedBy(), e.getCreatedAt(), e.getUpdatedBy(), e.getUpdatedAt()
         );
