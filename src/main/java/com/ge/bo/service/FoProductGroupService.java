@@ -97,7 +97,7 @@ public class FoProductGroupService {
         }
 
         // 2) 수집한 제품 id 를 한 번에 조회 → id→제품 맵 구성 (N+1 방지)
-        Map<Long, ProductRaw> productMap = fetchProducts(productIds);
+        Map<Long, ProductRaw> productMap = fetchProducts(productIds, siteId);
 
         // 3) 각 그룹의 ms 를 제품 상세로 치환 + 정렬(dangling 제외)
         List<FoProductGroupResponse> result = new ArrayList<>();
@@ -133,19 +133,32 @@ public class FoProductGroupService {
 
     /**
      * 제품 id 집합을 한 번에 조회하여 id→제품 상세 맵 구성 (N+1 방지)
-     * - product-data 는 BO 등록 시점에 이미 필터링된 제품만 선택 가능한 구조라 별도 where 없음
      * - id 는 JSON 에서 파싱된 Long 값만 사용하므로 IN 절 인라인이 안전
+     * - 판매상태(order_status) 단종('99') 제외, 카테고리 미연결 제품 제외
+     *   (PageDataService.searchProducts 의 판매중 게이트·category-data EXISTS 패턴과 동일)
      */
-    private Map<Long, ProductRaw> fetchProducts(Set<Long> productIds) {
+    private Map<Long, ProductRaw> fetchProducts(Set<Long> productIds, Long siteId) {
         if (productIds.isEmpty()) {
             return Collections.emptyMap();
         }
         String idList = productIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+        String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
         String productSql = "SELECT data_json::text FROM page_data"
                 + " WHERE data_slug = :slug"
-                + " AND (data_json->>'id')::bigint IN (" + idList + ")";
+                + " AND (data_json->>'id')::bigint IN (" + idList + ")"
+                + " AND data_json->'product'->>'order_status' <> '99'"
+                + " AND EXISTS ("
+                + " SELECT 1 FROM page_data j"
+                + " WHERE j.data_slug = 'category-data'"
+                + "  AND j.data_json->'product'->>'depth' = '3'"
+                + "  AND (j.data_json->'product'->>'id')::bigint = page_data.id"
+                + junctionSiteCond
+                + " )";
         Query productQuery = entityManager.createNativeQuery(productSql);
         productQuery.setParameter("slug", PRODUCT_SLUG);
+        if (siteId != null) {
+            productQuery.setParameter("siteId", siteId);
+        }
 
         @SuppressWarnings("unchecked")
         List<Object> rows = productQuery.getResultList();
