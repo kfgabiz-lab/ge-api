@@ -861,19 +861,24 @@ public class PageDataService {
     @Transactional(readOnly = true)
     public PopupResponse findActivePopup(Long siteId) {
         String siteCond = siteId != null ? "  AND (site_id = :siteId OR site_id IS NULL)" : "";
+        // 게시기간 분단위 정밀 비교(8자리 날짜 절삭 비교 금지) — hero/배너(searchDatetimeRange)와 동일한 패딩 규칙
+        String fromDigits = "regexp_replace(data_json->'popup'->>'post_period_from', '[^0-9]', '', 'g')";
+        String toDigits   = "regexp_replace(data_json->'popup'->>'post_period_to',   '[^0-9]', '', 'g')";
+        String fromCmp = "(CASE WHEN char_length(" + fromDigits + ") = 8 THEN " + fromDigits + " || '000000' ELSE " + fromDigits + " END)";
+        String toCmp   = "(CASE WHEN char_length(" + toDigits   + ") = 8 THEN " + toDigits   + " || '235959' ELSE " + toDigits   + " END)";
         String sql = "SELECT id,"
             + "  data_json->'popup'->>'url'          AS url,"
             + "  data_json->'popup'->'image'->>0     AS image_file_id"
             + " FROM page_data"
             + " WHERE data_slug = 'popup-data'"
             + siteCond
-            + "  AND substring(regexp_replace(data_json->'popup'->>'post_period_from', '[^0-9]', '', 'g'), 1, 8) <= :today"
-            + "  AND substring(regexp_replace(data_json->'popup'->>'post_period_to',   '[^0-9]', '', 'g'), 1, 8) >= :today"
+            + "  AND " + fromCmp + " <= :nowValue"
+            + "  AND " + toCmp + " >= :nowValue"
             + " ORDER BY created_at DESC, id DESC"
             + " LIMIT 1";
 
         Query query = entityManager.createNativeQuery(sql);
-        query.setParameter("today", resolveTodayParam(siteId));
+        query.setParameter("nowValue", resolveNowParam(siteId));
         if (siteId != null) {
             query.setParameter("siteId", siteId);
         }

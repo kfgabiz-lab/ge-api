@@ -21,17 +21,17 @@ public class IntegrationContentsSyncService {
 
   private final IntegrationContentsRepository integrationContentsRepository;
 
-    /** slug(page_template.slug) → integration_contents.type 코드 */
+    /** slug(page_template.slug) → integration_contents.type 코드 — 실제 page_data.data_slug 값과 정확히 일치해야 한다(articles는 복수형) */
   private static final Map<String, String> SLUG_TYPE_CODE = Map.of(
       "blog-data", "B",
-      "article-data", "A",
+      "articles-data", "A",
       "press-data", "P"
   );
 
-    /** slug → data_json 내 title/content가 담긴 중첩 객체 키 */
+    /** slug → data_json 내 title/content가 담긴 중첩 객체 키 — slug에서 '-data'를 제거한 값(articles-data→articles) */
   private static final Map<String, String> SLUG_JSON_KEY = Map.of(
       "blog-data", "blog",
-      "article-data", "article",
+      "articles-data", "articles",
       "press-data", "press"
   );
 

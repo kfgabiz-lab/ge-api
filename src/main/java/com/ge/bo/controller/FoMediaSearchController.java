@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * FO 통합 미디어 검색 API — 비로그인 전체 허용(/api/v1/fo/**, SecurityConfig permitAll).
- * - 4개 소스(Tech Hub 영상 + page_data blog/press/articles)를 단일 UNION 쿼리로 합쳐 검색/페이징한다.
+ * - 4개 소스(Tech Hub 영상 + integration_contents 의 blog/press/article)를 단일 UNION 쿼리로 합쳐 검색/페이징한다.
  * - 얇은 위임 컨트롤러: 파싱/조립/정렬은 모두 MediaSearchService.
  */
 @RestController

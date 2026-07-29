@@ -1,6 +1,7 @@
 package com.ge.bo.service;
 
 import com.ge.bo.common.context.SiteTimeZoneResolver;
+import com.ge.bo.common.search.SearchSqlSupport;
 import com.ge.bo.dto.MediaSearchItemResponse;
 import com.ge.bo.dto.MediaSearchResponse;
 import jakarta.persistence.EntityManager;
@@ -11,25 +12,38 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDate;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * FO 통합 미디어 검색 서비스 — 4개 소스를 단일 네이티브 UNION ALL 쿼리로 합쳐 키워드/소스필터/페이징한다.
- *  ① Tech Hub 영상(contents_master, doc_type='V') — 게이트는 {@link TechHubService#MASTER_GATE} 그대로 재사용.
- *  ② page_data blog/press/articles 게시글 — 컨테이너 접근/게시상태(is_visible=001)/예약글 차단(publish_dttm<=today)/
- *     사이트 스코프/미디어 프록시 URL/LIKE 이스케이프 규칙은 {@link PageDataService}(findProductInsights·searchProducts) 패턴을 그대로 따른다.
+ * FO 통합 미디어 검색 서비스 — 4개 소스를 "단일" 네이티브 쿼리(CTE + UNION ALL)로 합쳐 키워드/소스필터/페이징한다.
+ *  ① Tech Hub 영상(contents_master + LATERAL contents_version) — 게이트는 {@link TechHubService#MASTER_GATE} 그대로 재사용.
+ *     contents_master 에는 site_id 컬럼이 없으므로 사이트 필터 미적용(전역 노출).
+ *  ② Blog / Press / Article 게시글 — 오직 integration_contents 테이블만 참조(type 'B'=BLOG, 'P'=PRESS, 'A'=ARTICLE).
+ *     노출조건 is_visible = true, 사이트 스코프는 (site_id = :siteId OR site_id IS NULL).
  *
- * 정렬은 바깥에서 sort_date DESC NULLS LAST, id DESC. 이미지/링크는 SQL 이 아니라 Java 매핑단에서 조립한다.
- * (TECH_HUB=YouTube 썸네일, page_data=프록시 URL / link=sourceType+id 로 FE 실라우트 조립)
+ * 쿼리 1회로 "현재 페이지 목록 + 소스별 건수(sourceCounts)"를 동시에 얻는다.
+ *  - base : 키워드(q)만 적용, 소스 필터는 적용하지 않은 전체 후보 집합
+ *  - agg  : base 위에서 소스별 count(*) FILTER 집계 → sourceCounts 가 소스 선택과 무관하게 유지되어야 FE 필터 UI 가 정상 동작
+ *  - pg   : base 에 소스 필터 + 정렬 + LIMIT/OFFSET 적용(페이징은 반드시 이 CTE 안에서만)
+ *  - 최종 SELECT 는 agg LEFT JOIN pg ON true — 결과가 0행이어도 counts 1행이 남는다(COUNT(*) OVER() 로 대체 불가).
+ *
+ * 정렬은 sort_ts(timestamptz 원본) DESC NULLS LAST, tie-break 로 source_type, row_id DESC.
+ * (문자열 to_char 로 정렬하면 TZ 에 따라 순서가 틀어지므로 금지)
+ * 이미지/링크/표시날짜는 SQL 이 아니라 Java 매핑단에서 조립한다.
+ * (TECH_HUB=YouTube 썸네일, 그 외=page_file 프록시 URL / link=sourceType+id 로 FE 실라우트 조립)
  */
 @Slf4j
 @Service
@@ -41,17 +55,19 @@ public class MediaSearchService {
 
     private final SiteTimeZoneResolver siteTimeZoneResolver;
 
-    // page_data 컨테이너 접근 — 섹션명 = data_slug 에서 '-data' 제거(blog/press/articles). PageDataService.findProductInsights 패턴 재사용.
-    private static final String SECTION = "data_json->(replace(data_slug,'-data',''))";
-
     // YouTube video id(11자) 추출 패턴 — watch?v= / youtu.be/ / embed/ / shorts/ 형태 모두 대응. 매칭 안 되면 썸네일 null.
     private static final Pattern YOUTUBE_ID =
         Pattern.compile("(?:youtube\\.com/(?:watch\\?(?:.*&)?v=|embed/|shorts/|v/)|youtu\\.be/)([A-Za-z0-9_-]{11})");
 
-    // sources 토큰 → page_data data_slug 매핑(TECH_HUB 은 slug 아님 — 별도 플래그로 처리)
-    private static final String SLUG_BLOG = "blog-data";
-    private static final String SLUG_PRESS = "press-data";
-    private static final String SLUG_ARTICLE = "articles-data";
+    // 본문 스니펫 최대 길이 — HTML 태그를 제거한 "평문" 기준 글자수(FE 카드가 2줄 말줄임이라 200자면 충분).
+    // 0 이하이면 캡만 해제되어 평문 본문 전체가 내려간다(태그 제거는 캡과 무관하게 항상 적용).
+    private static final int SNIPPET_MAX_CHARS = 200;
+
+    // sourceCounts 키 순서 고정 — 0건 소스도 0으로 항상 포함해야 FE 필터에 "Article (0)" 표시가 가능하다.
+    private static final List<String> SOURCE_KEYS = List.of("TECH_HUB", "BLOG", "PRESS", "ARTICLE");
+
+    // 표시용 날짜 포맷(사이트 timezone 기준으로 Java 에서 포맷)
+    private static final DateTimeFormatter SORT_DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     /**
      * 통합 미디어 검색.
@@ -60,7 +76,7 @@ public class MediaSearchService {
      * @param sources 소스 필터 CSV(TECH_HUB,BLOG,PRESS,ARTICLE). null/blank 이면 4개 전체.
      * @param page    0-based 페이지
      * @param size    페이지 크기(기본 20)
-     * @param siteId  사이트 스코프(X-Site-Id, null 허용) — page_data 블록에만 (site_id=:siteId OR site_id IS NULL) 적용.
+     * @param siteId  사이트 스코프(X-Site-Id, null 허용) — integration_contents 블록에만 (site_id=:siteId OR site_id IS NULL) 적용.
      */
     @Transactional(readOnly = true)
     public MediaSearchResponse search(String q, String sources, int page, int size, Long siteId) {
@@ -70,90 +86,114 @@ public class MediaSearchService {
         boolean hasKeyword = q != null && !q.isBlank();
         // 소스 필터 해석
         Set<String> tokens = parseSources(sources);
-        boolean hasTechHub = tokens.contains("TECH_HUB");
-        List<String> selectedSlugs = new ArrayList<>();
-        if (tokens.contains("BLOG")) selectedSlugs.add(SLUG_BLOG);
-        if (tokens.contains("PRESS")) selectedSlugs.add(SLUG_PRESS);
-        if (tokens.contains("ARTICLE")) selectedSlugs.add(SLUG_ARTICLE);
 
-        // 아무 소스도 매칭 안 되면 즉시 빈 결과(빈 IN 방지)
-        if (!hasTechHub && selectedSlugs.isEmpty()) {
-            return new MediaSearchResponse(Collections.emptyList(), 0L, 0, safePage, safeSize);
+        // 아무 소스도 매칭 안 되면 즉시 빈 결과(빈 IN 방지) — 이때 counts 는 전부 0
+        if (tokens.isEmpty()) {
+            return new MediaSearchResponse(Collections.emptyList(), 0L, 0, safePage, safeSize, emptyCounts());
         }
 
-        // LIKE 와일드카드 이스케이프 — searchProducts 와 동일 규칙(\ 먼저, 그다음 % _)
+        // LIKE 와일드카드 이스케이프 / HTML 엔티티 인코딩은 공용 규칙(SearchSqlSupport)을 사용한다.
+        // kw     : 평문 컬럼(title 계열)용 — LIKE 이스케이프만
+        // kwHtml : HTML 원문 컬럼(ic.content)용 — 엔티티 인코딩 후 LIKE 이스케이프
         String kw = null;
+        String kwHtml = null;
         if (hasKeyword) {
-            String escaped = q.trim()
-                    .replace("\\", "\\\\")
-                    .replace("%", "\\%")
-                    .replace("_", "\\_");
-            kw = "%" + escaped + "%";
+            String trimmed = q.trim();
+            kw = SearchSqlSupport.toLikePattern(trimmed);
+            kwHtml = SearchSqlSupport.toHtmlLikePattern(trimmed);
         }
 
-        // ── UNION ALL 동적 조립 ──
-        List<String> blocks = new ArrayList<>();
-        if (hasTechHub) blocks.add(buildTechHubBlock(hasKeyword));
-        if (!selectedSlugs.isEmpty()) blocks.add(buildPageDataBlock(hasKeyword, siteId != null));
-        String union = String.join(" UNION ALL ", blocks);
+        boolean hasSite = siteId != null;
 
-        boolean needToday = !selectedSlugs.isEmpty();          // page_data 블록만 :today 사용
-        boolean needSite = !selectedSlugs.isEmpty() && siteId != null;
+        // ── base : q 만 적용한 전체 후보(소스 필터 미적용) ──
+        String base = buildTechHubBlock(hasKeyword)
+                + " UNION ALL "
+                + buildIntegrationBlock(hasKeyword, hasSite);
 
-        // ① 전체 건수
-        String countSql = "SELECT COUNT(*) FROM (" + union + ") t";
-        Query countQuery = entityManager.createNativeQuery(countSql);
-        bindCommon(countQuery, hasKeyword, kw, needToday, siteId, needSite, !selectedSlugs.isEmpty(), selectedSlugs);
-        long total = ((Number) countQuery.getSingleResult()).longValue();
+        // ── 단일 쿼리: agg(소스별 건수) LEFT JOIN pg(현재 페이지) ──
+        String sql = "WITH base AS (" + base + "),"
+            + " agg AS ("
+            + "   SELECT count(*) FILTER (WHERE source_type='TECH_HUB') AS c_tech_hub,"
+            + "          count(*) FILTER (WHERE source_type='BLOG')     AS c_blog,"
+            + "          count(*) FILTER (WHERE source_type='PRESS')    AS c_press,"
+            + "          count(*) FILTER (WHERE source_type='ARTICLE')  AS c_article"
+            + "   FROM base"
+            + " ),"
+            + " pg AS ("
+            + "   SELECT b.* FROM base b"
+            + "   WHERE b.source_type IN (:sources)"
+            + "   ORDER BY b.sort_ts DESC NULLS LAST, b.source_type, b.row_id DESC"
+            + "   LIMIT :size OFFSET :offset"
+            + " )"
+            + " SELECT a.c_tech_hub, a.c_blog, a.c_press, a.c_article,"
+            + "        p.source_type, p.id, p.title, p.snippet, p.video_url, p.file_id, p.sort_ts"
+            + " FROM agg a"
+            + " LEFT JOIN pg p ON true"
+            // 바깥 JOIN 이 순서를 재배열하므로 최종 SELECT 에서 ORDER BY 를 반드시 재기술한다.
+            + " ORDER BY p.sort_ts DESC NULLS LAST, p.source_type, p.row_id DESC";
 
-        if (total == 0) {
-            return new MediaSearchResponse(Collections.emptyList(), 0L, 0, safePage, safeSize);
-        }
-
-        // ② 현재 페이지 — sort_date DESC NULLS LAST, id DESC
-        String dataSql = "SELECT t.source_type, t.id, t.title, t.snippet, t.video_url, t.image_media_id, t.sort_date"
-            + " FROM (" + union + ") t"
-            + " ORDER BY t.sort_date DESC NULLS LAST, t.id DESC"
-            + " LIMIT :size OFFSET :offset";
-        Query dataQuery = entityManager.createNativeQuery(dataSql);
-        bindCommon(dataQuery, hasKeyword, kw, needToday, siteId, needSite, !selectedSlugs.isEmpty(), selectedSlugs);
-        dataQuery.setParameter("size", safeSize);
-        dataQuery.setParameter("offset", safePage * safeSize);
+        Query query = entityManager.createNativeQuery(sql);
+        bindCommon(query, hasKeyword, kw, kwHtml, hasSite, siteId, tokens, safeSize, safePage);
 
         @SuppressWarnings("unchecked")
-        List<Object[]> rows = dataQuery.getResultList();
+        List<Object[]> rows = query.getResultList();
+
+        // ① 소스별 건수 — agg 는 1행이므로 어느 행에서 읽어도 동일(0행 결과여도 LEFT JOIN 으로 1행은 남는다)
+        Map<String, Long> sourceCounts = emptyCounts();
+        if (!rows.isEmpty()) {
+            Object[] head = rows.get(0);
+            sourceCounts.put("TECH_HUB", toLong(head[0]));
+            sourceCounts.put("BLOG", toLong(head[1]));
+            sourceCounts.put("PRESS", toLong(head[2]));
+            sourceCounts.put("ARTICLE", toLong(head[3]));
+        }
+
+        // ② 현재 페이지 목록
+        ZoneId zone = siteTimeZoneResolver.resolve(siteId);
         List<MediaSearchItemResponse> content = new ArrayList<>();
         for (Object[] r : rows) {
-            String sourceType = r[0] != null ? r[0].toString() : null;
-            Long id = r[1] != null ? ((Number) r[1]).longValue() : null;
-            String title = r[2] != null ? r[2].toString() : null;
-            String snippet = r[3] != null ? r[3].toString() : null;
-            String videoUrl = r[4] != null ? r[4].toString() : null;
-            Object imageMediaId = r[5];
-            String sortDate = r[6] != null ? r[6].toString() : null;
+            // 결과 0행 케이스: counts 만 담긴 행이 오므로 source_type 이 null 이면 목록에서 제외
+            if (r[4] == null) continue;
+
+            String sourceType = r[4].toString();
+            Long id = r[5] != null ? ((Number) r[5]).longValue() : null;
+            String title = r[6] != null ? r[6].toString() : null;
+            String snippet = r[7] != null ? r[7].toString() : null;
+            String videoUrl = r[8] != null ? r[8].toString() : null;
+            Long fileId = r[9] != null ? ((Number) r[9]).longValue() : null;
+            String sortDate = formatSortDate(r[10], zone);
 
             String imageUrl = "TECH_HUB".equals(sourceType)
-                    ? youtubeThumbnail(videoUrl)      // TECH_HUB: video_url → YouTube hqdefault
-                    : resolveMediaProxyUrl(imageMediaId); // page_data: 미디어 ID → 프록시 URL
+                    ? youtubeThumbnail(videoUrl)        // TECH_HUB: video_url → YouTube hqdefault
+                    : resolveMediaProxyUrl(fileId);     // 그 외: page_file id → 프록시 URL
 
             content.add(new MediaSearchItemResponse(
                 sourceType, id, title, snippet, imageUrl, sortDate, buildLink(sourceType, id)));
         }
 
+        // ③ totalElements = 선택된 소스들의 건수 합(별도 count 쿼리 없음)
+        long total = 0L;
+        for (String token : tokens) {
+            total += sourceCounts.getOrDefault(token, 0L);
+        }
         int totalPages = (int) Math.ceil((double) total / safeSize);
-        return new MediaSearchResponse(content, total, totalPages, safePage, safeSize);
+
+        return new MediaSearchResponse(content, total, totalPages, safePage, safeSize, sourceCounts);
     }
 
     // ── 블록1: Tech Hub 영상(TechHubService.MASTER_GATE 그대로) ──
+    // 소스 필터는 여기서 적용하지 않는다(base 는 항상 4개 소스 전체를 담아야 agg 가 올바르다).
     private String buildTechHubBlock(boolean hasKeyword) {
         StringBuilder sb = new StringBuilder();
-        sb.append("SELECT 'TECH_HUB' AS source_type,")
+        sb.append("SELECT 'TECH_HUB'::text AS source_type,")
+          .append("  m.id AS row_id,")
           .append("  m.id AS id,")
-          .append("  COALESCE(m.nahp_title, m.doc_title) AS title,")
+          .append("  COALESCE(m.nahp_title, m.doc_title)::text AS title,")
           .append("  NULL::text AS snippet,")
-          .append("  rep.video_url AS video_url,")
-          .append("  NULL::text AS image_media_id,")
-          .append("  to_char(m.source_updated_at, 'YYYY-MM-DD') AS sort_date")
+          .append("  rep.video_url::text AS video_url,")
+          .append("  NULL::bigint AS file_id,")
+          // timestamptz 원본 그대로 — 문자열 변환 시 TZ 에 따라 정렬이 틀어진다.
+          .append("  m.source_updated_at AS sort_ts")
           .append(" FROM contents_master m")
           // 대표 버전(Chapter 1 = sort_key 최대)의 video_url — Java 에서 썸네일 조립용
           .append(" JOIN LATERAL (")
@@ -164,48 +204,59 @@ public class MediaSearchService {
           .append(" ) rep ON true")
           .append(" WHERE").append(TechHubService.MASTER_GATE);
         if (hasKeyword) {
+            // contents_master 제목은 평문(실데이터 확인: "Motion Controller & EtherCAT ..." 처럼 & 가 그대로) → raw q 사용.
             sb.append(" AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'");
         }
         return sb.toString();
     }
 
-    // ── 블록2: page_data blog/press/articles ──
-    private String buildPageDataBlock(boolean hasKeyword, boolean hasSite) {
+    // ── 블록2: integration_contents 의 BLOG / PRESS / ARTICLE ──
+    // id 는 content_id(원본 page_data.id 문자열)에서 숫자만 추출해 bigint 로 변환 — FE 상세 라우트 키.
+    private String buildIntegrationBlock(boolean hasKeyword, boolean hasSite) {
+        // 스니펫: 평문화 → 캡 순서(캡을 먼저 하면 태그 중간이 잘려 FE 에 태그 조각이 그대로 노출된다).
+        // 캡 토글 — SNIPPET_MAX_CHARS 가 0 이하이면 캡만 해제되고 평문화는 그대로 적용된다.
+        // 캡 지점(200번째 글자)이 단어 사이 공백에 걸리면 끝에 공백이 남으므로 자른 뒤 한 번 더 btrim 한다.
+        String plainExpr = SearchSqlSupport.buildPlainTextExpr("ic.content");
+        String snippetExpr = SNIPPET_MAX_CHARS > 0
+                ? "btrim(left(" + plainExpr + ", :snippetCap))::text"
+                : plainExpr + "::text";
+
         StringBuilder sb = new StringBuilder();
-        sb.append("SELECT")
-          .append("  CASE data_slug WHEN 'blog-data' THEN 'BLOG' WHEN 'press-data' THEN 'PRESS'")
-          .append("       WHEN 'articles-data' THEN 'ARTICLE' END AS source_type,")
-          .append("  id AS id,")
-          .append("  ").append(SECTION).append("->>'title' AS title,")
-          // 본문(HTML raw)은 크므로 앞 500자만 캡해서 내림(FE 가 stripHtml)
-          .append("  left(").append(SECTION).append("->>'content', 500) AS snippet,")
+        sb.append("SELECT CASE ic.type WHEN 'B' THEN 'BLOG' WHEN 'P' THEN 'PRESS'")
+          .append("                    WHEN 'A' THEN 'ARTICLE' END::text AS source_type,")
+          .append("  ic.id AS row_id,")
+          .append("  NULLIF(regexp_replace(ic.content_id,'[^0-9]','','g'),'')::bigint AS id,")
+          .append("  ic.title::text AS title,")
+          .append("  ").append(snippetExpr).append(" AS snippet,")
           .append("  NULL::text AS video_url,")
-          .append("  ").append(SECTION).append("->'image'->>0 AS image_media_id,")
-          .append("  ").append(SECTION).append("->>'publish_dttm' AS sort_date")
-          .append(" FROM page_data")
-          .append(" WHERE data_slug IN (:selectedSlugs)")
-          .append("  AND ").append(SECTION).append("->>'is_visible' = '001'")
-          // 예약글 차단 — publish_dttm 숫자만 뽑아 앞 8자리(YYYYMMDD) <= today
-          .append("  AND substring(regexp_replace(").append(SECTION)
-          .append("->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today");
+          .append("  ic.file_id AS file_id,")
+          .append("  ic.updated_at AS sort_ts")
+          .append(" FROM integration_contents ic")
+          .append(" WHERE ic.is_visible = true AND ic.type IN ('B','P','A')");
         if (hasSite) {
-            sb.append("  AND (site_id = :siteId OR site_id IS NULL)");
+            sb.append(" AND (ic.site_id = :siteId OR ic.site_id IS NULL)");
         }
         if (hasKeyword) {
-            sb.append("  AND (").append(SECTION).append("->>'title' ILIKE :q ESCAPE '\\'")
-              .append("    OR ").append(SECTION).append("->>'content' ILIKE :q ESCAPE '\\')");
+            // ic.title 은 평문(실데이터 확인: "Powering Smart & Efficient..." 처럼 & 가 그대로 저장) → raw q 사용.
+            // ic.content 는 HTML 원문(& 가 &amp; 로 이스케이프되어 저장) → 엔티티 인코딩된 q 사용.
+            sb.append(" AND (ic.title ILIKE :q ESCAPE '\\' OR ic.content ILIKE :qHtml ESCAPE '\\')");
         }
         return sb.toString();
     }
 
-    // 공통 파라미터 바인딩(count/data 동일 union 이라 동일 바인딩)
-    private void bindCommon(Query query, boolean hasKeyword, String kw,
-                            boolean needToday, Long siteId, boolean needSite,
-                            boolean hasPageData, List<String> selectedSlugs) {
-        if (hasKeyword) query.setParameter("q", kw);
-        if (hasPageData) query.setParameter("selectedSlugs", selectedSlugs);
-        if (needToday) query.setParameter("today", resolveTodayParam(siteId));
-        if (needSite) query.setParameter("siteId", siteId);
+    // 공통 파라미터 바인딩
+    private void bindCommon(Query query, boolean hasKeyword, String kw, String kwHtml,
+                            boolean hasSite, Long siteId, Set<String> tokens,
+                            int safeSize, int safePage) {
+        if (hasKeyword) {
+            query.setParameter("q", kw);          // 평문 컬럼용(title 계열)
+            query.setParameter("qHtml", kwHtml);  // HTML 원문 컬럼용(ic.content)
+        }
+        if (hasSite) query.setParameter("siteId", siteId);
+        if (SNIPPET_MAX_CHARS > 0) query.setParameter("snippetCap", SNIPPET_MAX_CHARS);
+        query.setParameter("sources", new ArrayList<>(tokens));
+        query.setParameter("size", safeSize);
+        query.setParameter("offset", safePage * safeSize);
     }
 
     /** sources CSV → 대문자 토큰 집합. null/blank 이면 4개 전체. 미인식 토큰은 무시. */
@@ -232,15 +283,10 @@ public class MediaSearchService {
         return null;
     }
 
-    /** 미디어 ID 스칼라 → FO 프록시 URL(숫자면 /api/v1/fo/page-files/{id}, 아니면 null). PageDataService.resolveMediaProxyUrl 규칙. */
-    private String resolveMediaProxyUrl(Object mediaIdValue) {
-        if (mediaIdValue == null) return null;
-        try {
-            long mediaId = Long.parseLong(mediaIdValue.toString().trim());
-            return "/api/v1/fo/page-files/" + mediaId;
-        } catch (NumberFormatException e) {
-            return null;
-        }
+    /** page_file.id → FO 범용 파일 서빙 프록시 URL. 기존 /api/v1/fo/page-files/{id} 재사용. */
+    private String resolveMediaProxyUrl(Long fileId) {
+        if (fileId == null) return null;
+        return "/api/v1/fo/page-files/" + fileId;
     }
 
     /** sourceType+id → FE 실라우트 상세 링크(목업의 tech-hub/detail 아님). */
@@ -255,9 +301,40 @@ public class MediaSearchService {
         };
     }
 
-    /** "오늘"(YYYYMMDD) — 사이트(X-Site-Id) timezone 우선, 없으면 서버 기본 zone. PageDataService.resolveTodayParam 규칙. */
-    private String resolveTodayParam(Long siteId) {
-        ZoneId zone = siteTimeZoneResolver.resolve(siteId);
-        return LocalDate.now(zone).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+    /** sourceCounts 기본 맵 — 4개 키를 항상 0으로 채워 순서까지 고정한다. */
+    private Map<String, Long> emptyCounts() {
+        Map<String, Long> counts = new LinkedHashMap<>();
+        for (String key : SOURCE_KEYS) {
+            counts.put(key, 0L);
+        }
+        return counts;
+    }
+
+    private long toLong(Object value) {
+        return value instanceof Number n ? n.longValue() : 0L;
+    }
+
+    /**
+     * sort_ts(timestamptz) → 사이트 timezone 기준 yyyy-MM-dd 문자열.
+     * SQL to_char 는 DB 세션 TimeZone 에 의존해 사이트별 날짜가 틀어지므로 Java 에서 포맷한다.
+     */
+    private String formatSortDate(Object value, ZoneId zone) {
+        if (value == null) return null;
+        Instant instant;
+        if (value instanceof java.sql.Timestamp ts) {
+            instant = ts.toInstant();
+        } else if (value instanceof OffsetDateTime odt) {
+            instant = odt.toInstant();
+        } else if (value instanceof Instant i) {
+            instant = i;
+        } else if (value instanceof java.util.Date d) {
+            instant = d.toInstant();
+        } else if (value instanceof LocalDateTime ldt) {
+            // TZ 정보가 없는 값은 변환 없이 날짜 부분만 사용
+            return ldt.toLocalDate().format(SORT_DATE_FMT);
+        } else {
+            return value.toString();
+        }
+        return SORT_DATE_FMT.format(instant.atZone(zone));
     }
 }
