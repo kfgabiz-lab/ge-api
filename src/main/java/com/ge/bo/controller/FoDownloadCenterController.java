@@ -65,13 +65,18 @@ public class FoDownloadCenterController {
 
     /**
      * 문서유형(docType)별 콘텐츠 건수(필터 패널 문서유형 옆 숫자)
-     * GET /api/v1/fo/download-center/doctype-counts
+     * GET /api/v1/fo/download-center/doctype-counts?productCodes={LV3제품코드,콤마}
      * - 6개 문서유형(C/M/D/S/R/O) 전체를 항상 반환(매칭 없으면 count=0).
      * - OS/Firmware 는 대응 doc_type 이 없어 미포함(FE 정적 표시).
+     * - productCodes: LV3 제품코드(contents_category.category_l3_id, 예: L02-01-01) 콤마구분.
+     *   미지정 시 Download Center 전체 기준(기존 동작). 지정 시 해당 제품에 연계된 콘텐츠만 유형별 집계
+     *   → 제품상세 Downloads 섹션의 Document Type 필터 유형별 검색결과 수.
      */
     @GetMapping("/doctype-counts")
-    public ResponseEntity<List<DownloadCenterDocTypeCountResponse>> getDocTypeCounts() {
-        return ResponseEntity.ok(downloadCenterService.getDocTypeCounts());
+    public ResponseEntity<List<DownloadCenterDocTypeCountResponse>> getDocTypeCounts(
+            @RequestParam(required = false) String productCodes) {
+        List<String> productCodeList = parseCsv(productCodes);
+        return ResponseEntity.ok(downloadCenterService.getDocTypeCounts(productCodeList));
     }
 
     /**

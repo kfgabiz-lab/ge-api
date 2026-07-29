@@ -339,15 +339,30 @@ public class DownloadCenterService {
      * - 게이트는 getCategoryCounts 와 동일(MASTER_GATE). GROUP BY m.doc_type 으로 실제 건수를 집계한 뒤,
      *   6개 문서유형(C/M/D/S/R/O) 순서를 항상 순회해 매칭 안 되면 count=0 으로 채워 반환한다(FE가 전 유형 렌더링).
      * - OS/Firmware 는 대응 doc_type 이 없어 제외(FE 정적 표시, count=0 고정).
+     * - productCodes 미지정(null/empty) 이면 Download Center 전체 기준(기존 동작과 동일 — 하위호환).
+     *
+     * @param productCodes 선택된 LV3 제품코드 목록(예: "L02-01-01"). null/empty 이면 미적용(전체 기준).
+     *                     지정 시 getContents 와 동일한 EXISTS 패턴으로 "해당 제품에 연계된 콘텐츠"만 집계한다.
+     *                     제품상세(/product/[slug]) Downloads 섹션 Document Type 필터의 유형별 검색결과 수용.
      */
     @Transactional(readOnly = true)
-    public List<DownloadCenterDocTypeCountResponse> getDocTypeCounts() {
+    public List<DownloadCenterDocTypeCountResponse> getDocTypeCounts(List<String> productCodes) {
+        boolean hasProductCodes = productCodes != null && !productCodes.isEmpty();
+
+        // getContents 의 productCodes EXISTS 조건과 동일 패턴 — 한 콘텐츠가 여러 제품에 매핑돼도 중복 집계되지 않는다.
+        String productCodeClause = hasProductCodes
+            ? " AND EXISTS (SELECT 1 FROM contents_category cc3"
+              + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes))"
+            : "";
+
         String sql = "SELECT m.doc_type, count(*)::int"
             + " FROM contents_master m"
             + " WHERE" + MASTER_GATE
+            + productCodeClause
             + " GROUP BY m.doc_type";
 
         Query query = entityManager.createNativeQuery(sql);
+        if (hasProductCodes) query.setParameter("productCodes", productCodes);
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
 
