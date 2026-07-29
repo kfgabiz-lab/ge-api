@@ -68,3 +68,30 @@ VALUES(460, true, '02', '2026-07-28 15:06:16.111', 'comlbg', NULL, NULL, NULL, N
 INSERT INTO public.code_detail
 (id, is_active, code, created_at, created_by, description, extra1, extra2, extra3, extra4, extra5, "name", sort_order, updated_at, updated_by, group_id, name_msg_key)
 VALUES(459, true, '01', '2026-07-28 15:06:15.867', 'comlbg', NULL, NULL, NULL, NULL, NULL, NULL, 'E & I Technician and/or Maintenance', 1, '2026-07-28 15:06:15.867', 'comlbg', 60, 'training.label.eiTechnicianMaintenance');
+
+INSERT INTO public.message_resource
+("key", ko, en, is_active, resource_type, created_by, created_at, updated_by, updated_at)
+VALUES
+('training.label.studentJobTitle', '교육생 직위', 'Student Job Titles', true, 'WORD', 'comgsu', '2026-06-16 17:17:33.73998', 'comgsu', '2026-06-16 17:17:57.762805'),
+('training.label.areaOfInvolvement', '관련 분야', 'Area of Involvement', true, 'WORD', 'comgsu', '2026-06-16 17:20:57.493883', 'comgsu', '2026-06-16 17:20:57.493883'),
+('training.label.studentProductKnowledgeLevel', '교육생의 제품 이해도', 'Student Product Knowledge Level', true, 'WORD', 'comgsu', '2026-06-16 17:25:50.625523', 'comgsu', '2026-06-16 17:25:50.625523'),
+('training.label.eiTechnicianMaintenance', 'E & I Technician and/or Maintenance', 'E & I Technician and/or Maintenance', true, 'WORD', 'comlbg', '2026-07-28 15:06:08.862442', 'comlbg', '2026-07-28 15:06:08.862442'),
+('training.label.mechanic', 'Mechanic', 'Mechanic', true, 'WORD', 'comlbg', '2026-07-28 15:06:09.041463', 'comlbg', '2026-07-28 15:06:09.041463'),
+('training.label.electricalEngineer', 'Electrical Engineer', 'Electrical Engineer', true, 'WORD', 'comlbg', '2026-07-28 15:06:09.204215', 'comlbg', '2026-07-28 15:06:09.204215'),
+('training.label.salesEngineer', 'Sales Engineer', 'Sales Engineer', true, 'WORD', 'comlbg', '2026-07-28 15:06:09.390075', 'comlbg', '2026-07-28 15:06:09.390075'),
+('training.label.insideTech', 'Inside Tech', 'Inside Tech', true, 'WORD', 'comlbg', '2026-07-28 15:06:09.699517', 'comlbg', '2026-07-28 15:06:09.699517'),
+('training.label.fieldServiceEngineer', 'Field Service Engineer', 'Field Service Engineer', true, 'WORD', 'comlbg', '2026-07-28 15:06:09.923354', 'comlbg', '2026-07-28 15:06:09.923354'),
+('training.label.jobTitleOther', 'Other', 'Other', true, 'WORD', 'comlbg', '2026-07-28 15:06:10.129612', 'comlbg', '2026-07-28 15:06:10.129612'),
+('training.label.installationStartup', 'Installation, Start-up', 'Installation, Start-up', true, 'WORD', 'comlbg', '2026-07-28 15:06:10.344196', 'comlbg', '2026-07-28 15:06:10.344196'),
+('training.label.integrationParameterSetup', 'Integration and Parameter setup', 'Integration and Parameter setup', true, 'WORD', 'comlbg', '2026-07-28 15:06:10.558758', 'comlbg', '2026-07-28 15:06:10.558758'),
+('training.label.fieldTroubleshooting', 'Field Troubleshooting (understanding fault codes)', 'Field Troubleshooting (understanding fault codes)', true, 'WORD', 'comlbg', '2026-07-28 15:06:10.768843', 'comlbg', '2026-07-28 15:06:10.768843'),
+('training.label.salesExplanationProduct', 'Sales and Explanation of the Product', 'Sales and Explanation of the Product', true, 'WORD', 'comlbg', '2026-07-28 15:06:10.952317', 'comlbg', '2026-07-28 15:06:10.952317'),
+('training.label.serialCommunications', 'Serial communications', 'Serial communications', true, 'WORD', 'comlbg', '2026-07-28 15:06:11.164137', 'comlbg', '2026-07-28 15:06:11.164137'),
+('training.label.unitTroubleshooting', 'Unit troubleshooting (to determine damaged components)', 'Unit troubleshooting (to determine damaged components)', true, 'WORD', 'comlbg', '2026-07-28 15:06:11.376523', 'comlbg', '2026-07-28 15:06:11.376523'),
+('training.label.involvementOther', 'Other', 'Other', true, 'WORD', 'comlbg', '2026-07-28 15:06:11.641529', 'comlbg', '2026-07-28 15:06:11.641529'),
+('training.label.motorTechnology', 'Motor technology (construction, theory of operation)', 'Motor technology (construction, theory of operation)', true, 'WORD', 'comlbg', '2026-07-28 15:06:12.196593', 'comlbg', '2026-07-28 15:06:12.196593'),
+('training.label.driveTechnology', 'Drive technology (construction, theory of operation)', 'Drive technology (construction, theory of operation)', true, 'WORD', 'comlbg', '2026-07-28 15:06:12.620577', 'comlbg', '2026-07-28 15:06:12.620577'),
+('training.label.driveViewSoftware', 'DriveView Software', 'DriveView Software', true, 'WORD', 'comlbg', '2026-07-28 15:06:12.941121', 'comlbg', '2026-07-28 15:06:12.941121'),
+('training.label.pidApplications', 'PID Applications', 'PID Applications', true, 'WORD', 'comlbg', '2026-07-28 15:06:13.23912', 'comlbg', '2026-07-28 15:06:13.23912'),
+('training.label.autoTuning', 'Auto-Tuning', 'Auto-Tuning', true, 'WORD', 'comlbg', '2026-07-28 15:06:13.48612', 'comlbg', '2026-07-28 15:06:13.48612'),
+('training.label.otherTopics', 'Other Topics', 'Other Topics', true, 'WORD', 'comlbg', '2026-07-28 15:06:13.992595', 'comlbg', '2026-07-28 15:06:13.992595');
