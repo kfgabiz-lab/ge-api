@@ -163,7 +163,18 @@ public class PageDataService {
     appendWhereConditions(whereClause, searchParams);
 
         // FILTER slug_relation 처리 — rel_{id}=카테고리ID → master id IN (...) 조건 추가
-    if (!relFilterParams.isEmpty()) {
+        // currDtlMgmt-data 전용 — 제품카테고리(depth1~3) 검색 우회. category-data → power_list/automation_list(배열)
+        // 매칭은 FILTER 엔진(단일값 매칭)으로 표현 불가하므로 이 슬러그의 rel_4만 전용 재귀 쿼리로 처리한다
+        // (FoTrainingService의 기존 우회 패턴 재사용, 다른 슬러그/rel_ 파라미터는 기존 엔진 그대로 사용).
+    if ("currDtlMgmt-data".equals(slug) && relFilterParams.containsKey("rel_4")) {
+      String categoryIdStr = relFilterParams.get("rel_4");
+      Set<Long> filterIds = categoryIdStr.matches("\\d+")
+          ? resolveCurrDtlMgmtIdsByCategoryFilter(Long.parseLong(categoryIdStr))
+          : Set.of();
+      if (filterIds.isEmpty()) return buildEmptyResponse(page, size);
+      String idList = filterIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+      whereClause.append(" AND id IN (").append(idList).append(")");
+    } else if (!relFilterParams.isEmpty()) {
       Set<Long> filterIds = resolveFilterRelationIds(relFilterParams);
       if (filterIds != null) {
         if (filterIds.isEmpty()) return buildEmptyResponse(page, size);
@@ -3157,6 +3168,44 @@ public class PageDataService {
         }
 
         return resultIds;
+    }
+
+    /**
+     * currDtlMgmt-data 전용 — 제품카테고리(depth1~3) 검색 우회.
+     * 선택한 category-data id + 그 하위 전체를 재귀로 모은 뒤, currDtlMgmt-data의
+     * power_list/automation_list(JSONB id 배열)에 그 중 하나라도 포함되는 행의 id를 반환한다.
+     * slug_relation FILTER 엔진(단일값 매칭)으로는 배열 포함 여부를 표현할 수 없어 이 슬러그에서만 전용 처리한다.
+     */
+    @SuppressWarnings("unchecked")
+    private Set<Long> resolveCurrDtlMgmtIdsByCategoryFilter(Long categoryId) {
+        String sql = """
+            WITH RECURSIVE descendant_categories AS (
+                SELECT id FROM page_data
+                 WHERE data_slug = 'category-data' AND id = :categoryId
+                UNION ALL
+                SELECT p.id FROM page_data p
+                 JOIN descendant_categories d
+                   ON p.data_slug = 'category-data'
+                  AND p.data_json->'category'->>'parentId' ~ '^[0-9]+$'
+                  AND (p.data_json->'category'->>'parentId')::bigint = d.id
+            )
+            SELECT id FROM page_data
+             WHERE data_slug = 'currDtlMgmt-data'
+               AND (
+                    EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'power_list') v
+                             WHERE v ~ '^[0-9]+$' AND v::bigint IN (SELECT id FROM descendant_categories))
+                 OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'automation_list') v
+                             WHERE v ~ '^[0-9]+$' AND v::bigint IN (SELECT id FROM descendant_categories))
+               )
+            """;
+        Query q = entityManager.createNativeQuery(sql);
+        q.setParameter("categoryId", categoryId);
+        List<Object> rows = q.getResultList();
+        Set<Long> ids = new HashSet<>();
+        for (Object row : rows) {
+            ids.add(((Number) row).longValue());
+        }
+        return ids;
     }
 
     /**
