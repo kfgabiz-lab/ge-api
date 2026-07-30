@@ -58,7 +58,8 @@ public class TechHubService {
         }
         if (hasCats) {
             where.append(" AND EXISTS (SELECT 1 FROM contents_category cf"
-                + " WHERE cf.contents_id = m.id AND cf.category_l2_id IN (:cats))");
+                + " WHERE cf.contents_id = m.id AND cf.category_l2_id IN (:cats)"
+                + "   AND cf.nahp_display_flag = true AND cf.is_deleted = false)");
         }
         if (hasCerts) {
             where.append(" AND ").append(CERT_STANDARD_EXPR).append(" IN (:certStds)");
@@ -90,7 +91,8 @@ public class TechHubService {
             + " ) vc ON true"
             + " LEFT JOIN LATERAL ("
             + "   SELECT cc.category_l1_id, cc.category_l2_id FROM contents_category cc"
-            + "   WHERE cc.contents_id = m.id AND cc.category_l2_id IS NOT NULL LIMIT 1"
+            + "   WHERE cc.contents_id = m.id AND cc.category_l2_id IS NOT NULL"
+            + "     AND cc.nahp_display_flag = true AND cc.is_deleted = false LIMIT 1"
             + " ) cat ON true"
             + where
             + " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC"
@@ -131,7 +133,8 @@ public class TechHubService {
             + " FROM contents_master m"
             + " LEFT JOIN LATERAL ("
             + "   SELECT cc.category_l1_id, cc.category_l2_id FROM contents_category cc"
-            + "   WHERE cc.contents_id = m.id AND cc.category_l2_id IS NOT NULL LIMIT 1"
+            + "   WHERE cc.contents_id = m.id AND cc.category_l2_id IS NOT NULL"
+            + "     AND cc.nahp_display_flag = true AND cc.is_deleted = false LIMIT 1"
             + " ) cat ON true"
             + " WHERE m.id = :id AND m.doc_type = 'V' AND m.expose = true AND m.is_deleted = false";
         Query masterQuery = entityManager.createNativeQuery(masterSql);
@@ -199,11 +202,13 @@ public class TechHubService {
             + " ) vc ON true"
             + " LEFT JOIN LATERAL ("
             + "   SELECT cc.category_l1_id, cc.category_l2_id FROM contents_category cc"
-            + "   WHERE cc.contents_id = m.id AND cc.category_l2_id IS NOT NULL LIMIT 1"
+            + "   WHERE cc.contents_id = m.id AND cc.category_l2_id IS NOT NULL"
+            + "     AND cc.nahp_display_flag = true AND cc.is_deleted = false LIMIT 1"
             + " ) cat ON true"
             + " WHERE m.doc_type = 'V' AND m.expose = true AND m.is_deleted = false AND m.id <> :selfId"
             + "   AND EXISTS (SELECT 1 FROM contents_category cf"
-            + "     WHERE cf.contents_id = m.id AND cf.category_l2_id = :l2)"
+            + "     WHERE cf.contents_id = m.id AND cf.category_l2_id = :l2"
+            + "       AND cf.nahp_display_flag = true AND cf.is_deleted = false)"
             + " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC"
             + " LIMIT 3";
         Query query = entityManager.createNativeQuery(sql);
@@ -234,6 +239,7 @@ public class TechHubService {
             + "   AND v.version_expose = true AND v.is_deleted = false"
             + "   AND v.video_url IS NOT NULL AND v.video_url <> ''"
             + " JOIN contents_category c ON c.contents_id = m.id AND c.category_l2_id IS NOT NULL"
+            + "   AND c.nahp_display_flag = true AND c.is_deleted = false"
             + " WHERE m.doc_type = 'V' AND m.expose = true AND m.is_deleted = false"
             + " GROUP BY c.category_l2_id";
 
