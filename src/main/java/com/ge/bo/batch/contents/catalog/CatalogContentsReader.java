@@ -31,6 +31,18 @@ public class CatalogContentsReader {
     private final IfCatalogInfoRepository ifCatalogInfoRepository;
     private final IfCatalogFileInfoRepository ifCatalogFileInfoRepository;
 
+    /** 미처리 행 중 복합키(ctlg_code, nahp_level_seq) 중복 목록 조회(로그용) — quarantineDuplicateKeys()와 짝 */
+    @Transactional(readOnly = true)
+    public List<Object[]> findDuplicateKeyRows() {
+        return ifCatalogInfoRepository.findDuplicateKeyRows();
+    }
+
+    /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingHeaderGroups() 호출 전에 먼저 실행해야 한다 */
+    @Transactional
+    public int quarantineDuplicateKeys() {
+        return ifCatalogInfoRepository.quarantineDuplicateKeys();
+    }
+
     @Transactional(readOnly = true)
     public Map<String, List<IfCatalogInfo>> loadPendingHeaderGroups() {
         Map<String, List<IfCatalogInfo>> groups = new LinkedHashMap<>();

@@ -36,6 +36,18 @@ public class SsqContentsReader {
     private final IfSsqDocumentRepository ifSsqDocumentRepository;
     private final JdbcTemplate jdbcTemplate;
 
+    /** 미처리 행 중 복합키(doc_id, spec_group, level_1~4) 중복 목록 조회(로그용) — quarantineDuplicateKeys()와 짝 */
+    @Transactional(readOnly = true)
+    public List<Object[]> findDuplicateKeyRows() {
+        return ifSsqDocumentRepository.findDuplicateKeyRows();
+    }
+
+    /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingDocumentGroups() 호출 전에 먼저 실행해야 한다 */
+    @Transactional
+    public int quarantineDuplicateKeys() {
+        return ifSsqDocumentRepository.quarantineDuplicateKeys();
+    }
+
     @Transactional(readOnly = true)
     public Map<Integer, List<IfSsqDocument>> loadPendingDocumentGroups() {
         Map<Integer, List<IfSsqDocument>> groups = new LinkedHashMap<>();
