@@ -598,7 +598,8 @@ public class PageDataService {
         + "  p.data_json->'seo'->>'slug'                        AS product_slug,"
         + "  p.data_json->'product'->>'product_name'            AS product_title,"
         + "  p.data_json->'product_info'->>'info_description'   AS product_description,"
-        + "  p.data_json->'product_info'->>'image'              AS product_image"
+        + "  p.data_json->'product_info'->>'gnb_image'          AS product_image,"
+        + "  p.data_json->'product'->>'order_status'            AS product_order_status"
         + " FROM page_data c"
         + " LEFT JOIN page_data p"
         + "  ON p.data_slug = 'product-data'"
@@ -638,7 +639,8 @@ public class PageDataService {
           row[8] != null ? row[8].toString() : null,
           row[9] != null ? row[9].toString() : null,
           row[10] != null ? row[10].toString() : null,
-          row[11] != null ? row[11].toString() : null
+          row[11] != null ? row[11].toString() : null,
+          row[12] != null ? row[12].toString() : null
       ));
     }
     return result;
