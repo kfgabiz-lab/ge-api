@@ -609,7 +609,8 @@ public class PageDataService {
         + "  p.data_json->'seo'->>'slug'                        AS product_slug,"
         + "  p.data_json->'product'->>'product_name'            AS product_title,"
         + "  p.data_json->'product_info'->>'info_description'   AS product_description,"
-        + "  p.data_json->'product_info'->>'image'              AS product_image"
+        + "  p.data_json->'product_info'->>'gnb_image'          AS product_image,"
+        + "  p.data_json->'product'->>'order_status'            AS product_order_status"
         + " FROM page_data c"
         + " LEFT JOIN page_data p"
         + "  ON p.data_slug = 'product-data'"
@@ -649,7 +650,8 @@ public class PageDataService {
           row[8] != null ? row[8].toString() : null,
           row[9] != null ? row[9].toString() : null,
           row[10] != null ? row[10].toString() : null,
-          row[11] != null ? row[11].toString() : null
+          row[11] != null ? row[11].toString() : null,
+          row[12] != null ? row[12].toString() : null
       ));
     }
     return result;
@@ -863,20 +865,22 @@ public class PageDataService {
     }
 
     /**
-     * FO 메인화면 레이어팝업(popup-data) 활성 1건 조회 — 게시기간이 오늘을 포함하는 최신 팝업
-     * - 게시기간 문자열(post_period_from/to)에서 숫자만 추출해 앞 8자리(YYYYMMDD)로 :today 비교(findProductInsights와 동일 방식)
+     * FO 메인화면 레이어팝업(popup-data) 활성 팝업 전체 조회 — 게시기간이 오늘을 포함하는 팝업 전부
+     * - 게시기간 문자열(post_period_from/to)에서 숫자만 추출해 정밀 비교(findProductInsights와 동일 방식)
      * - siteId가 null이면 site_id 조건 자체를 생략(전역), 있으면 (site_id = :siteId OR site_id IS NULL)
      * - image 는 raw 숫자 배열(fileId)이라 ->>0 으로 첫 원소만 텍스트 추출 → Long 변환
-     * - 정렬: 생성일 내림차순(동률 시 id 내림차순), 최대 1건. 결과 없으면 exists=false
+     * - 정렬: 생성일 내림차순(동률 시 id 내림차순). 활성 팝업 없으면 빈 리스트
      */
     @Transactional(readOnly = true)
-    public PopupResponse findActivePopup(Long siteId) {
+    public List<PopupResponse> findActivePopup(Long siteId) {
         String siteCond = siteId != null ? "  AND (site_id = :siteId OR site_id IS NULL)" : "";
         // 게시기간 분단위 정밀 비교(8자리 날짜 절삭 비교 금지) — hero/배너(searchDatetimeRange)와 동일한 패딩 규칙
         String fromDigits = "regexp_replace(data_json->'popup'->>'post_period_from', '[^0-9]', '', 'g')";
         String toDigits   = "regexp_replace(data_json->'popup'->>'post_period_to',   '[^0-9]', '', 'g')";
         String fromCmp = "(CASE WHEN char_length(" + fromDigits + ") = 8 THEN " + fromDigits + " || '000000' ELSE " + fromDigits + " END)";
-        String toCmp   = "(CASE WHEN char_length(" + toDigits   + ") = 8 THEN " + toDigits   + " || '235959' ELSE " + toDigits   + " END)";
+        String toCmp   = "(CASE WHEN char_length(" + toDigits   + ") = 8 THEN " + toDigits   + " || '235959'"
+            + " WHEN char_length(" + toDigits + ") = 12 THEN " + toDigits + " || '59'"
+            + " ELSE " + toDigits   + " END)";
         String sql = "SELECT id,"
             + "  data_json->'popup'->>'url'          AS url,"
             + "  data_json->'popup'->'image'->>0     AS image_file_id"
@@ -885,8 +889,7 @@ public class PageDataService {
             + siteCond
             + "  AND " + fromCmp + " <= :nowValue"
             + "  AND " + toCmp + " >= :nowValue"
-            + " ORDER BY created_at DESC, id DESC"
-            + " LIMIT 1";
+            + " ORDER BY created_at DESC, id DESC";
 
         Query query = entityManager.createNativeQuery(sql);
         query.setParameter("nowValue", resolveNowParam(siteId));
@@ -896,20 +899,21 @@ public class PageDataService {
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
-        if (rows.isEmpty()) {
-            return new PopupResponse(false, null, null);
-        }
-        Object[] row = rows.get(0);
-        String url = row[1] != null ? row[1].toString() : null;
-        Long imageFileId = null;
-        if (row[2] != null) {
-            try {
-                imageFileId = Long.valueOf(row[2].toString().trim());
-            } catch (NumberFormatException ignore) {
-                imageFileId = null; // 파일ID가 숫자가 아니면 null 처리(방어적)
+        List<PopupResponse> result = new ArrayList<>();
+        for (Object[] row : rows) {
+            Long id = row[0] != null ? ((Number) row[0]).longValue() : null;
+            String url = row[1] != null ? row[1].toString() : null;
+            Long imageFileId = null;
+            if (row[2] != null) {
+                try {
+                    imageFileId = Long.valueOf(row[2].toString().trim());
+                } catch (NumberFormatException ignore) {
+                    imageFileId = null; // 파일ID가 숫자가 아니면 null 처리(방어적)
+                }
             }
+            result.add(new PopupResponse(id, url, imageFileId));
         }
-        return new PopupResponse(true, url, imageFileId);
+        return result;
     }
 
     /**

@@ -74,6 +74,7 @@ public class CatalogContentsBatchService {
 
         try {
             markStep(batchLog, "CLEANSE");
+            quarantineDuplicateKeys(batchId);
             Map<String, List<IfCatalogInfo>> headerGroups = reader.loadPendingHeaderGroups();
             Map<String, List<IfCatalogFileInfo>> fileGroups = reader.loadPendingFileGroups();
             tally.receivedRowCount = headerGroups.values().stream().mapToInt(List::size).sum()
@@ -301,6 +302,26 @@ public class CatalogContentsBatchService {
                 .build());
         } catch (DataIntegrityViolationException e) {
             throw BusinessException.conflict("이미 실행 중인 CATALOG 콘텐츠 배치가 있습니다.");
+        }
+    }
+
+    /**
+     * 원천에 동일 복합키(ctlg_code, nahp_level_seq)로 중복 수신된 행이 있으면, Hibernate가 같은 엔티티로 인식해
+     * 값이 조용히 유실될 위험이 있다(2026-07-30 확인). loadPendingHeaderGroups() 호출 전에 먼저 실행해
+     * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
+     */
+    private void quarantineDuplicateKeys(long batchId) {
+        for (Object[] row : reader.findDuplicateKeyRows()) {
+            String ctlgCode = String.valueOf(row[0]);
+            Object levelSeq = row[1];
+            saveFailRow(batchId, "if_r_catalog_info", ctlgCode, "ctlg_code=" + ctlgCode + ", nahp_level_seq=" + levelSeq,
+                "CLEANSE", "DUPLICATE_KEY",
+                "동일 복합키(ctlg_code+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리",
+                Map.of("ctlgCode", ctlgCode, "nahpLevelSeq", String.valueOf(levelSeq)));
+        }
+        int quarantined = reader.quarantineDuplicateKeys();
+        if (quarantined > 0) {
+            log.warn("CATALOG IF 복합키 중복 {}건 격리(E) 처리", quarantined);
         }
     }
 

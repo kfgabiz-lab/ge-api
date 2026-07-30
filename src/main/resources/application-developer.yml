@@ -76,7 +76,7 @@ logging:
 
 ls:
   isApiLogin: false    # true = SSO API 활성화 / false = 비밀번호만으로 로그인
-  file-storage: blob   # local, blob
+  file-storage: local   # local, blob
   redis-enabled: false
   totp:
     isUser: "LSE Admin"
@@ -98,6 +98,10 @@ ls:
         clientId: ${CTP_CLIENT_ID:}
         clientSecret: ${CTP_CLIENT_SECRET:}
         grantType: client_credentials
+      # 통합챗봇 검색 API
+#      chatbotSearch:
+#        apiUrl: https://cxai-dev.ls-electric.com/api/v1/search/stream?include_keywords=true
+#        apiKey: ${CHATBOT_SEACH_APIKEY:}
     # Azure Blob Storage 정보
     azure:
       blob-storage:

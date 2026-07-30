@@ -80,7 +80,7 @@ logging:
 
 ls:
   isApiLogin: true
-  file-storage: blob   # local, blob
+  file-storage: local   # local, blob
   redis-enabled: true
   lse:
     inApi:
@@ -99,6 +99,10 @@ ls:
         clientId: ${CTP_CLIENT_ID:}
         clientSecret: ${CTP_CLIENT_SECRET:}
         grantType: client_credentials
+      # 통합챗봇 검색 API
+#      chatbotSearch:
+#        apiUrl: https://cxai-dev.ls-electric.com/api/v1/search/stream?include_keywords=true
+#        apiKey: ${CHATBOT_SEACH_APIKEY:}
     # Azure Blob Storage 정보
     azure:
       blob-storage:

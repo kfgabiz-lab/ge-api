@@ -68,6 +68,7 @@ public class CertiContentsBatchService {
 
         try {
             markStep(batchLog, "CLEANSE");
+            quarantineDuplicateKeys(batchId);
             Map<String, List<IfCertiMaster>> groups = reader.loadPendingGroups();
             tally.receivedRowCount = groups.values().stream().mapToInt(List::size).sum();
             tally.receivedDocumentCount = groups.size();
@@ -214,6 +215,28 @@ public class CertiContentsBatchService {
     private void markStep(ContentsBatchLog batchLog, String step) {
         batchLog.updateStep(step);
         batchLogRepository.save(batchLog);
+    }
+
+    /**
+     * 원천에 동일 복합키(certi_no, bi, nahp_level_seq)로 중복 수신된 행이 있으면, Hibernate가 같은 엔티티로
+     * 인식해 값이 조용히 유실될 위험이 있다(2026-07-30 확인). loadPendingGroups() 호출 전에 먼저 실행해
+     * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
+     */
+    private void quarantineDuplicateKeys(long batchId) {
+        for (Object[] row : reader.findDuplicateKeyRows()) {
+            String certiNo = String.valueOf(row[0]);
+            String bi = String.valueOf(row[1]);
+            Object levelSeq = row[2];
+            String sourceDocKey = certiNo + "|" + bi;
+            saveFailRow(batchId, "if_r_certi_master", sourceDocKey, sourceDocKey + ", nahp_level_seq=" + levelSeq,
+                "CLEANSE", "DUPLICATE_KEY",
+                "동일 복합키(certi_no+bi+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리",
+                Map.of("certiNo", certiNo, "bi", bi, "nahpLevelSeq", String.valueOf(levelSeq)));
+        }
+        int quarantined = reader.quarantineDuplicateKeys();
+        if (quarantined > 0) {
+            log.warn("CERTI IF 복합키 중복 {}건 격리(E) 처리", quarantined);
+        }
     }
 
     private void saveFailRow(long batchId, String sourceTable, String sourceDocKey, String sourceRowKey,

@@ -29,9 +29,13 @@ public class TrainingRegistrationService {
     /** 공통코드 그룹 코드 — 비즈니스 유형(기존 그룹 재사용) */
     private static final String GROUP_BUSINESS_TYPE = "BUSINESSTYPE";
 
+    /** 신청 세션(currDtlMgmt-data)의 신청수 카운트 증가 대상 slug */
+    private static final String SESSION_SLUG = "currDtlMgmt-data";
+
     private final TrainingRegistrationRepository trainingRegistrationRepository;
     private final CodeDetailRepository codeDetailRepository;
     private final RecaptchaService recaptchaService;
+    private final PageDataService pageDataService;
 
     /**
      * 등록 접수 처리 — reCAPTCHA 검증 → 코드 검증 → 저장 → 결과 반환
@@ -78,6 +82,8 @@ public class TrainingRegistrationService {
                 .build();
 
         TrainingRegistration saved = trainingRegistrationRepository.save(entity);
+
+        pageDataService.incrementViewCount(SESSION_SLUG, request.sessionId(), null);
 
         // 개인정보(이름/이메일 등)는 로그에 남기지 않고 추적용 식별값만 기록
         log.info("Training 세션 등록 접수 저장 완료 - id={}, curriculumId={}, sessionId={}",

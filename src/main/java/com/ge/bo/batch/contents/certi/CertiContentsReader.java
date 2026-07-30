@@ -25,6 +25,18 @@ public class CertiContentsReader {
 
     private final IfCertiMasterRepository ifCertiMasterRepository;
 
+    /** 미처리 행 중 복합키(certi_no, bi, nahp_level_seq) 중복 목록 조회(로그용) — quarantineDuplicateKeys()와 짝 */
+    @Transactional(readOnly = true)
+    public List<Object[]> findDuplicateKeyRows() {
+        return ifCertiMasterRepository.findDuplicateKeyRows();
+    }
+
+    /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingGroups() 호출 전에 먼저 실행해야 한다 */
+    @Transactional
+    public int quarantineDuplicateKeys() {
+        return ifCertiMasterRepository.quarantineDuplicateKeys();
+    }
+
     /** key = "CERTI_NO|BI" — 인증서 자연키(source_doc_key)와 동일한 형식 */
     @Transactional(readOnly = true)
     public Map<String, List<IfCertiMaster>> loadPendingGroups() {

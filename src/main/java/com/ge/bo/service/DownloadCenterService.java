@@ -105,12 +105,14 @@ public class DownloadCenterService {
         }
         if (hasCats) {
             where.append(" AND EXISTS (SELECT 1 FROM contents_category cc"
-                + " WHERE cc.contents_id = m.id AND cc.category_l2_id IN (:cats))");
+                + " WHERE cc.contents_id = m.id AND cc.category_l2_id IN (:cats)"
+                + "   AND cc.nahp_display_flag = true AND cc.is_deleted = false)");
         }
         if (hasProductCodes) {
             // LV2 조건과 동일한 EXISTS 패턴 — 한 콘텐츠가 여러 제품에 매핑돼도 행 중복이 생기지 않는다.
             where.append(" AND EXISTS (SELECT 1 FROM contents_category cc3"
-                + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes))");
+                + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes)"
+                + "   AND cc3.nahp_display_flag = true AND cc3.is_deleted = false)");
         }
 
         // ① 전체 건수
@@ -244,7 +246,7 @@ public class DownloadCenterService {
             + "  c.category_l1_id, c.category_l2_id,"
             + "  v.id            AS version_id, v.version_name, v.sort_key,"
             + "  f.id            AS file_id, f.file_name, f.file_ext, f.file_size,"
-            + "  f.source_system, f.file_path"
+            + "  f.source_system, f.file_path, f.source_file_path"
             + " FROM contents_master m"
             + " JOIN contents_version v ON v.contents_id = m.id"
             + "   AND v.version_expose = true AND v.is_deleted = false"
@@ -252,7 +254,8 @@ public class DownloadCenterService {
             + "   AND f.file_expose = true AND f.is_deleted = false"
             + " LEFT JOIN LATERAL ("
             + "   SELECT cc.category_l1_id, cc.category_l2_id FROM contents_category cc"
-            + "   WHERE cc.contents_id = m.id LIMIT 1"
+            + "   WHERE cc.contents_id = m.id"
+            + "     AND cc.nahp_display_flag = true AND cc.is_deleted = false LIMIT 1"
             + " ) c ON true"
             + " WHERE m.id IN (:pageIds)"
             + " ORDER BY m.id, v.sort_key DESC, f.id";
@@ -291,7 +294,8 @@ public class DownloadCenterService {
                 r[12] != null ? ((Number) r[12]).longValue() : null,
                 r[12] != null ? formatFileSize(((Number) r[12]).longValue()) : null,
                 r[13] != null ? r[13].toString() : null,
-                r[14] != null ? r[14].toString() : null));
+                r[14] != null ? r[14].toString() : null,
+                r[15] != null ? r[15].toString() : null));
         }
 
         // pageIds(정렬 결과) 순서대로 재정렬해 반환.
@@ -319,6 +323,7 @@ public class DownloadCenterService {
         String sql = "SELECT c.category_l2_id, count(DISTINCT m.id)::int"
             + " FROM contents_master m"
             + " JOIN contents_category c ON c.contents_id = m.id"
+            + "   AND c.nahp_display_flag = true AND c.is_deleted = false"
             + " WHERE" + MASTER_GATE
             + " GROUP BY c.category_l2_id";
 
@@ -352,7 +357,8 @@ public class DownloadCenterService {
         // getContents 의 productCodes EXISTS 조건과 동일 패턴 — 한 콘텐츠가 여러 제품에 매핑돼도 중복 집계되지 않는다.
         String productCodeClause = hasProductCodes
             ? " AND EXISTS (SELECT 1 FROM contents_category cc3"
-              + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes))"
+              + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes)"
+              + "   AND cc3.nahp_display_flag = true AND cc3.is_deleted = false)"
             : "";
 
         String sql = "SELECT m.doc_type, count(*)::int"
