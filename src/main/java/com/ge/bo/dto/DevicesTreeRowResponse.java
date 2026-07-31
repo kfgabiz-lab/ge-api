@@ -17,7 +17,7 @@ package com.ge.bo.dto;
  * @param productId           depth3 행에서 연결된 product-data PK (FK), depth1/2 행은 null
  * @param productSlug         연결된 product-data 의 seo.slug
  * @param productTitle        연결된 product-data 의 product.product_name (junction 의 product_name 은 폐기 예정이라 사용하지 않음)
- * @param productDescription  연결된 product-data 의 product_info.info_description
+ * @param productDescription  연결된 product-data 의 product.product_description
  * @param productImage        연결된 product-data 의 product_info.gnb_image
  */
 public record DevicesTreeRowResponse(

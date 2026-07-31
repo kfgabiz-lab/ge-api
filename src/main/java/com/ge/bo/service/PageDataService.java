@@ -597,7 +597,7 @@ public class PageDataService {
         + "  (c.data_json->'product'->>'id')::bigint            AS product_id,"
         + "  p.data_json->'seo'->>'slug'                        AS product_slug,"
         + "  p.data_json->'product'->>'product_name'            AS product_title,"
-        + "  p.data_json->'product_info'->>'info_description'   AS product_description,"
+        + "  p.data_json->'product'->>'product_description'    AS product_description,"
         + "  p.data_json->'product_info'->>'gnb_image'          AS product_image,"
         + "  p.data_json->'product'->>'order_status'            AS product_order_status"
         + " FROM page_data c"
