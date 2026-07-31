@@ -1205,6 +1205,15 @@ public class PageDataService {
      * @param slug    페이지 식별자
      * @param request 등록 요청 (dataJson Map, pkKeys 목록)
      */
+  private Map<String, Object> stripFetchedFields(Map<String, Object> dataJson) {
+    if (dataJson == null) return dataJson;
+    Map<String, Object> cleaned = new LinkedHashMap<>();
+    dataJson.forEach((key, value) -> {
+      if (!key.startsWith("_fetchedRel")) cleaned.put(key, value);
+    });
+    return cleaned;
+  }
+
   @Transactional
     public PageDataResponse create(String slug, PageDataRequest request, Long siteId) {
         // PK 중복 체크 — pkKeys가 있을 때만 수행
@@ -1216,7 +1225,8 @@ public class PageDataService {
       checkValidationRules(slug, request.getValidationRuleIds(), request.getDataJson(), null, siteId);
     }
 
-    String dataJsonStr = serializeDataJson(request.getDataJson());
+    Map<String, Object> cleanDataJson = stripFetchedFields(request.getDataJson());
+    String dataJsonStr = serializeDataJson(cleanDataJson);
     String currentUser = getCurrentUserId();
         // 감사 컬럼(created_at/updated_at)도 사이트 timezone 기준 — SQL NOW()는 세션 기본 시간대라 사용하지 않음
         // created_at/updated_at 컬럼이 timestamp without time zone이라 LocalDateTime(오프셋 없는 벽시계 값)으로 바인딩해야
@@ -1250,7 +1260,7 @@ public class PageDataService {
     Long newId = ((Number) insertQuery.getSingleResult()).longValue();
 
         // 생성된 id를 dataJson에 자동 주입 — 카테고리 계층 등 id 참조가 필요한 모든 곳에서 활용
-    Map<String, Object> dataJsonWithId = new LinkedHashMap<>(request.getDataJson());
+    Map<String, Object> dataJsonWithId = new LinkedHashMap<>(cleanDataJson);
     dataJsonWithId.put("id", newId);
     Query updateIdQuery = entityManager.createNativeQuery(
                 "UPDATE page_data SET data_json = CAST(:dataJson AS jsonb) WHERE id = :id");
@@ -1259,7 +1269,7 @@ public class PageDataService {
     updateIdQuery.executeUpdate();
 
         // blog/articles/press 등록 시 integration_contents 반영
-    integrationContentsSyncService.syncUpsert(slug, newId, request.getDataJson(), siteId);
+    integrationContentsSyncService.syncUpsert(slug, newId, cleanDataJson, siteId);
 
     return getById(slug, newId);
   }
@@ -1281,7 +1291,8 @@ public class PageDataService {
       checkValidationRules(slug, request.getValidationRuleIds(), request.getDataJson(), id, siteId);
     }
         // 수정 시에도 id 보장 — dataJson에 id 항상 포함
-    Map<String, Object> dataJsonWithId = new LinkedHashMap<>(request.getDataJson());
+    Map<String, Object> cleanDataJson = stripFetchedFields(request.getDataJson());
+    Map<String, Object> dataJsonWithId = new LinkedHashMap<>(cleanDataJson);
     dataJsonWithId.put("id", id);
     String dataJsonStr = serializeDataJson(dataJsonWithId);
     String currentUser = getCurrentUserId();
@@ -1303,7 +1314,7 @@ public class PageDataService {
     updateQuery.executeUpdate();
 
         // blog/articles/press 수정 시 integration_contents 반영
-    integrationContentsSyncService.syncUpsert(slug, id, request.getDataJson(), existing.getSiteId());
+    integrationContentsSyncService.syncUpsert(slug, id, cleanDataJson, existing.getSiteId());
 
     return getById(slug, id);
   }
@@ -1331,6 +1342,7 @@ public class PageDataService {
     } catch (Exception e) {
       dataJson = new LinkedHashMap<>();
     }
+    dataJson = new LinkedHashMap<>(stripFetchedFields(dataJson));
     // fieldKey를 점(.) 기준으로 분리 — 중첩 경로면 하위 Map을 따라 내려가며(없으면 새로 생성) 마지막 세그먼트에 값 저장
     String[] segments = fieldKey.split("\\.");
     if (segments.length == 1) {
@@ -1439,15 +1451,68 @@ public class PageDataService {
     delete(slug, id);
   }
 
-    /**
-     * 전체 데이터 조회 — LIMIT/OFFSET 없이 전체 조회 (엑셀 다운로드 전용)
-     * 검색 조건은 search()와 동일하게 적용
-     *
-     * @param slug        페이지 식별자
-     * @param allParams   검색 조건 (export/format/headers/keys 등 예약어는 제외됨)
-     * @param relationIds 배치로 FETCH 적용할 slug_relation id 목록 (TABLE/ARRAY_CONTAINS 타입만 지원, N+1 방지를 위해 relation당 쿼리 1건)
-     * @return 전체 데이터 목록 (Map<키, 값> 형태)
-     */
+  @Transactional(readOnly = true)
+    public Set<Long> resolveExportFilterIds(String slug, Map<String, String> allParams, Long siteId) {
+    Map<String, String> relFilterParams = new LinkedHashMap<>();
+    Map<String, String> joinFilterParams = new LinkedHashMap<>();
+    Map<String, String> searchParams = new LinkedHashMap<>();
+    allParams.forEach((key, value) -> {
+      if (RESERVED_PARAMS.contains(key) || value == null || value.isBlank()) return;
+      if (key.startsWith("rel_")) relFilterParams.put(key, value);
+      else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
+      else searchParams.put(key, value);
+    });
+
+    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug");
+    if (siteId != null) {
+      whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
+    }
+    appendWhereConditions(whereClause, searchParams);
+
+    if ("currDtlMgmt-data".equals(slug) && relFilterParams.containsKey("rel_4")) {
+      String categoryIdStr = relFilterParams.get("rel_4");
+      Set<Long> filterIds = categoryIdStr.matches("\\d+")
+          ? resolveCurrDtlMgmtIdsByCategoryFilter(Long.parseLong(categoryIdStr))
+          : Set.of();
+      if (filterIds.isEmpty()) return Set.of();
+      String idList = filterIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+      whereClause.append(" AND id IN (").append(idList).append(")");
+    } else if (!relFilterParams.isEmpty()) {
+      Set<Long> filterIds = resolveFilterRelationIds(relFilterParams);
+      if (filterIds != null) {
+        if (filterIds.isEmpty()) return Set.of();
+        String idList = filterIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        whereClause.append(" AND id IN (").append(idList).append(")");
+      }
+    }
+
+    if (!joinFilterParams.isEmpty()) {
+      Set<Long> joinIds = resolveJoinFilterIds(joinFilterParams);
+      if (joinIds != null) {
+        if (joinIds.isEmpty()) return Set.of();
+        String idList = joinIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        whereClause.append(" AND id IN (").append(idList).append(")");
+      }
+    }
+
+    String sql = "SELECT id FROM page_data " + whereClause;
+    Query query = entityManager.createNativeQuery(sql);
+    query.setParameter("slug", slug);
+    if (siteId != null) {
+      query.setParameter("siteId", siteId);
+    }
+    bindSearchParams(query, searchParams);
+    bindTodayIfPresent(query, sql, siteId);
+
+    @SuppressWarnings("unchecked")
+    List<Object> rows = query.getResultList();
+    Set<Long> ids = new LinkedHashSet<>();
+    for (Object row : rows) {
+      ids.add(((Number) row).longValue());
+    }
+    return ids;
+  }
+
   @Transactional(readOnly = true)
     public List<Map<String, Object>> exportAll(String slug, Map<String, String> allParams, Long siteId, List<Long> relationIds) {
         // 예약 파라미터 확장 (export 전용 파라미터 추가)

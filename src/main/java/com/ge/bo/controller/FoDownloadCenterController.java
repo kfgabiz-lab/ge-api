@@ -31,6 +31,8 @@ public class FoDownloadCenterController {
      * Download Center 목록(카드) 조회
      * GET /api/v1/fo/download-center/contents?q={키워드}&categories={LV2코드,콤마}&docTypes={유형코드,콤마}&productCodes={LV3제품코드,콤마}&sort=newest&page=0&size=12
      * - categories: LV2 카테고리 코드 콤마구분(그룹 내 OR). 미지정 시 전체.
+     * - parentCategories: LV1 카테고리 코드(예: L01) 콤마구분. 해당 LV1 에 속하지만 LV2 가 지정되지 않은
+     *   (category_l2_id IS NULL) 콘텐츠를 categories(LV2) 조건과 OR 로 함께 포함시킨다. 미지정 시 미적용.
      * - docTypes: 문서유형 코드 콤마구분(IN). 미지정 시 전체.
      * - productCodes: LV3 제품코드(contents_category.category_l3_id, 예: L01-02-01) 콤마구분(IN). 미지정 시 전체.
      *   제품상세(/product/[slug]) Downloads 섹션에서 "현재 제품과 연계된 파일만" 거를 때 사용.
@@ -42,16 +44,18 @@ public class FoDownloadCenterController {
     public ResponseEntity<DownloadCenterContentPageResponse> getContents(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String categories,
+            @RequestParam(required = false) String parentCategories,
             @RequestParam(required = false) String docTypes,
             @RequestParam(required = false) String productCodes,
             @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size) {
         List<String> categoryL2Ids = parseCsv(categories);
+        List<String> categoryL1Ids = parseCsv(parentCategories);
         List<String> docTypeList = parseCsv(docTypes);
         List<String> productCodeList = parseCsv(productCodes);
         return ResponseEntity.ok(
-            downloadCenterService.getContents(q, categoryL2Ids, docTypeList, productCodeList, sort, page, size));
+            downloadCenterService.getContents(q, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList, sort, page, size));
     }
 
     /**

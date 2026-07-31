@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
 
 /**
  * IF_R_CATALOG_INFO(카탈로그 헤더 IF) 읽기 전용 엔티티 — EAI가 적재하는 원천 테이블(if_r_catalog_info)
- * 이 프로젝트는 스키마를 소유하지 않음(EAI 관리) — DDL 미포함, 실제 물리 스키마를 조회해 정확히 매핑함(2026-07-14 확인).
+ * 이 프로젝트는 스키마를 소유하지 않음(EAI 관리) — DDL 미포함, 실제 물리 스키마를 조회해 정확히 매핑함.
  * 배치는 if_result='N' 행만 조회하고, 처리 후 if_result를 'P'(성공) 또는 'E'(격리)로만 갱신한다.
  */
 @Getter
