@@ -134,7 +134,6 @@ public class SecurityConfig {
                           .requestMatchers("/api/v1/health").permitAll() // 헬스 체크 허용
                           .requestMatchers("/api/v1/redisTest/**").permitAll() // redis 체크 허용
                           .requestMatchers("/api/v1/cryptoTest/**").permitAll() // 암복호화 테스트 허용
-                          .requestMatchers("/api/v1/export/**").permitAll() // 엑셀다운로드 테스트 허용
                           .requestMatchers("/api/v1/public/**").permitAll() // 공개 API — 인증 없이 허용
                           .requestMatchers("/api/v1/fo/**").permitAll() // FO API — 비로그인 전체 허용
                           // 콘텐츠배치 EAI 트리거 — IF 적재 완료 후 EAI가 직접 호출

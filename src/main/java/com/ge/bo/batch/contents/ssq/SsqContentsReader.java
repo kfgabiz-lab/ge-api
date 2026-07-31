@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
 /**
  * IF_R_SSQ_DOCUMENT / IF_R_SSQ_FILE_INFO 원천 조회 및 IF_RESULT 갱신 Reader.
@@ -36,11 +35,29 @@ public class SsqContentsReader {
     private final IfSsqDocumentRepository ifSsqDocumentRepository;
     private final JdbcTemplate jdbcTemplate;
 
+    /** 미처리 행 중 복합키(doc_id, spec_group, level_1~4) 중복 목록 조회(로그용) — quarantineDuplicateKeys()와 짝 */
+    @Transactional(readOnly = true)
+    public List<Object[]> findDuplicateKeyRows() {
+        return ifSsqDocumentRepository.findDuplicateKeyRows();
+    }
+
+    /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingDocumentGroups() 호출 전에 먼저 실행해야 한다 */
+    @Transactional
+    public int quarantineDuplicateKeys() {
+        return ifSsqDocumentRepository.quarantineDuplicateKeys();
+    }
+
     @Transactional(readOnly = true)
     public Map<Integer, List<IfSsqDocument>> loadPendingDocumentGroups() {
         Map<Integer, List<IfSsqDocument>> groups = new LinkedHashMap<>();
-        try (Stream<IfSsqDocument> stream = ifSsqDocumentRepository.streamPending(PENDING)) {
-            stream.forEach(row -> groups.computeIfAbsent(row.getDocId(), k -> new ArrayList<>()).add(row));
+        for (IfSsqDocument row : ifSsqDocumentRepository.findPending(PENDING)) {
+            // quarantineDuplicateKeys() 실행 직후에도 그 찰나에 동일 복합키 행이 새로 들어오면, Hibernate가
+            // 그 행을 null로 반환하는 경우가 있다 — 다음 회차에 다시
+            // 처리되므로 이번 회차에서는 건너뛴다.
+            if (row == null) {
+                continue;
+            }
+            groups.computeIfAbsent(row.getDocId(), k -> new ArrayList<>()).add(row);
         }
         return groups;
     }

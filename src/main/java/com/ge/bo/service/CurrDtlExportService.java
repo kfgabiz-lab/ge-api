@@ -11,6 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 페이지 데이터 비즈니스 로직
@@ -22,8 +24,12 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CurrDtlExportService {
 
+  private static final String SLUG = "currDtlMgmt-data";
+
   @PersistenceContext
     private EntityManager entityManager;
+
+  private final PageDataService pageDataService;
 
     /**
      * 커리큘럼 상세 교육 일정 csv 다운로드 전용
@@ -31,10 +37,14 @@ public class CurrDtlExportService {
      * @return 전체 데이터 목록 (Map<키, 값> 형태)
      */
   @Transactional(readOnly = true)
-    public List<Map<String, Object>> getTrnSchedulesList(Map<String, String> allParams) {
+    public List<Map<String, Object>> getTrnSchedulesList(Map<String, String> allParams, Long siteId) {
 
-    StringBuilder addWhere = new StringBuilder();
-    makeAddWhere(allParams, addWhere);
+    Set<Long> filterIds = pageDataService.resolveExportFilterIds(SLUG, allParams, siteId);
+    if (filterIds.isEmpty()) {
+      return List.of();
+    }
+    String idList = filterIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+    StringBuilder addWhere = new StringBuilder(" AND pd.id IN (").append(idList).append(") ");
 
 //    String dataSql = "SELECT "
 //	        + "  curr.data_json -> 'curriculum' ->> 'title' AS curr_title "
@@ -120,10 +130,14 @@ public class CurrDtlExportService {
    * @return 전체 데이터 목록 (Map<키, 값> 형태)
    */
   @Transactional(readOnly = true)
-  public List<Map<String, Object>> getCurrDetailList(Map<String, String> allParams) {
+  public List<Map<String, Object>> getCurrDetailList(Map<String, String> allParams, Long siteId) {
 
-    StringBuilder addWhere = new StringBuilder();
-    makeAddWhere(allParams, addWhere);
+    Set<Long> filterIds = pageDataService.resolveExportFilterIds(SLUG, allParams, siteId);
+    if (filterIds.isEmpty()) {
+      return List.of();
+    }
+    String idList = filterIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+    StringBuilder addWhere = new StringBuilder(" AND pd.id IN (").append(idList).append(") ");
 
 //    String dataSql = " SELECT "
 //            + " ( "
@@ -287,29 +301,5 @@ public class CurrDtlExportService {
     });
 
     return dataQuery.getResultList();
-  }
-
-  private void makeAddWhere(Map<String, String> allParams, StringBuilder addWhere){
-
-    allParams.forEach((key, value) -> {
-
-      if (value == null || value.isBlank()){
-
-      } else {
-        if(key.contains("_gte")){
-          if(key.startsWith("updatedAt")){
-            addWhere.append(" AND pd.updated_at >= CAST('").append(value).append("' AS date) ");
-          }else{
-            addWhere.append(" AND pd.data_json -> 'curriculum_detail2' ->> '").append(key).append("' >= '").append(value).append("' ");
-          }
-        }else if(key.contains("_lte")){
-          if(key.startsWith("updatedAt")){
-            addWhere.append(" AND pd.updated_at < CAST('").append(value).append("' AS date) + INTERVAL '1 day'");
-          }else{
-            addWhere.append(" AND pd.data_json -> 'curriculum_detail2' ->> '").append(key).append("' <= '").append(value).append("' ");
-          }
-        }
-      }
-    });
   }
 }

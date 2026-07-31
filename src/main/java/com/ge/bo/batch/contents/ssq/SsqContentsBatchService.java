@@ -67,6 +67,7 @@ public class SsqContentsBatchService {
 
         try {
             markStep(batchLog, "CLEANSE");
+            quarantineDuplicateKeys(batchId);
             Map<Integer, List<IfSsqDocument>> docGroups = reader.loadPendingDocumentGroups();
             Map<Integer, List<SsqFileInfoRow>> fileGroups = reader.loadPendingFileGroups();
             tally.receivedRowCount = docGroups.values().stream().mapToInt(List::size).sum()
@@ -96,10 +97,17 @@ public class SsqContentsBatchService {
                 batchId, status, tally.successDocCount, tally.partialDocCount, tally.failedDocCount);
         } catch (RuntimeException e) {
             log.error("SSQ 콘텐츠 배치 시스템 오류 batchId={}", batchId, e);
-            batchLog.fail(e.getMessage());
+            batchLog.fail(stackTraceToString(e));
             batchLogRepository.save(batchLog);
             throw e;
         }
+    }
+
+    /** 어드민 화면(contents_batch_log.error_message)에서 원인을 바로 볼 수 있도록 메시지 대신 전체 스택트레이스를 남긴다 */
+    private String stackTraceToString(Throwable e) {
+        java.io.StringWriter sw = new java.io.StringWriter();
+        e.printStackTrace(new java.io.PrintWriter(sw));
+        return sw.toString();
     }
 
     private void processDocument(int docId, List<IfSsqDocument> docRows, List<SsqFileInfoRow> fileRows, long batchId,
@@ -107,14 +115,10 @@ public class SsqContentsBatchService {
         List<SsqFileInfoRow> files = fileRows != null ? fileRows : List.of();
 
         if (docRows == null) {
-            for (SsqFileInfoRow fileRow : files) {
-                saveFailRow(batchId, "if_r_ssq_file_info", String.valueOf(docId),
-                    "doc_id=" + docId + ", version_id=" + fileRow.versionId(), "CONVERT", "DOC_NOT_FOUND",
-                    "문서 IF(if_r_ssq_document)가 아직 도착하지 않음", Map.of("docId", docId));
-            }
-            reader.markFileResultOnly(docId, "E");
-            tally.failedDocCount++;
-            tally.quarantineCount += files.size();
+            // 문서 IF만 있고 카테고리 IF가 없음 — 카테고리가 파일보다 늦게 오는 건 실시간 델타에서 정상적인
+            // 타이밍이라 격리(E)하지 않고 if_result='N'인 채로 그대로 둔다. 여기서 E로 격리하면
+            // 나중에 문서 IF가 와도 그 파일 정보를 다시 안 읽어 영구 유실되므로, 다음 배치 때 재시도되게 둔다.
+            tally.reportNotes.add("문서 IF 미도착으로 이번 회차 보류(파일 " + files.size() + "건, 다음 배치에서 재시도): doc_id=" + docId);
             return;
         }
 
@@ -251,6 +255,26 @@ public class SsqContentsBatchService {
     private void markStep(ContentsBatchLog batchLog, String step) {
         batchLog.updateStep(step);
         batchLogRepository.save(batchLog);
+    }
+
+    /**
+     * 원천에 동일 복합키(doc_id, spec_group, level_1~4)로 중복 수신된 행이 있으면, Hibernate가 같은 엔티티로
+     * 인식해 값이 조용히 유실될 위험이 있다. loadPendingDocumentGroups() 호출 전에 먼저 실행해
+     * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
+     */
+    private void quarantineDuplicateKeys(long batchId) {
+        for (Object[] row : reader.findDuplicateKeyRows()) {
+            int docId = ((Number) row[0]).intValue();
+            String rowKey = "doc_id=" + docId + ", spec_group=" + row[1] + ", level_1~4=["
+                + row[2] + "," + row[3] + "," + row[4] + "," + row[5] + "]";
+            saveFailRow(batchId, "if_r_ssq_document", String.valueOf(docId), rowKey, "CLEANSE", "DUPLICATE_KEY",
+                "동일 복합키(doc_id+spec_group+level_1~4)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리",
+                Map.of("docId", docId));
+        }
+        int quarantined = reader.quarantineDuplicateKeys();
+        if (quarantined > 0) {
+            log.warn("SSQ IF 복합키 중복 {}건 격리(E) 처리", quarantined);
+        }
     }
 
     private void saveFailRow(long batchId, String sourceTable, String sourceDocKey, String sourceRowKey,

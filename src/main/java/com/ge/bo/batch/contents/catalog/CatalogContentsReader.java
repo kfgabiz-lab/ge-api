@@ -31,11 +31,29 @@ public class CatalogContentsReader {
     private final IfCatalogInfoRepository ifCatalogInfoRepository;
     private final IfCatalogFileInfoRepository ifCatalogFileInfoRepository;
 
+    /** 미처리 행 중 복합키(ctlg_code, nahp_level_seq) 중복 목록 조회(로그용) — quarantineDuplicateKeys()와 짝 */
+    @Transactional(readOnly = true)
+    public List<Object[]> findDuplicateKeyRows() {
+        return ifCatalogInfoRepository.findDuplicateKeyRows();
+    }
+
+    /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingHeaderGroups() 호출 전에 먼저 실행해야 한다 */
+    @Transactional
+    public int quarantineDuplicateKeys() {
+        return ifCatalogInfoRepository.quarantineDuplicateKeys();
+    }
+
     @Transactional(readOnly = true)
     public Map<String, List<IfCatalogInfo>> loadPendingHeaderGroups() {
         Map<String, List<IfCatalogInfo>> groups = new LinkedHashMap<>();
-        try (Stream<IfCatalogInfo> stream = ifCatalogInfoRepository.streamPending(PENDING)) {
-            stream.forEach(row -> groups.computeIfAbsent(row.getCtlgCode(), k -> new ArrayList<>()).add(row));
+        for (IfCatalogInfo row : ifCatalogInfoRepository.findPending(PENDING)) {
+            // quarantineDuplicateKeys() 실행 직후에도 그 찰나에 동일 복합키 행이 새로 들어오면, Hibernate가
+            // 그 행을 null로 반환하는 경우가 있다 — 다음 회차에
+            // 다시 처리되므로 이번 회차에서는 건너뛴다.
+            if (row == null) {
+                continue;
+            }
+            groups.computeIfAbsent(row.getCtlgCode(), k -> new ArrayList<>()).add(row);
         }
         return groups;
     }

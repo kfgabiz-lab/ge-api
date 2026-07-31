@@ -74,6 +74,7 @@ public class CatalogContentsBatchService {
 
         try {
             markStep(batchLog, "CLEANSE");
+            quarantineDuplicateKeys(batchId);
             Map<String, List<IfCatalogInfo>> headerGroups = reader.loadPendingHeaderGroups();
             Map<String, List<IfCatalogFileInfo>> fileGroups = reader.loadPendingFileGroups();
             tally.receivedRowCount = headerGroups.values().stream().mapToInt(List::size).sum()
@@ -104,10 +105,17 @@ public class CatalogContentsBatchService {
                 batchId, status, tally.successDocCount, tally.partialDocCount, tally.failedDocCount);
         } catch (RuntimeException e) {
             log.error("CATALOG 콘텐츠 배치 시스템 오류 batchId={}", batchId, e);
-            batchLog.fail(e.getMessage());
+            batchLog.fail(stackTraceToString(e));
             batchLogRepository.save(batchLog);
             throw e;
         }
+    }
+
+    /** 어드민 화면(contents_batch_log.error_message)에서 원인을 바로 볼 수 있도록 메시지 대신 전체 스택트레이스를 남긴다 */
+    private String stackTraceToString(Throwable e) {
+        java.io.StringWriter sw = new java.io.StringWriter();
+        e.printStackTrace(new java.io.PrintWriter(sw));
+        return sw.toString();
     }
 
     private void processDocument(String ctlgCode, List<IfCatalogInfo> headers, List<IfCatalogFileInfo> files,
@@ -115,14 +123,10 @@ public class CatalogContentsBatchService {
         List<IfCatalogFileInfo> fileRows = files != null ? files : List.of();
 
         if (headers == null) {
-            // 파일 IF만 있고 헤더 IF가 없음 — 임의 master 생성 금지, 파일 행만 격리
-            for (IfCatalogFileInfo fileRow : fileRows) {
-                saveFailRow(batchId, "if_r_catalog_file_info", ctlgCode, "ctlg_code=" + ctlgCode + ", data_code=" + fileRow.getDataCode(),
-                    "CONVERT", "DOC_NOT_FOUND", "헤더 IF(if_r_catalog_info)가 아직 도착하지 않음", rawFileRow(fileRow));
-            }
-            reader.markFileResultOnly(ctlgCode, "E");
-            tally.failedDocCount++;
-            tally.quarantineCount += fileRows.size();
+            // 파일 IF만 있고 헤더 IF가 없음 — 헤더가 파일보다 늦게 오는 건 실시간 델타에서 정상적인 타이밍이라
+            // 격리(E)하지 않고 if_result='N'인 채로 그대로 둔다. 여기서 E로 격리하면 나중에
+            // 헤더가 와도 그 파일 정보를 다시 안 읽어 영구 유실되므로, 다음 배치 때 헤더와 함께 재시도되게 둔다.
+            tally.reportNotes.add("헤더 IF 미도착으로 이번 회차 보류(파일 " + fileRows.size() + "건, 다음 배치에서 재시도): ctlg_code=" + ctlgCode);
             return;
         }
 
@@ -304,6 +308,26 @@ public class CatalogContentsBatchService {
         }
     }
 
+    /**
+     * 원천에 동일 복합키(ctlg_code, nahp_level_seq)로 중복 수신된 행이 있으면, Hibernate가 같은 엔티티로 인식해
+     * 값이 조용히 유실될 위험이 있다. loadPendingHeaderGroups() 호출 전에 먼저 실행해
+     * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
+     */
+    private void quarantineDuplicateKeys(long batchId) {
+        for (Object[] row : reader.findDuplicateKeyRows()) {
+            String ctlgCode = String.valueOf(row[0]);
+            Object levelSeq = row[1];
+            saveFailRow(batchId, "if_r_catalog_info", ctlgCode, "ctlg_code=" + ctlgCode + ", nahp_level_seq=" + levelSeq,
+                "CLEANSE", "DUPLICATE_KEY",
+                "동일 복합키(ctlg_code+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리",
+                Map.of("ctlgCode", ctlgCode, "nahpLevelSeq", String.valueOf(levelSeq)));
+        }
+        int quarantined = reader.quarantineDuplicateKeys();
+        if (quarantined > 0) {
+            log.warn("CATALOG IF 복합키 중복 {}건 격리(E) 처리", quarantined);
+        }
+    }
+
     private void saveFailRow(long batchId, String sourceTable, String sourceDocKey, String sourceRowKey,
                               String failStep, String failCode, String failDetail, Map<String, Object> rawData) {
         failRowRepository.save(ContentsIfFailRow.builder()
@@ -317,15 +341,6 @@ public class CatalogContentsBatchService {
             .failDetail(failDetail)
             .rawData(jsonSupport.toJson(rawData))
             .build());
-    }
-
-    private Map<String, Object> rawFileRow(IfCatalogFileInfo row) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("ctlg_code", row.getCtlgCode());
-        map.put("data_code", row.getDataCode());
-        map.put("file_seq", row.getFileSeq());
-        map.put("file_name", row.getFileName());
-        return map;
     }
 
     /** 배치 1회 실행 동안의 집계 — contents_batch_log.row_counts/report 생성에 사용 */

@@ -1,14 +1,22 @@
 package com.ge.bo.controller;
 
 import com.ge.bo.common.excel.ExcelService;
+import com.ge.bo.entity.AdminUser;
+import com.ge.bo.entity.AdminUserSiteId;
+import com.ge.bo.exception.BusinessException;
+import com.ge.bo.repository.AdminRepository;
+import com.ge.bo.repository.AdminUserSiteRepository;
 import com.ge.bo.service.CurrDtlExportService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -22,19 +30,23 @@ import java.util.Map;
 @Slf4j
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/export/")
+@RequestMapping("/api/v1/export")
 public class CurrDtlExportController {
 
     private final ExcelService excelService;
     private final CurrDtlExportService currDtlExportService;
+    private final AdminRepository adminRepository;
+    private final AdminUserSiteRepository adminUserSiteRepository;
 
     @GetMapping("/trnSchedules")
     public ResponseEntity<byte[]> trnSchedulesExport(
-            @RequestParam Map<String, String> allParams
+            @RequestParam Map<String, String> allParams,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId
     ) {
+        validateSiteAccess(siteId);
 
         // 검색 파라미터 설정(3가지 중 1개)
-        List<Map<String, Object>> rows = currDtlExportService.getTrnSchedulesList(allParams);
+        List<Map<String, Object>> rows = currDtlExportService.getTrnSchedulesList(allParams, siteId);
 
         // 쿼리 조회 후 header, key, dateFormat list 생성
         List<String> headerList =
@@ -67,11 +79,13 @@ public class CurrDtlExportController {
 
     @GetMapping("/currDetail")
     public ResponseEntity<byte[]> currDetailExport(
-            @RequestParam Map<String, String> allParams
+            @RequestParam Map<String, String> allParams,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId
     ) {
+        validateSiteAccess(siteId);
 
         // 검색 파라미터 설정(3가지 중 1개)
-        List<Map<String, Object>> rows = currDtlExportService.getCurrDetailList(allParams);
+        List<Map<String, Object>> rows = currDtlExportService.getCurrDetailList(allParams, siteId);
 
         // 쿼리 조회 후 header, key, dateFormat list 생성
         List<String> headerList =
@@ -100,5 +114,20 @@ public class CurrDtlExportController {
         return ResponseEntity.ok()
                 .headers(responseHeaders)
                 .body(fileBytes);
+    }
+
+    private void validateSiteAccess(Long siteId) {
+        if (siteId == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "SITE_ID_REQUIRED", "X-Site-Id 헤더가 필요합니다.");
+        }
+
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        AdminUser admin = adminRepository.findByEmail(email)
+                .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "인증 정보를 확인할 수 없습니다."));
+
+        boolean hasAccess = adminUserSiteRepository.existsById(new AdminUserSiteId(admin.getId(), siteId));
+        if (!hasAccess) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "SITE_ACCESS_DENIED", "해당 홈페이지에 대한 접근 권한이 없습니다.");
+        }
     }
 }

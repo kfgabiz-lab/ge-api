@@ -170,8 +170,7 @@ public class TrainingRegistrationAdminService {
     /**
      * dateRange WHERE 조건 추가
      * - 감사 컬럼(timestamptz): CAST(:param AS timestamptz) — PageDataService의 감사 컬럼 캐스팅 관례 재사용
-     * - JSON 텍스트 경로: 캐스팅 없이 문자열 비교 — CurrDtlExportService.makeAddWhere의 동일 필드(training_date_from/to)
-     *   dateRange 처리 관례 재사용(ISO 'yyyy-MM-dd' 문자열은 사전순 비교가 시간순 비교와 일치)
+     * - JSON 텍스트 경로: 캐스팅 없이 문자열 비교(ISO 'yyyy-MM-dd' 문자열은 사전순 비교가 시간순 비교와 일치)
      */
     private void appendDateRange(StringBuilder where, String column, boolean hasFrom, boolean hasTo, boolean auditColumn) {
         String paramFrom = paramNameFor(column) + "_from";
