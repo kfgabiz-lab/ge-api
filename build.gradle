@@ -76,6 +76,12 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     implementation 'org.springframework.session:spring-session-data-redis'
     implementation 'org.springframework.boot:spring-boot-starter-cache'
+
+    // streaming api
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+
+    // JSON 처리
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
 }
 
 tasks.named('test') {

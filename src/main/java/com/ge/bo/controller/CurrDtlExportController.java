@@ -22,7 +22,7 @@ import java.util.Map;
 @Slf4j
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/export/")
+@RequestMapping("/api/v1/export")
 public class CurrDtlExportController {
 
     private final ExcelService excelService;
