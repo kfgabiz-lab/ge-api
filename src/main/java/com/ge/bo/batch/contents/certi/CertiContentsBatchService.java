@@ -91,10 +91,17 @@ public class CertiContentsBatchService {
                 batchId, status, tally.successDocCount, tally.partialDocCount, tally.failedDocCount);
         } catch (RuntimeException e) {
             log.error("CERTI 콘텐츠 배치 시스템 오류 batchId={}", batchId, e);
-            batchLog.fail(e.getMessage());
+            batchLog.fail(stackTraceToString(e));
             batchLogRepository.save(batchLog);
             throw e;
         }
+    }
+
+    /** 어드민 화면(contents_batch_log.error_message)에서 원인을 바로 볼 수 있도록 메시지 대신 전체 스택트레이스를 남긴다 */
+    private String stackTraceToString(Throwable e) {
+        java.io.StringWriter sw = new java.io.StringWriter();
+        e.printStackTrace(new java.io.PrintWriter(sw));
+        return sw.toString();
     }
 
     private void processDocument(List<IfCertiMaster> rows, long batchId, BatchTally tally,
@@ -219,7 +226,7 @@ public class CertiContentsBatchService {
 
     /**
      * 원천에 동일 복합키(certi_no, bi, nahp_level_seq)로 중복 수신된 행이 있으면, Hibernate가 같은 엔티티로
-     * 인식해 값이 조용히 유실될 위험이 있다(2026-07-30 확인). loadPendingGroups() 호출 전에 먼저 실행해
+     * 인식해 값이 조용히 유실될 위험이 있다. loadPendingGroups() 호출 전에 먼저 실행해
      * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
      */
     private void quarantineDuplicateKeys(long batchId) {

@@ -162,7 +162,7 @@ public class CatalogContentsConverter {
             }
 
             // FILE_NAME은 시스템이 붙인 타임스탬프 접두어를 포함한 이름(예: "220822162717_[Susol LV MDB]_..pdf")이고,
-            // FILE_ORI가 사람이 보는 원본 파일명(예: "[Susol LV MDB]_..pdf")이다(2026-07-24 실데이터 확인).
+            // FILE_ORI가 사람이 보는 원본 파일명(예: "[Susol LV MDB]_..pdf")이다.
             // blob 경로(file_path)는 문서 간 충돌을 피하기 위해 FILE_NAME 그대로 쓰고, 화면 노출용 파일명만
             // FILE_ORI를 우선 사용한다(없으면 FILE_NAME).
             String pathFileName = ContentsNormalizer.trimToNull(fileRow.getFileName());
@@ -211,7 +211,7 @@ public class CatalogContentsConverter {
             filesByKey.putIfAbsent(sourceFileKey, candidate);
         }
 
-        // 파일 삭제 대상 체크 기준표(2026-07-24 확인) — CTP_LINK_YN='N' and NAHP_LINK_YN='N'이면 비노출(실삭제 아님).
+        // 파일 삭제 대상 체크 기준표 — CTP_LINK_YN='N' and NAHP_LINK_YN='N'이면 비노출(실삭제 아님).
         // 실물 컬럼은 ctp_disp_yn(문서 레벨)/nahp_disp_yn(카테고리별)으로 대응된다고 보고, NAHP_LINK_YN 쪽은
         // "이 문서의 모든 카테고리가 비노출(N)"일 때로 판단한다(카테고리가 하나도 없으면 이 조건은 적용하지 않음
         // — 그 경우는 "카테고리 등록 0건" 리포트로 별도 다룬다).

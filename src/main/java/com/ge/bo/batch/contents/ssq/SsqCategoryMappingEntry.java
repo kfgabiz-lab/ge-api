@@ -10,10 +10,10 @@ import java.util.List;
  * 서로 다른 SSQ 경로가 같은 NAHP 카테고리에 매핑될 수 있다(N:1 — 예: S100 / S100 NEMA4X).
  *
  * E-01(Safety PLC)/E-02(iX7M) 모두 NAHP 쪽엔 이미 코드가 있고(page_data 기준), SSQ 쪽 실경로도 사내
- * 담당자 확인으로 확정되어(2026-07-24) 등록했다 — E-01은 "PLC>Safety PLC"(2단계, 다른 PLC 항목과 동일 구조),
+ * 담당자 확인으로 확정되어 등록했다 — E-01은 "PLC>Safety PLC"(2단계, 다른 PLC 항목과 동일 구조),
  * E-02는 "Motion&Servo>Servo Drive>iX7M" 실데이터로 확인됨.
  *
- * NAHP 카테고리 코드는 page_data 테이블의 두 JSON 키로 나뉘어 확정된다(2026-07-24 확인) — L1(대분류)/L2(중분류)는
+ * NAHP 카테고리 코드는 page_data 테이블의 두 JSON 키로 나뉘어 확정된다 — L1(대분류)/L2(중분류)는
  * data_slug='category-data' 행의 category.code/depth/title/parentId, L3(소분류)는 같은 data_slug의 다른 행에
  * 담긴 product.depth="3" + _fetchedRel18.product.product_code(예: "L05-03-07"). L3는 일부만 코드가 배정돼
  * 있고(예: HMI 하위 LXP/eXP2/iXP3는 아직 product_code 없음) 나머지는 배정되는 대로 채우면 된다.
@@ -38,7 +38,7 @@ public enum SsqCategoryMappingEntry {
     // ---- PLC (4건) ----
     PLC_XGT(path("PLC", "XGT"), "Industrial Automation and Control", "Programmable Logic Controller", "XGT", "L05", "L05-02", "L05-02-01"),
     PLC_XGB(path("PLC", "XGB"), "Industrial Automation and Control", "Programmable Logic Controller", "XGB", "L05", "L05-02", "L05-02-02"),
-    // E-01: SSQ 경로는 다른 PLC 항목과 동일하게 2단계(PLC>Safety PLC) — NAHP 매핑만 3단계(L1/L2/L3)로 확장됨(2026-07-24 확인)
+    // E-01: SSQ 경로는 다른 PLC 항목과 동일하게 2단계(PLC>Safety PLC) — NAHP 매핑만 3단계(L1/L2/L3)로 확장됨
     PLC_SAFETY(path("PLC", "Safety PLC"), "Industrial Automation and Control", "Programmable Logic Controller", "SAFETY", "L05", "L05-02", "L05-02-03"),
     PLC_SMART_IO(path("PLC", "Smart I/O"), "Industrial Automation and Control", "Programmable Logic Controller", "SMART I/O", "L05", "L05-02", "L05-02-04"),
 
