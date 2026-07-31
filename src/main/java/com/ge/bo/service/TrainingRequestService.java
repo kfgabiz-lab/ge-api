@@ -84,6 +84,9 @@ public class TrainingRequestService {
                 // Step4 — selectedProducts만 구조화된 객체 배열이라 JSONB(JSON 문자열 직렬화) 저장,
                 // 나머지 3개는 단순 문자열 배열이라 text[]로 그대로 저장
                 .selectedProducts(toJson(request.selectedProducts()))
+                // 관련 커리큘럼/세션은 선택사항 — 고르지 않으면 null 그대로 저장된다
+                .curriculumId(request.curriculumId())
+                .sessionId(request.sessionId())
                 .jobTitles(request.jobTitles())
                 .studentInvolvement(request.studentInvolvement())
                 .vfdUnderstanding(blankToNull(request.vfdUnderstanding()))

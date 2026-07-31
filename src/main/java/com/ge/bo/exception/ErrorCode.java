@@ -73,6 +73,9 @@ public enum ErrorCode {
     /* Training 신청 내역(관리자 조회) */
     TRAINING_REGISTRATION_NOT_FOUND(HttpStatus.NOT_FOUND, "TRAINING_REGISTRATION_NOT_FOUND", "해당 Training 신청 내역을 찾을 수 없습니다."),
 
+    /* Training Request(비정기 교육 신청, 관리자 조회) */
+    TRAINING_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "TRAINING_REQUEST_NOT_FOUND", "해당 Training Request 신청 내역을 찾을 수 없습니다."),
+
     /* Slug 레지스트리 */
     SLUG_REGISTRY_NOT_FOUND(HttpStatus.NOT_FOUND, "SLUG_REGISTRY_NOT_FOUND", "해당 slug를 찾을 수 없습니다."),
     SLUG_REGISTRY_SLUG_DUPLICATE(HttpStatus.CONFLICT, "SLUG_REGISTRY_SLUG_DUPLICATE", "이미 사용 중인 slug입니다."),

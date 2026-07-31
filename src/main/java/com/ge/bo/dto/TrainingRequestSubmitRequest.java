@@ -100,6 +100,15 @@ public record TrainingRequestSubmitRequest(
         @NotEmpty(message = "교육받을 제품을 선택해주세요.")
         List<SelectedProduct> selectedProducts,
 
+        /**
+         * 관련 커리큘럼(currMgmt-data) page_data.id — 선택사항
+         * 선택 제품에 매칭되는 커리큘럼이 없거나 신청자가 고르지 않으면 null 로 들어온다.
+         */
+        Long curriculumId,
+
+        /** 관련 교육회차(currDtlMgmt-data) page_data.id — 선택사항(커리큘럼만 고르고 세션은 비울 수 있음) */
+        Long sessionId,
+
         List<String> jobTitles,
 
         List<String> studentInvolvement,
