@@ -2,6 +2,7 @@ package com.ge.bo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.common.context.SiteTimeZoneResolver;
+import com.ge.bo.common.search.SearchSqlSupport;
 import com.ge.bo.dto.AdjacentResponse;
 import com.ge.bo.dto.CategoryLv2RowResponse;
 import com.ge.bo.dto.CategoryProductRowResponse;
@@ -762,12 +763,15 @@ public class PageDataService {
 
         // LIKE 와일드카드 이스케이프 — '\' 를 먼저 이스케이프한 뒤 '%'/'_' 를 이스케이프하고 %...% 로 감싼다
         String kw = null;
+        String kwExact = null;
+        String kwPrefix = null;
+        String kwRegex = null;
         if (hasKeyword) {
-            String escaped = q.trim()
-                    .replace("\\", "\\\\")
-                    .replace("%", "\\%")
-                    .replace("_", "\\_");
-            kw = "%" + escaped + "%";
+            String trimmed = q.trim();
+            kw = SearchSqlSupport.toLikePattern(trimmed);
+            kwExact = SearchSqlSupport.toLikeExactPattern(trimmed);
+            kwPrefix = SearchSqlSupport.toLikePrefixPattern(trimmed);
+            kwRegex = SearchSqlSupport.toWordStartRegex(trimmed);
         }
 
         // 공통 WHERE — 공개 게이트 + 사이트 스코프(siteId != null 일 때만)
@@ -812,18 +816,30 @@ public class PageDataService {
             return new FoProductSearchResponse(0L, java.util.Collections.emptyList());
         }
 
-        // 목록(items) — 최신 수정순, 동률 시 id 오름차순, offset 이후 상위 limit 건
+        String relevanceOrder = "";
+        if (hasKeyword) {
+            String titleExpr = "data_json->'product'->>'product_name'";
+            relevanceOrder = " (CASE"
+                + " WHEN " + titleExpr + " ILIKE :kwExact  ESCAPE '\\' THEN 100"
+                + " WHEN " + titleExpr + " ILIKE :kwPrefix ESCAPE '\\' THEN 80"
+                + " WHEN " + titleExpr + " ~* :kwRegex THEN 60"
+                + " WHEN " + titleExpr + " ILIKE :kw ESCAPE '\\' THEN 40"
+                + " ELSE 10 END) DESC,";
+        }
         String listSql = "SELECT id,"
             + "  data_json->'product'->>'product_name'        AS product_name,"
             + "  data_json->'product'->>'product_description' AS product_description,"
             + "  data_json->'product_info'->'image'->>0       AS image_media_id,"
             + "  data_json->'seo'->>'slug'                     AS slug"
             + whereClause
-            + " ORDER BY updated_at DESC NULLS LAST, id ASC"
+            + " ORDER BY" + relevanceOrder + " updated_at DESC NULLS LAST, id ASC"
             + " LIMIT :limit OFFSET :offset";
         Query listQuery = entityManager.createNativeQuery(listSql);
         if (hasKeyword) {
             listQuery.setParameter("kw", kw);
+            listQuery.setParameter("kwExact", kwExact);
+            listQuery.setParameter("kwPrefix", kwPrefix);
+            listQuery.setParameter("kwRegex", kwRegex);
         }
         if (hasCategories) {
             listQuery.setParameter("categoryIds", categoryIds);
@@ -997,11 +1013,11 @@ public class PageDataService {
      * 트레이닝 요청(Training Request) Step4 제품 선택 — Power/Automation 각각 "드롭다운2 옵션 + 체크박스 목록" 2단 구조를 조립한다.
      * - Power: 드롭다운2 = Lv1 카테고리, 체크박스 = 그 하위 Lv2 카테고리(제품 자체가 아님)
      * - Automation: 드롭다운2 = Lv2 카테고리(Lv1은 건너뜀), 체크박스 = 그 하위 실제 제품
-     * 어느 쪽이든 has_training='001' 제품이 하나도 없는 가지는 조인 단계에서 제외된다(빈 드롭다운 방지).
+     * 어느 쪽이든 연결된 제품(product-data)이 하나도 없는 가지는 조인 단계에서 제외된다(빈 드롭다운 방지).
      * 같은 Lv2 아래 제품이 Power/Automation에 섞여 있을 가능성을 고려해 product_type 기준으로 별도 목록 2개를 만든다.
      */
     @Transactional(readOnly = true)
-    public TrainingProductTreeResponse findTrainingProductTree(Long siteId) {
+    public TrainingProductTreeResponse findTrainingProductTree(Long siteId, boolean activeOnly) {
         String sql =
             "SELECT lv1.id AS lv1_id,"
           + "  lv1.data_json->'category'->>'title' AS lv1_title,"
@@ -1025,7 +1041,8 @@ public class PageDataService {
           + " JOIN page_data p"
           + "   ON p.data_slug = 'product-data'"
           + "  AND p.id::text = j.data_json->'product'->>'id'"
-          + "  AND p.data_json->'product'->>'has_training' = '001'"
+          + (activeOnly ? "  AND p.data_json->'product'->>'has_training' = '001'"
+                        + "  AND p.data_json->'product'->>'is_visible' = '001'" : "")
           + "  AND (p.site_id = :siteId OR p.site_id IS NULL)"
           + " WHERE lv2.data_slug = 'category-data'"
           + "  AND lv2.data_json->'category'->>'depth' = '2'"
@@ -1046,7 +1063,7 @@ public class PageDataService {
 
     /**
      * findTrainingProductTree 조회 결과(flat row)를 그대로 평면 DTO 목록으로 변환한다.
-     * 계층 조립(buildTrainingTree)과 동일한 행을 쓰므로 추가 조회가 없고, 같은 has_training='001' 게이트가 적용된 상태다.
+     * 계층 조립(buildTrainingTree)과 동일한 행을 쓰므로 추가 조회가 없다.
      * 같은 제품이 여러 Lv2 아래에 연결되면 연결행(j.id)마다 1건씩 나온다(중복 제거하지 않음 — 호출부가 id 기준으로 판단).
      */
     private List<TrainingProductTreeItemResponse> buildTrainingTreeItems(List<Object[]> rows) {
@@ -1111,6 +1128,50 @@ public class PageDataService {
             nodes.add(new TrainingProductNodeResponse(groupId, groupEntry.getValue(), options));
         }
         return nodes;
+    }
+
+    /**
+     * currDtlMgmt-data의 power_list/automation_list id 목록으로 각 row의 표시명을 직접 조회한다.
+     * category-data를 id로 바로 찾아 category.title 또는 product.product_name을 그대로 반환하며,
+     * depth/부모체인/has_training 등은 보지 않는다 — findTrainingProductTree(제품 연결 트리)와는 용도가 다르다.
+     * depth3 연결행 중 product_name이 자체 캐싱 안 된 경우를 위해 product-data도 LEFT JOIN한다.
+     */
+    @Transactional(readOnly = true)
+    public Map<Long, String> findCategoryNamesByIds(List<Long> ids, Long siteId) {
+        if (ids == null || ids.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        String sql =
+            "SELECT c.id,"
+          + "  COALESCE("
+          + "    c.data_json->'category'->>'title',"
+          + "    c.data_json->'product'->>'product_name',"
+          + "    p.data_json->'product'->>'product_name'"
+          + "  ) AS name"
+          + " FROM page_data c"
+          + " LEFT JOIN page_data p"
+          + "   ON p.data_slug = 'product-data'"
+          + "  AND p.id::text = c.data_json->'product'->>'id'"
+          + "  AND (p.site_id = :siteId OR p.site_id IS NULL)"
+          + " WHERE c.data_slug = 'category-data'"
+          + "  AND c.id IN (:ids)"
+          + "  AND (c.site_id = :siteId OR c.site_id IS NULL)";
+
+        Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("ids", ids);
+        query.setParameter("siteId", siteId);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+        Map<Long, String> names = new LinkedHashMap<>();
+        for (Object[] row : rows) {
+            String name = row[1] != null ? row[1].toString() : null;
+            if (name != null && !name.isBlank()) {
+                names.put(((Number) row[0]).longValue(), name);
+            }
+        }
+        return names;
     }
 
     /**

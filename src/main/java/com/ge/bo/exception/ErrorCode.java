@@ -70,6 +70,9 @@ public enum ErrorCode {
     /* 접속이력 */
     LOGIN_LOG_NOT_FOUND(HttpStatus.NOT_FOUND, "LOGIN_LOG_NOT_FOUND", "해당 접속이력을 찾을 수 없습니다."),
 
+    /* 이메일 발송 이력 */
+    EMAIL_SEND_HIS_NOT_FOUND(HttpStatus.NOT_FOUND, "EMAIL_SEND_HIS_NOT_FOUND", "해당 이메일 발송 이력을 찾을 수 없습니다."),
+
     /* Training 신청 내역(관리자 조회) */
     TRAINING_REGISTRATION_NOT_FOUND(HttpStatus.NOT_FOUND, "TRAINING_REGISTRATION_NOT_FOUND", "해당 Training 신청 내역을 찾을 수 없습니다."),
 

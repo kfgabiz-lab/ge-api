@@ -165,18 +165,6 @@ public class TrainingRequest {
     @Column(name = "selected_products", nullable = false, columnDefinition = "jsonb")
     private String selectedProducts;
 
-    /**
-     * 관련 커리큘럼(코스) page_data.id — 선택사항(신청자가 고르지 않으면 NULL)
-     * TrainingRegistration.curriculumId 와 동일하게 JPA 연관관계 없이 scalar Long 으로 저장한다
-     * (page_data 는 범용 테이블이라 FK 를 걸지 않고, 과거 접수 데이터 무결성 보존이 우선).
-     */
-    @Column(name = "curriculum_id")
-    private Long curriculumId;
-
-    /** 관련 교육회차(세션) page_data.id — 선택사항(커리큘럼을 골라도 세션은 안 고를 수 있어 NULL 허용) */
-    @Column(name = "session_id")
-    private Long sessionId;
-
     /** 수강자 직무 배열(VFD 조건부 질문, 선택) */
     @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(name = "job_titles", columnDefinition = "text[]")
@@ -222,7 +210,7 @@ public class TrainingRequest {
                            String studentCount, String trainingFormat, String locationName,
                            String locationStreetAddress, String locationAddress2, String locationCity,
                            String locationState, String locationZip, String contactPerson, String contactDetails,
-                           String selectedProducts, Long curriculumId, Long sessionId,
+                           String selectedProducts,
                            List<String> jobTitles, List<String> studentInvolvement,
                            String vfdUnderstanding, List<String> vfdUnderstandingTopics, String comments,
                            Boolean consentChecked, String createdIp) {
@@ -255,8 +243,6 @@ public class TrainingRequest {
         this.contactPerson = contactPerson;
         this.contactDetails = contactDetails;
         this.selectedProducts = selectedProducts;
-        this.curriculumId = curriculumId;
-        this.sessionId = sessionId;
         this.jobTitles = jobTitles;
         this.studentInvolvement = studentInvolvement;
         this.vfdUnderstanding = vfdUnderstanding;

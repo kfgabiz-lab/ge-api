@@ -36,8 +36,6 @@ public class TrainingRequestAdminController {
      * @param trainingScheduleType 분류 필터 코드(TRAININGSCHEDULETYPE: 01=정기/02=비정기, 01이면 항상 0건)
      * @param trainingTrack    Training 필터(training_track 원본값: engineering/sales)
      * @param trainingFormat   교육 형태 필터 코드(TRAININGTYPE: 001/002)
-     * @param curriculumTitle  Course명 필터(curriculum_id로 조인한 커리큘럼 제목 부분일치)
-     * @param sessionTitle     제목 필터(session_id로 조인한 세션 제목 부분일치)
      * @param searchPeriodType 검색 기간 구분(SEARCHPERIODTYPE: 01=접수일시/02=희망시작일/03=희망종료일)
      * @param startDate        기간 시작 필터
      * @param endDate          기간 종료 필터
@@ -48,15 +46,13 @@ public class TrainingRequestAdminController {
             @RequestParam(required = false) String trainingScheduleType,
             @RequestParam(required = false) String trainingTrack,
             @RequestParam(required = false) String trainingFormat,
-            @RequestParam(required = false) String curriculumTitle,
-            @RequestParam(required = false) String sessionTitle,
             @RequestParam(required = false) String searchPeriodType,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime endDate,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
         return ResponseEntity.ok(
                 trainingRequestAdminService.getList(trainingScheduleType, trainingTrack, trainingFormat,
-                        curriculumTitle, sessionTitle, searchPeriodType, startDate, endDate, pageable));
+                        searchPeriodType, startDate, endDate, pageable));
     }
 
     /**

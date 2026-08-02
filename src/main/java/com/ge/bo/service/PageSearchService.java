@@ -88,6 +88,9 @@ public class PageSearchService {
         // 키워드 패턴 — 공용 규칙(SearchSqlSupport.toLikePattern) 재사용.
         // 대상 컬럼(title/text)이 모두 평문이므로 raw q 만 쓴다(HTML 인코딩 변형 미사용).
         String kw = hasKeyword ? SearchSqlSupport.toLikePattern(q.trim()) : null;
+        String kwExact = hasKeyword ? SearchSqlSupport.toLikeExactPattern(q.trim()) : null;
+        String kwPrefix = hasKeyword ? SearchSqlSupport.toLikePrefixPattern(q.trim()) : null;
+        String kwRegex = hasKeyword ? SearchSqlSupport.toWordStartRegex(q.trim()) : null;
 
         // 분류 필터 파싱 — 미지정/빈 값이면 필터 없이 전체 노출.
         Set<String> sectionTokens = parseSections(sections);
@@ -97,6 +100,9 @@ public class PageSearchService {
         Query query = entityManager.createNativeQuery(buildSql(hasKeyword, hasSections));
         if (hasKeyword) {
             query.setParameter("q", kw);
+            query.setParameter("qExact", kwExact);
+            query.setParameter("qPrefix", kwPrefix);
+            query.setParameter("qRegex", kwRegex);
         }
         if (hasSections) {
             query.setParameter("sections", new ArrayList<>(sectionTokens));
@@ -156,8 +162,18 @@ public class PageSearchService {
              .append("  cd.name::text AS section_name,")
              // URL 단위 대표행 선정: title 보유 행 우선((t.title IS NULL) 이 false=0 → 앞으로), 그다음 최신 등록순.
              .append("  ROW_NUMBER() OVER (PARTITION BY m.url")
-             .append("    ORDER BY (t.title IS NULL), t.created_at DESC, t.id DESC) AS rn")
-             .append(" FROM search_manage m")
+             .append("    ORDER BY (t.title IS NULL), t.created_at DESC, t.id DESC) AS rn,");
+        if (hasKeyword) {
+            inner.append("  (CASE")
+                 .append("    WHEN t.title ILIKE :qExact  ESCAPE '\\' THEN 100")
+                 .append("    WHEN t.title ILIKE :qPrefix ESCAPE '\\' THEN 80")
+                 .append("    WHEN t.title ~* :qRegex THEN 60")
+                 .append("    WHEN t.title ILIKE :q ESCAPE '\\' THEN 40")
+                 .append("    ELSE 10 END)::int AS score");
+        } else {
+            inner.append("  0::int AS score");
+        }
+        inner.append(" FROM search_manage m")
              .append(" JOIN search_manage_text t ON t.search_manage_id = m.id")
              // 분류 표시명 — FK 없는 얕은 참조(DownloadCenterService doc_type 패턴과 동일). 매칭 실패해도 NULL 로 방어.
              .append(" LEFT JOIN code_detail cd")
@@ -180,8 +196,7 @@ public class PageSearchService {
           .append("  count(*) OVER () AS total_count")
           .append(" FROM (").append(inner).append(") x")
           .append(" WHERE x.rn = 1")
-          // 페이지(=관리행) 자체의 최신 갱신 순. 동일 시각이 존재할 수 있어 id DESC tie-break 필수(Media 와 동일 규약).
-          .append(" ORDER BY x.sort_at DESC, x.id DESC")
+          .append(" ORDER BY x.score DESC, x.sort_at DESC, x.id DESC")
           .append(" LIMIT :size OFFSET :offset");
         return sb.toString();
     }

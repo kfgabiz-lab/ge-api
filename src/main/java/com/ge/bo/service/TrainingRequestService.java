@@ -1,6 +1,7 @@
 package com.ge.bo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ge.bo.common.mail.MailService;
 import com.ge.bo.dto.TrainingRequestSubmitRequest;
 import com.ge.bo.dto.TrainingRequestSubmitResponse;
 import com.ge.bo.entity.TrainingRequest;
@@ -20,16 +21,19 @@ import java.time.format.DateTimeParseException;
  * - 처리 순서: reCAPTCHA 검증 → 날짜 파싱 → selectedProducts JSON 직렬화 → insert
  * - TrainingRegistrationService 의 레이어 구조를 그대로 본떠 작성(reCAPTCHA 공용 서비스 재사용).
  * - 신청자가 입력한 값을 그대로 보존하는 이력성 저장이라 코드값 변환/공통코드 검증은 하지 않는다.
- * - 메일 발송은 스코프 제외.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class TrainingRequestService {
 
+    /** 공통코드 EMAILSENDTYPE — 비정기 Training(Training Request) */
+    private static final String EMAIL_SEND_TYPE_IRREGULAR_TRAINING = "03";
+
     private final TrainingRequestRepository trainingRequestRepository;
     private final RecaptchaService recaptchaService;
     private final ObjectMapper objectMapper;
+    private final MailService mailService;
 
     /**
      * 교육 신청 접수 처리 — reCAPTCHA 검증 → 저장 → 결과 반환
@@ -84,9 +88,6 @@ public class TrainingRequestService {
                 // Step4 — selectedProducts만 구조화된 객체 배열이라 JSONB(JSON 문자열 직렬화) 저장,
                 // 나머지 3개는 단순 문자열 배열이라 text[]로 그대로 저장
                 .selectedProducts(toJson(request.selectedProducts()))
-                // 관련 커리큘럼/세션은 선택사항 — 고르지 않으면 null 그대로 저장된다
-                .curriculumId(request.curriculumId())
-                .sessionId(request.sessionId())
                 .jobTitles(request.jobTitles())
                 .studentInvolvement(request.studentInvolvement())
                 .vfdUnderstanding(blankToNull(request.vfdUnderstanding()))
@@ -102,7 +103,31 @@ public class TrainingRequestService {
         log.info("Training Request 접수 저장 완료 - id={}, trainingFormat={}, productCount={}",
                 saved.getId(), saved.getTrainingFormat(), request.selectedProducts().size());
 
+        // 발송 확인용 임시 발송 — id/trainingTrack만 담는다(템플릿 확정 전까지)
+        // 발송 이력 저장(성공/실패 모두)은 MailService 가 공통으로 처리
+        mailService.sendMail(
+                request.email(),
+                "Training Request Test",
+                "<p>id: %d</p><p>trainingTrack: %s</p>".formatted(saved.getId(), request.trainingTrack()),
+                EMAIL_SEND_TYPE_IRREGULAR_TRAINING,
+                toTrainingCourseCode(request.trainingTrack()),
+                null
+        );
+
         return new TrainingRequestSubmitResponse(saved.getId());
+    }
+
+    /** trainingTrack(engineering/service/sales) → 공통코드 TRAININGCOURSE(01/02/03) 매핑 — 이메일 이력 상세분류용 */
+    private String toTrainingCourseCode(String trainingTrack) {
+        if (trainingTrack == null) {
+            return null;
+        }
+        return switch (trainingTrack) {
+            case "engineering" -> "01";
+            case "service" -> "02";
+            case "sales" -> "03";
+            default -> null;
+        };
     }
 
     /** "yyyy-MM-dd" 파싱. 형식 불량 시 400. */

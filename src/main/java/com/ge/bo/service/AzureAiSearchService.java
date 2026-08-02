@@ -56,7 +56,7 @@ public class AzureAiSearchService {
 
         if (!result.isSuccess() || result.getData() == null) {
             log.warn("Azure AI Search API 실패 또는 결과 없음. statusCode={} error={}", result.getStatusCode(), result.getErrorMessage());
-
+            return null;
         }
         log.info("AzureAiSearchResponse : {}", result.getData().toString());
         return result.getData();

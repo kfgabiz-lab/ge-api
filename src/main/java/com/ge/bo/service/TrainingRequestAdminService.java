@@ -5,10 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.common.excel.EntityExcelExportService;
 import com.ge.bo.dto.TrainingRequestDetailResponse;
 import com.ge.bo.dto.TrainingRequestResponse;
-import com.ge.bo.entity.PageData;
 import com.ge.bo.entity.TrainingRequest;
 import com.ge.bo.exception.ErrorCode;
-import com.ge.bo.repository.PageDataRepository;
 import com.ge.bo.repository.TrainingRequestRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -41,7 +39,6 @@ import java.util.Map;
 
 /**
  * Training Request(비정기 교육 신청, 관리자 조회) 서비스
- * - training_request(자체 컬럼) + page_data 2단계 조인(curriculum_id → currMgmt-data, session_id → currDtlMgmt-data)
  * - JSONB(data_json) 내부 경로를 검색 조건/정렬 대상으로 써야 해서 JPA Criteria(Specification) 대신
  *   EntityManager 네이티브 쿼리 채택 (TrainingRegistrationAdminService와 동일 패턴 재사용)
  * - 응답 계약은 기존과 동일하게 Spring Page(PageImpl)로 유지 — FE(page.tsx)의 content/totalElements/totalPages 사용부 무변경
@@ -53,7 +50,6 @@ import java.util.Map;
 public class TrainingRequestAdminService {
 
     private final TrainingRequestRepository trainingRequestRepository;
-    private final PageDataRepository pageDataRepository;
     private final ObjectMapper objectMapper;
     private final EntityExcelExportService entityExcelExportService;
 
@@ -75,19 +71,7 @@ public class TrainingRequestAdminService {
     /** 분류(TRAININGSCHEDULETYPE) 코드 — 비정기 Training. training_request는 이 값만 존재(설계서 4절 대응) */
     private static final String TRAINING_SCHEDULE_TYPE_IRREGULAR = "02";
 
-    /** curriculum(코스) 조인 대상 slug */
-    private static final String CURR_SLUG = "currMgmt-data";
-    /** session(오퍼링) 조인 대상 slug */
-    private static final String SESS_SLUG = "currDtlMgmt-data";
-
-    /** 조인된 커리큘럼 제목(Course명) JSON 경로 */
-    private static final String CURR_TITLE_EXPR = "curr.data_json->'curriculum'->>'title'";
-    /** 조인된 세션 제목 JSON 경로 */
-    private static final String SESS_TITLE_EXPR = "sess.data_json->'curriculum_detail2'->>'title'";
-
-    private static final String FROM_JOIN = " FROM training_request tr"
-            + " LEFT JOIN page_data curr ON curr.id = tr.curriculum_id AND curr.data_slug = '" + CURR_SLUG + "'"
-            + " LEFT JOIN page_data sess ON sess.id = tr.session_id AND sess.data_slug = '" + SESS_SLUG + "'";
+    private static final String FROM_JOIN = " FROM training_request tr";
 
     /**
      * 정렬 화이트리스트 — FE가 넘긴 sort 프로퍼티만 SQL 표현식으로 치환한다.
@@ -105,9 +89,7 @@ public class TrainingRequestAdminService {
             Map.entry("trainingFormat", "tr.training_format"),
             Map.entry("scheduleStart", "tr.schedule_start"),
             Map.entry("scheduleEnd", "tr.schedule_end"),
-            Map.entry("studentCount", "tr.student_count"),
-            Map.entry("curriculumTitle", CURR_TITLE_EXPR),
-            Map.entry("sessionTitle", SESS_TITLE_EXPR));
+            Map.entry("studentCount", "tr.student_count"));
 
     private static final String DEFAULT_ORDER_BY = " ORDER BY tr.created_at DESC";
 
@@ -124,8 +106,6 @@ public class TrainingRequestAdminService {
      *                              02 또는 미지정이면 조건 없음
      * @param trainingTrack    Training 트랙(training_track 정확일치: engineering/sales, null이면 전체)
      * @param trainingFormat   교육 형태 코드(TRAININGTYPE: 001/002, null이면 전체)
-     * @param curriculumTitle  Course명 키워드(조인된 커리큘럼 제목 부분일치, 대소문자 무시)
-     * @param sessionTitle     제목 키워드(조인된 세션 제목 부분일치, 대소문자 무시)
      * @param searchPeriodType 검색 기간 구분(SEARCHPERIODTYPE: 01=접수일시/02=희망시작일/03=희망종료일, 기본 01)
      * @param startDate        기간 시작 (null이면 전체)
      * @param endDate          기간 종료 (null이면 전체)
@@ -133,7 +113,7 @@ public class TrainingRequestAdminService {
      */
     @Transactional(readOnly = true)
     public Page<TrainingRequestResponse> getList(String trainingScheduleType, String trainingTrack, String trainingFormat,
-                                                  String curriculumTitle, String sessionTitle, String searchPeriodType,
+                                                  String searchPeriodType,
                                                   OffsetDateTime startDate, OffsetDateTime endDate,
                                                   Pageable pageable) {
 
@@ -154,12 +134,6 @@ public class TrainingRequestAdminService {
         if (StringUtils.isNotBlank(trainingFormat)) {
             where.append(" AND tr.training_format = :trainingFormat");
         }
-        if (StringUtils.isNotBlank(curriculumTitle)) {
-            where.append(" AND ").append(CURR_TITLE_EXPR).append(" ILIKE :curriculumTitle");
-        }
-        if (StringUtils.isNotBlank(sessionTitle)) {
-            where.append(" AND ").append(SESS_TITLE_EXPR).append(" ILIKE :sessionTitle");
-        }
         String periodColumn = periodColumnOf(periodType);
         if (startDate != null) {
             where.append(" AND ").append(periodColumn)
@@ -172,8 +146,7 @@ public class TrainingRequestAdminService {
 
         String countSql = "SELECT COUNT(*)" + FROM_JOIN + where;
         Query countQuery = entityManager.createNativeQuery(countSql);
-        bindListFilters(countQuery, trainingTrack, trainingFormat, curriculumTitle, sessionTitle,
-                periodIsDate, startDate, endDate);
+        bindListFilters(countQuery, trainingTrack, trainingFormat, periodIsDate, startDate, endDate);
         long totalElements = ((Number) countQuery.getSingleResult()).longValue();
 
         if (totalElements == 0) {
@@ -182,15 +155,12 @@ public class TrainingRequestAdminService {
 
         String dataSql = "SELECT"
                 + " tr.id, tr.training_track, tr.first_name, tr.last_name, tr.company, tr.email, tr.phone,"
-                + " tr.training_format, tr.schedule_start, tr.schedule_end, tr.student_count, tr.created_at,"
-                + " " + CURR_TITLE_EXPR + " AS curriculum_title,"
-                + " " + SESS_TITLE_EXPR + " AS session_title"
+                + " tr.training_format, tr.schedule_start, tr.schedule_end, tr.student_count, tr.created_at"
                 + FROM_JOIN + where
                 + buildOrderBy(pageable.getSort())
                 + " LIMIT :size OFFSET :offset";
         Query dataQuery = entityManager.createNativeQuery(dataSql);
-        bindListFilters(dataQuery, trainingTrack, trainingFormat, curriculumTitle, sessionTitle,
-                periodIsDate, startDate, endDate);
+        bindListFilters(dataQuery, trainingTrack, trainingFormat, periodIsDate, startDate, endDate);
         dataQuery.setParameter("size", pageable.getPageSize());
         dataQuery.setParameter("offset", pageable.getOffset());
 
@@ -233,8 +203,7 @@ public class TrainingRequestAdminService {
     }
 
     /** COUNT/DATA 쿼리 공용 필터 파라미터 바인딩 — WHERE 절 조립 조건과 반드시 동일하게 유지 */
-    private void bindListFilters(Query query, String trainingTrack, String trainingFormat,
-                                  String curriculumTitle, String sessionTitle, boolean periodIsDate,
+    private void bindListFilters(Query query, String trainingTrack, String trainingFormat, boolean periodIsDate,
                                   OffsetDateTime startDate, OffsetDateTime endDate) {
         if (StringUtils.isNotBlank(trainingTrack)) {
             query.setParameter("trainingTrack", trainingTrack.trim());
@@ -242,12 +211,6 @@ public class TrainingRequestAdminService {
         if (StringUtils.isNotBlank(trainingFormat)) {
             String format = trainingFormat.trim();
             query.setParameter("trainingFormat", TRAINING_FORMAT_CODE_MAP.getOrDefault(format, format));
-        }
-        if (StringUtils.isNotBlank(curriculumTitle)) {
-            query.setParameter("curriculumTitle", "%" + curriculumTitle.trim() + "%");
-        }
-        if (StringUtils.isNotBlank(sessionTitle)) {
-            query.setParameter("sessionTitle", "%" + sessionTitle.trim() + "%");
         }
         if (startDate != null) {
             query.setParameter("periodFrom", periodIsDate
@@ -272,8 +235,6 @@ public class TrainingRequestAdminService {
                 (String) row[5],
                 (String) row[6],
                 (String) row[7],
-                (String) row[12],
-                (String) row[13],
                 toLocalDate(row[8]),
                 toLocalDate(row[9]),
                 (String) row[10],
@@ -283,8 +244,7 @@ public class TrainingRequestAdminService {
     /* ══════════ 단건 조회 ══════════ */
 
     /**
-     * 단건 상세 조회 — selectedProducts(jsonb) 파싱해 제품명 목록 보강 +
-     * curriculumId/sessionId로 page_data를 조회해 Course명/제목 보강
+     * 단건 상세 조회 — selectedProducts(jsonb) 파싱해 제품명 목록 보강
      * (단건이라 목록의 네이티브 JOIN 없이 리포지토리 조회 재사용 — TrainingRegistrationAdminService.getOne과 동일)
      */
     @Transactional(readOnly = true)
@@ -292,52 +252,8 @@ public class TrainingRequestAdminService {
         TrainingRequest entity = trainingRequestRepository.findById(id)
                 .orElseThrow(ErrorCode.TRAINING_REQUEST_NOT_FOUND::toException);
 
-        String curriculumTitle = asString(findSection(entity.getCurriculumId(), "curriculum").get("title"));
-        String sessionTitle = asString(findSection(entity.getSessionId(), "curriculum_detail2").get("title"));
-
         return TrainingRequestDetailResponse.from(entity,
-                parseSelectedProductNames(entity.getSelectedProducts()), curriculumTitle, sessionTitle);
-    }
-
-    /** page_data(pageDataId)의 data_json을 파싱하여 지정 섹션 키(Map) 반환 — 없으면 빈 Map */
-    private Map<String, Object> findSection(Long pageDataId, String sectionKey) {
-        if (pageDataId == null) {
-            return Collections.emptyMap();
-        }
-        return pageDataRepository.findById(pageDataId)
-                .map(PageData::getDataJson)
-                .map(this::parseDataJson)
-                .map(json -> asMap(json.get(sectionKey)))
-                .orElse(Collections.emptyMap());
-    }
-
-    /** data_json(JSON 문자열) → Map 파싱 (실패 시 빈 Map) */
-    private Map<String, Object> parseDataJson(String dataJson) {
-        try {
-            if (dataJson == null) {
-                return Collections.emptyMap();
-            }
-            return objectMapper.readValue(dataJson, new TypeReference<>() {
-            });
-        } catch (Exception e) {
-            log.warn("Training Request 상세 조회 - page_data.data_json 파싱 실패: {}", e.getMessage());
-            return Collections.emptyMap();
-        }
-    }
-
-    /** Object → Map 안전 캐스팅 (섹션이 없거나 예상과 다른 타입이면 빈 Map) */
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> asMap(Object obj) {
-        return obj instanceof Map ? (Map<String, Object>) obj : Collections.emptyMap();
-    }
-
-    /** Object → String 안전 변환 (빈 문자열은 null로 정규화해 FE의 "-" 폴백이 걸리도록 함) */
-    private String asString(Object obj) {
-        if (obj == null) {
-            return null;
-        }
-        String value = obj.toString();
-        return StringUtils.isBlank(value) ? null : value;
+                parseSelectedProductNames(entity.getSelectedProducts()));
     }
 
     /** selectedProducts(jsonb 문자열, [{id,name,type,groupId,groupTitle}]) → name 목록 (파싱 실패 시 빈 목록) */

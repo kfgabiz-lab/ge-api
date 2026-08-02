@@ -8,16 +8,12 @@ import com.ge.bo.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.HtmlUtils;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.Query;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -28,13 +24,12 @@ public class NewsletterInsightsService {
 	private static final String EMAIL_RECIPIENT_GROUP_CODE      = "EMAIL_RECIPIENT"; //메일 수신자 공통코드
 	private static final String EMAIL_RECIPIENT_NEWSLETTER_CODE = "NEWSLETTER";
     private static final DateTimeFormatter SUBJECT_DATE_FORMAT  = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    // page_data.site_id 기본값 — X-Site-Id 헤더가 없는 경우에만 사용(기존 하드코딩 값 유지, 회귀 방지)
-    private static final Long DEFAULT_SITE_ID = 1L;
+    // 공통코드 EMAILSENDTYPE — 뉴스레터
+    private static final String EMAIL_SEND_TYPE_NEWSLETTER = "01";
 
     private final MailService mailService;
-    //page_data 저장용
+    //공통코드(수신자 이메일) 조회용
     private final EntityManager entityManager;
-    private final ObjectMapper objectMapper;
     private final SiteTimeZoneResolver siteTimeZoneResolver;
 
     //뉴스레터 메일 전송
@@ -49,12 +44,11 @@ public class NewsletterInsightsService {
 
         //1. 공통코드 EMAIL_RECIPIENT 에서 CODE가 NEWSLETTER 인 수신자 이메일 조회
         String recipientEmail = findNewsletterRecipientEmailName();
-        //2. 이메일 발송 후 발송 상태 반환
-        String sendStatus     = mailService.sendMail(recipientEmail, subject, content);
-        //3. 이메일 발송 내역 저장 호출
-        saveEmailSendHistory(now, sendStatus, recipientEmail, siteId != null ? siteId : DEFAULT_SITE_ID);
+        //2. 이메일 발송 — 발송 이력 저장(성공/실패 모두)은 MailService 가 공통으로 처리
+        //   뉴스레터는 상세분류(TRAININGCOURSE) 대상이 아니므로 null
+        mailService.sendMail(recipientEmail, subject, content, EMAIL_SEND_TYPE_NEWSLETTER, null, siteId);
     }
-    
+
     //메일 내용 세팅
     private String buildMailContent(NewsletterInsightsRequest request) {
         String email           = HtmlUtils.htmlEscape(request.email());
@@ -67,49 +61,7 @@ public class NewsletterInsightsService {
                 </div>
                 """.formatted(email, areasOfInterest);
     }
-    
-    //이메일 발송 내역 저장
-    private void saveEmailSendHistory(OffsetDateTime sentAt, String sendStatus, String recipientEmail, Long siteId) {
-        Map<String, Object> dataJson = new LinkedHashMap<>();
-        dataJson.put("emailSendHis", Map.of(
-                     "emailSendType", "01",						  //분류(공통코드 EMAILSENDTYPE)
-                     "recipientEmail", recipientEmail, 			  //수신Email
-                     "sendStatus", sendStatus,					  //발송상태(공통코드 SENDSTATUS)
-                     "sentAt", sentAt.format(SUBJECT_DATE_FORMAT) //발송일시
-        ));
 
-        try {
-            String dataJsonStr = objectMapper.writeValueAsString(dataJson);
-
-            Query insertQuery = entityManager.createNativeQuery("""
-                    INSERT INTO page_data
-                      (template_slug, data_slug, data_json, site_id, created_by, created_at, updated_by, updated_at)
-                    VALUES
-                      (:templateSlug, :dataSlug, CAST(:dataJson AS jsonb), :siteId, NULL, NOW(), NULL, NOW())
-                    RETURNING id
-                    """);
-            insertQuery.setParameter("templateSlug", "emailSendHis-list");
-            insertQuery.setParameter("dataSlug"    , "emailSendHis-data");
-            insertQuery.setParameter("dataJson"    , dataJsonStr);
-            insertQuery.setParameter("siteId"      , siteId);
-
-            Long newId = ((Number) insertQuery.getSingleResult()).longValue();
-
-            dataJson.put("id", newId);
-
-            Query updateQuery = entityManager.createNativeQuery("""
-                    UPDATE page_data
-                    SET data_json = CAST(:dataJson AS jsonb)
-                    WHERE id = :id
-                    """);
-            updateQuery.setParameter("dataJson", objectMapper.writeValueAsString(dataJson));
-            updateQuery.setParameter("id"      , newId);
-            updateQuery.executeUpdate();
-        } catch (Exception e) {
-            throw new IllegalStateException("이메일 발송 이력 저장 실패", e);
-        }
-    }
-    
     //공통코드 사용하여 수신자 이메일 주소 조회
     private String findNewsletterRecipientEmailName() {
         List<?> results = entityManager.createNativeQuery("""

@@ -40,8 +40,6 @@ import java.util.regex.Pattern;
  *  - pg   : base 에 소스 필터 + 정렬 + LIMIT/OFFSET 적용(페이징은 반드시 이 CTE 안에서만)
  *  - 최종 SELECT 는 agg LEFT JOIN pg ON true — 결과가 0행이어도 counts 1행이 남는다(COUNT(*) OVER() 로 대체 불가).
  *
- * 정렬은 sort_ts(timestamptz 원본) DESC NULLS LAST, tie-break 로 source_type, row_id DESC.
- * (문자열 to_char 로 정렬하면 TZ 에 따라 순서가 틀어지므로 금지)
  * 이미지/링크/표시날짜는 SQL 이 아니라 Java 매핑단에서 조립한다.
  * (TECH_HUB=YouTube 썸네일, 그 외=page_file 프록시 URL / link=sourceType+id 로 FE 실라우트 조립)
  */
@@ -97,10 +95,16 @@ public class MediaSearchService {
         // kwHtml : HTML 원문 컬럼(ic.content)용 — 엔티티 인코딩 후 LIKE 이스케이프
         String kw = null;
         String kwHtml = null;
+        String kwExact = null;
+        String kwPrefix = null;
+        String kwRegex = null;
         if (hasKeyword) {
             String trimmed = q.trim();
             kw = SearchSqlSupport.toLikePattern(trimmed);
             kwHtml = SearchSqlSupport.toHtmlLikePattern(trimmed);
+            kwExact = SearchSqlSupport.toLikeExactPattern(trimmed);
+            kwPrefix = SearchSqlSupport.toLikePrefixPattern(trimmed);
+            kwRegex = SearchSqlSupport.toWordStartRegex(trimmed);
         }
 
         boolean hasSite = siteId != null;
@@ -122,7 +126,7 @@ public class MediaSearchService {
             + " pg AS ("
             + "   SELECT b.* FROM base b"
             + "   WHERE b.source_type IN (:sources)"
-            + "   ORDER BY b.sort_ts DESC NULLS LAST, b.source_type, b.row_id DESC"
+            + "   ORDER BY b.score DESC, b.sort_ts DESC NULLS LAST, b.source_type, b.row_id DESC"
             + "   LIMIT :size OFFSET :offset"
             + " )"
             + " SELECT a.c_tech_hub, a.c_blog, a.c_press, a.c_article,"
@@ -130,10 +134,11 @@ public class MediaSearchService {
             + " FROM agg a"
             + " LEFT JOIN pg p ON true"
             // 바깥 JOIN 이 순서를 재배열하므로 최종 SELECT 에서 ORDER BY 를 반드시 재기술한다.
-            + " ORDER BY p.sort_ts DESC NULLS LAST, p.source_type, p.row_id DESC";
+            + " ORDER BY p.score DESC, p.sort_ts DESC NULLS LAST, p.source_type, p.row_id DESC";
 
         Query query = entityManager.createNativeQuery(sql);
-        bindCommon(query, hasKeyword, kw, kwHtml, hasSite, siteId, tokens, safeSize, safePage);
+        bindCommon(query, hasKeyword, kw, kwHtml, kwExact, kwPrefix, kwRegex,
+                hasSite, siteId, tokens, safeSize, safePage);
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
@@ -193,8 +198,17 @@ public class MediaSearchService {
           .append("  rep.video_url::text AS video_url,")
           .append("  NULL::bigint AS file_id,")
           // timestamptz 원본 그대로 — 문자열 변환 시 TZ 에 따라 정렬이 틀어진다.
-          .append("  m.source_updated_at AS sort_ts")
-          .append(" FROM contents_master m")
+          .append("  m.source_updated_at AS sort_ts,");
+        if (hasKeyword) {
+            sb.append("  (CASE")
+              .append("    WHEN COALESCE(m.nahp_title, m.doc_title) ILIKE :qExact  ESCAPE '\\' THEN 100")
+              .append("    WHEN COALESCE(m.nahp_title, m.doc_title) ILIKE :qPrefix ESCAPE '\\' THEN 80")
+              .append("    WHEN COALESCE(m.nahp_title, m.doc_title) ~* :qRegex THEN 60")
+              .append("    ELSE 40 END)::int AS score");
+        } else {
+            sb.append("  0::int AS score");
+        }
+        sb.append(" FROM contents_master m")
           // 대표 버전(Chapter 1 = sort_key 최대)의 video_url — Java 에서 썸네일 조립용
           .append(" JOIN LATERAL (")
           .append("   SELECT v.video_url FROM contents_version v")
@@ -230,8 +244,18 @@ public class MediaSearchService {
           .append("  ").append(snippetExpr).append(" AS snippet,")
           .append("  NULL::text AS video_url,")
           .append("  ic.file_id AS file_id,")
-          .append("  ic.updated_at AS sort_ts")
-          .append(" FROM integration_contents ic")
+          .append("  ic.updated_at AS sort_ts,");
+        if (hasKeyword) {
+            sb.append("  (CASE")
+              .append("    WHEN ic.title ILIKE :qExact  ESCAPE '\\' THEN 100")
+              .append("    WHEN ic.title ILIKE :qPrefix ESCAPE '\\' THEN 80")
+              .append("    WHEN ic.title ~* :qRegex THEN 60")
+              .append("    WHEN ic.title ILIKE :q ESCAPE '\\' THEN 40")
+              .append("    ELSE 10 END)::int AS score");
+        } else {
+            sb.append("  0::int AS score");
+        }
+        sb.append(" FROM integration_contents ic")
           .append(" WHERE ic.is_visible = true AND ic.type IN ('B','P','A')");
         if (hasSite) {
             sb.append(" AND (ic.site_id = :siteId OR ic.site_id IS NULL)");
@@ -246,11 +270,15 @@ public class MediaSearchService {
 
     // 공통 파라미터 바인딩
     private void bindCommon(Query query, boolean hasKeyword, String kw, String kwHtml,
+                            String kwExact, String kwPrefix, String kwRegex,
                             boolean hasSite, Long siteId, Set<String> tokens,
                             int safeSize, int safePage) {
         if (hasKeyword) {
             query.setParameter("q", kw);          // 평문 컬럼용(title 계열)
             query.setParameter("qHtml", kwHtml);  // HTML 원문 컬럼용(ic.content)
+            query.setParameter("qExact", kwExact);
+            query.setParameter("qPrefix", kwPrefix);
+            query.setParameter("qRegex", kwRegex);
         }
         if (hasSite) query.setParameter("siteId", siteId);
         if (SNIPPET_MAX_CHARS > 0) query.setParameter("snippetCap", SNIPPET_MAX_CHARS);

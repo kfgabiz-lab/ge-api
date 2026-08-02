@@ -1,5 +1,6 @@
 package com.ge.bo.service;
 
+import com.ge.bo.common.search.SearchSqlSupport;
 import com.ge.bo.dto.DownloadCenterCategoryCountResponse;
 import com.ge.bo.dto.DownloadCenterDocTypeCountResponse;
 import com.ge.bo.dto.DownloadCenterContentPageResponse;
@@ -170,8 +171,6 @@ public class DownloadCenterService {
      * FO 통합검색용 문서 키워드 검색 — 제목(nahp_title 우선, 없으면 doc_title) 부분일치.
      * - q null/blank 이면 전체 덤프 방지를 위해 즉시 {0, []} 반환.
      * - 게이트는 목록 조회와 동일한 MASTER_GATE(노출 + 미삭제 + 영상 제외 + 노출 버전/파일 존재) 재사용.
-     * - 정렬: doc_type 공통코드(DOC_TYPE) sort_order → source_updated_at DESC → id DESC.
-     *   공통코드에 없는 doc_type 은 code_detail LEFT JOIN + NULLS LAST 로 맨 뒤에 정렬해 결과 누락을 막는다.
      * - 상위 N id 조회 후 loadContents(pageIds) 로 버전/파일 중첩을 완성(pageIds 순서 보존).
      *
      * @param q     검색 키워드
@@ -186,11 +185,11 @@ public class DownloadCenterService {
         int safeLimit = limit <= 0 ? 10 : limit;
 
         // LIKE 와일드카드 이스케이프 — '\' 를 먼저 이스케이프한 뒤 '%'/'_' 를 이스케이프하고 %...% 로 감싼다(PageDataService.searchProducts 동일 방식)
-        String escaped = q.trim()
-                .replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_");
-        String kw = "%" + escaped + "%";
+        String trimmed = q.trim();
+        String kw = SearchSqlSupport.toLikePattern(trimmed);
+        String kwExact = SearchSqlSupport.toLikeExactPattern(trimmed);
+        String kwPrefix = SearchSqlSupport.toLikePrefixPattern(trimmed);
+        String kwRegex = SearchSqlSupport.toWordStartRegex(trimmed);
 
         // ① 전체 매칭 건수(total) — limit 무관
         Query countQuery = entityManager.createNativeQuery(
@@ -209,11 +208,19 @@ public class DownloadCenterService {
             + DOC_TYPE_CODE_JOIN
             + " WHERE" + MASTER_GATE
             + " AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
-            + " ORDER BY cd.sort_order ASC NULLS LAST,"
+            + " ORDER BY (CASE"
+            + "            WHEN COALESCE(m.nahp_title, m.doc_title) ILIKE :qExact  ESCAPE '\\' THEN 100"
+            + "            WHEN COALESCE(m.nahp_title, m.doc_title) ILIKE :qPrefix ESCAPE '\\' THEN 80"
+            + "            WHEN COALESCE(m.nahp_title, m.doc_title) ~* :qRegex THEN 60"
+            + "            ELSE 40 END) DESC,"
+            + "          cd.sort_order ASC NULLS LAST,"
             + "          m.source_updated_at DESC NULLS LAST,"
             + "          m.id DESC"
             + " LIMIT :limit");
         idQuery.setParameter("q", kw);
+        idQuery.setParameter("qExact", kwExact);
+        idQuery.setParameter("qPrefix", kwPrefix);
+        idQuery.setParameter("qRegex", kwRegex);
         idQuery.setParameter("limit", safeLimit);
 
         @SuppressWarnings("unchecked")

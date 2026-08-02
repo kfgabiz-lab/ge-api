@@ -9,6 +9,9 @@ import com.ge.bo.service.PageDataService;
 import com.ge.bo.service.TrainingRequestService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.ResponseEntity;
@@ -59,13 +62,47 @@ public class FoTrainingController {
 
     /**
      * Training Request(Step4) 제품 선택 트리 조회 — Power/Automation 각각
-     * Lv1(category) > Lv2(category) > 제품(has_training='001') 구조, 빈 가지 제외.
+     * Lv1(category) > Lv2(category) > 제품 구조, 빈 가지 제외.
      * GET /api/v1/fo/training/product-tree
      */
     @GetMapping("/product-tree")
     public ResponseEntity<TrainingProductTreeResponse> getProductTree(
+            @RequestParam(defaultValue = "false") boolean activeOnly,
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
-        return ResponseEntity.ok(pageDataService.findTrainingProductTree(siteId));
+        return ResponseEntity.ok(pageDataService.findTrainingProductTree(siteId, activeOnly));
+    }
+
+    /**
+     * currDtlMgmt-data의 power_list/automation_list id → 표시명 직접 조회
+     * GET /api/v1/fo/training/product-names?ids=611,609,605
+     * category-data id로 바로 찾은 이름을 그대로 반환 — has_training/depth 등 조건 없음(존재하지 않는 id는 결과에서 제외).
+     */
+    @GetMapping("/product-names")
+    public ResponseEntity<Map<Long, String>> getProductNames(
+            @RequestParam String ids,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.ok(pageDataService.findCategoryNamesByIds(parseIds(ids), siteId));
+    }
+
+    /**
+     * 콤마구분 id 문자열 → List<Long> 파싱 — 이름 조회는 존재하는 id만 매칭되면 되므로
+     * 비숫자/빈 토큰은 400 없이 조용히 건너뛴다(parseCategoryIds와 달리 엄격 검증 불필요).
+     */
+    private List<Long> parseIds(String raw) {
+        List<Long> ids = new ArrayList<>();
+        if (raw == null || raw.isBlank()) {
+            return ids;
+        }
+        for (String token : raw.split(",")) {
+            String t = token.trim();
+            if (t.isEmpty()) continue;
+            try {
+                ids.add(Long.parseLong(t));
+            } catch (NumberFormatException e) {
+                // 비숫자 토큰은 무시
+            }
+        }
+        return ids;
     }
 
     /**

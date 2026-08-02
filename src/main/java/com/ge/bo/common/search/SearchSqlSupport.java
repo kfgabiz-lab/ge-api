@@ -1,5 +1,7 @@
 package com.ge.bo.common.search;
 
+import java.util.regex.Pattern;
+
 /**
  * FO 통합검색(미디어/페이지) 네이티브 쿼리 공용 규칙 모음.
  *
@@ -11,7 +13,28 @@ package com.ge.bo.common.search;
  */
 public final class SearchSqlSupport {
 
+    private static final Pattern REGEX_META = Pattern.compile("([\\\\.^$|?*+()\\[\\]{}])");
+
     private SearchSqlSupport() {
+    }
+
+    private static String escapeLike(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+    }
+
+    public static String toLikeExactPattern(String value) {
+        return escapeLike(value);
+    }
+
+    public static String toLikePrefixPattern(String value) {
+        return escapeLike(value) + "%";
+    }
+
+    public static String toWordStartRegex(String value) {
+        return "\\m" + REGEX_META.matcher(value).replaceAll("\\\\$1");
     }
 
     /**
@@ -21,11 +44,7 @@ public final class SearchSqlSupport {
      * 이 값을 쓰는 SQL 은 반드시 {@code ILIKE :param ESCAPE '\'} 형태여야 한다.
      */
     public static String toLikePattern(String value) {
-        String escaped = value
-                .replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_");
-        return "%" + escaped + "%";
+        return "%" + escapeLike(value) + "%";
     }
 
     /**

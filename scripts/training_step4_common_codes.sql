@@ -1,3 +1,8 @@
+-- TRAININGJOBTITLE(group_id=64) / TRAININGJOIN(group_id=63) code_detail 등록
+-- message_resource.training.label.* 는 이미 전부 등록되어 있음 (id 1446~1459) — 여기서는 code_detail만 채움
+-- FO 노출값은 name_msg_key -> message_resource.en 으로 치환되어 나감 (CodeService.java:50-56), name 컬럼은 관리자 화면 fallback용
+-- 재실행해도 안전하도록 (group_id, code) 충돌 시 스킵
+
 INSERT INTO code_detail (group_id, code, name, name_msg_key, sort_order, is_active, created_by, created_at, updated_by, updated_at)
 VALUES
   (64, '01', 'E & I Technician and/or Maintenance', 'training.label.eiTechnicianMaintenance', 1, true, 'comlbg', now(), 'comlbg', now()),
