@@ -26,3 +26,8 @@ FROM code_group g
 LEFT JOIN code_detail d ON d.group_id = g.id
 WHERE g.group_code IN ('TRAININGJOBTITLE','TRAININGJOIN')
 GROUP BY g.group_code;
+
+
+
+ALTER TABLE training_request DROP COLUMN IF EXISTS curriculum_id;
+ALTER TABLE training_request DROP COLUMN IF EXISTS session_id;

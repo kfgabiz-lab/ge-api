@@ -1,18 +1,30 @@
 package com.ge.bo.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ge.bo.common.excel.ExcelService;
 import com.ge.bo.dto.TrainingApplicationResponse;
+import com.ge.bo.repository.AdminRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -23,16 +35,24 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TrainingApplicationService {
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    private final ExcelService excelService;
+    private final DownloadLogService downloadLogService;
+    private final AdminRepository adminRepository;
+    private final ObjectMapper objectMapper;
 
     private static final String TRAINING_SCHEDULE_TYPE_REGULAR = "01";
     private static final String TRAINING_SCHEDULE_TYPE_IRREGULAR = "02";
@@ -119,11 +139,47 @@ public class TrainingApplicationService {
                                                        OffsetDateTime startDate, OffsetDateTime endDate,
                                                        Pageable pageable) {
 
+        UnionQuery uq = buildUnionQuery(trainingScheduleType, trainingCourse, trainingType,
+                curriculumTitle, sessionTitle, searchPeriodType, startDate, endDate);
+        if (uq.isEmpty()) {
+            return new PageImpl<>(Collections.emptyList(), pageable, 0);
+        }
+
+        String countSql = "SELECT COUNT(*) FROM (" + uq.unionSql() + ") u";
+        Query countQuery = entityManager.createNativeQuery(countSql);
+        bindFilters(countQuery, uq);
+        long totalElements = ((Number) countQuery.getSingleResult()).longValue();
+
+        if (totalElements == 0) {
+            return new PageImpl<>(Collections.emptyList(), pageable, 0);
+        }
+
+        String dataSql = "SELECT * FROM (" + uq.unionSql() + ") u"
+                + buildOrderBy(pageable.getSort())
+                + " LIMIT :size OFFSET :offset";
+        Query dataQuery = entityManager.createNativeQuery(dataSql);
+        bindFilters(dataQuery, uq);
+        dataQuery.setParameter("size", pageable.getPageSize());
+        dataQuery.setParameter("offset", pageable.getOffset());
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = dataQuery.getResultList();
+        List<TrainingApplicationResponse> content = new ArrayList<>(rows.size());
+        for (Object[] row : rows) {
+            content.add(mapRowToResponse(row));
+        }
+        return new PageImpl<>(content, pageable, totalElements);
+    }
+
+    private UnionQuery buildUnionQuery(String trainingScheduleType, String trainingCourse, String trainingType,
+                                        String curriculumTitle, String sessionTitle, String searchPeriodType,
+                                        OffsetDateTime startDate, OffsetDateTime endDate) {
         String scheduleType = StringUtils.trimToNull(trainingScheduleType);
         boolean includeRegular = scheduleType == null || TRAINING_SCHEDULE_TYPE_REGULAR.equals(scheduleType);
         boolean includeIrregular = scheduleType == null || TRAINING_SCHEDULE_TYPE_IRREGULAR.equals(scheduleType);
         if (!includeRegular && !includeIrregular) {
-            return new PageImpl<>(Collections.emptyList(), pageable, 0);
+            return new UnionQuery(false, false, null, null,
+                    trainingCourse, trainingType, curriculumTitle, sessionTitle, startDate, endDate);
         }
 
         String periodType = StringUtils.defaultIfBlank(searchPeriodType, SEARCH_PERIOD_CREATED_AT).trim();
@@ -137,24 +193,90 @@ public class TrainingApplicationService {
 
         String unionSql = buildUnionSql(includeRegular, includeIrregular, regularWhere, irregularWhere);
 
-        String countSql = "SELECT COUNT(*) FROM (" + unionSql + ") u";
-        Query countQuery = entityManager.createNativeQuery(countSql);
-        bindFilters(countQuery, includeRegular, includeIrregular, trainingCourse, trainingType,
-                curriculumTitle, sessionTitle, periodType, startDate, endDate);
-        long totalElements = ((Number) countQuery.getSingleResult()).longValue();
+        return new UnionQuery(includeRegular, includeIrregular, unionSql, periodType,
+                trainingCourse, trainingType, curriculumTitle, sessionTitle, startDate, endDate);
+    }
 
-        if (totalElements == 0) {
-            return new PageImpl<>(Collections.emptyList(), pageable, 0);
+    private void bindFilters(Query query, UnionQuery uq) {
+        bindFilters(query, uq.includeRegular(), uq.includeIrregular(), uq.trainingCourse(), uq.trainingType(),
+                uq.curriculumTitle(), uq.sessionTitle(), uq.periodType(), uq.startDate(), uq.endDate());
+    }
+
+    private record UnionQuery(boolean includeRegular, boolean includeIrregular, String unionSql, String periodType,
+                               String trainingCourse, String trainingType, String curriculumTitle, String sessionTitle,
+                               OffsetDateTime startDate, OffsetDateTime endDate) {
+
+        boolean isEmpty() {
+            return !includeRegular && !includeIrregular;
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public ResponseEntity<byte[]> exportCsv(String trainingScheduleType, String trainingCourse, String trainingType,
+                                             String curriculumTitle, String sessionTitle, String searchPeriodType,
+                                             OffsetDateTime startDate, OffsetDateTime endDate, Sort sort,
+                                             String headers, String keys, String dateFormats, String codeMaps,
+                                             String reason, HttpServletRequest request) {
+
+        List<TrainingApplicationResponse> content = getListForExport(trainingScheduleType, trainingCourse, trainingType,
+                curriculumTitle, sessionTitle, searchPeriodType, startDate, endDate, sort);
+
+        List<String> headerList = splitCsv(headers);
+        List<String> keyList = splitCsv(keys);
+        List<String> dateFormatList = splitCsv(dateFormats);
+
+        Map<String, Map<String, String>> codeMapData = Collections.emptyMap();
+        if (StringUtils.isNotBlank(codeMaps)) {
+            try {
+                codeMapData = objectMapper.readValue(codeMaps, new TypeReference<Map<String, Map<String, String>>>() {
+                });
+            } catch (Exception e) {
+                log.warn("training-applications export codeMaps 파싱 실패, 매핑 없이 진행: {}", e.getMessage());
+            }
         }
 
-        String dataSql = "SELECT * FROM (" + unionSql + ") u"
-                + buildOrderBy(pageable.getSort())
-                + " LIMIT :size OFFSET :offset";
+        List<Map<String, Object>> rows = new ArrayList<>(content.size());
+        for (TrainingApplicationResponse item : content) {
+            rows.add(toExportRow(item));
+        }
+
+        byte[] fileBytes = excelService.buildCsv(headerList, keyList, dateFormatList, codeMapData, rows);
+
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String fileName = "training-applications_" + today + ".csv";
+        HttpHeaders responseHeaders = new HttpHeaders();
+        responseHeaders.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        responseHeaders.setContentDisposition(
+                ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build());
+
+        if (StringUtils.isNotBlank(reason)) {
+            String email = SecurityContextHolder.getContext().getAuthentication().getName();
+            String createdBy = adminRepository.findByEmail(email)
+                    .map(u -> String.valueOf(u.getId()))
+                    .orElse(null);
+            String forwardedFor = request.getHeader("X-Forwarded-For");
+            String ipAddress = StringUtils.isNotBlank(forwardedFor)
+                    ? forwardedFor.split(",")[0].trim()
+                    : request.getRemoteAddr();
+            downloadLogService.saveAsync("training-applications", reason, "csv", createdBy, ipAddress);
+        }
+
+        return ResponseEntity.ok().headers(responseHeaders).body(fileBytes);
+    }
+
+    private List<TrainingApplicationResponse> getListForExport(String trainingScheduleType, String trainingCourse, String trainingType,
+                                                                 String curriculumTitle, String sessionTitle, String searchPeriodType,
+                                                                 OffsetDateTime startDate, OffsetDateTime endDate, Sort sort) {
+
+        UnionQuery uq = buildUnionQuery(trainingScheduleType, trainingCourse, trainingType,
+                curriculumTitle, sessionTitle, searchPeriodType, startDate, endDate);
+        if (uq.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        String dataSql = "SELECT * FROM (" + uq.unionSql() + ") u" + buildOrderBy(sort);
         Query dataQuery = entityManager.createNativeQuery(dataSql);
-        bindFilters(dataQuery, includeRegular, includeIrregular, trainingCourse, trainingType,
-                curriculumTitle, sessionTitle, periodType, startDate, endDate);
-        dataQuery.setParameter("size", pageable.getPageSize());
-        dataQuery.setParameter("offset", pageable.getOffset());
+        bindFilters(dataQuery, uq);
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -162,7 +284,26 @@ public class TrainingApplicationService {
         for (Object[] row : rows) {
             content.add(mapRowToResponse(row));
         }
-        return new PageImpl<>(content, pageable, totalElements);
+        return content;
+    }
+
+    private Map<String, Object> toExportRow(TrainingApplicationResponse item) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("scheduleType", item.scheduleType());
+        row.put("trainingType", item.trainingType());
+        row.put("trainingCourse", item.trainingCourse());
+        row.put("curriculumTitle", item.curriculumTitle());
+        row.put("sessionTitle", item.sessionTitle());
+        row.put("dateFrom", item.dateFrom());
+        row.put("dateTo", item.dateTo());
+        row.put("createdAt", item.createdAt());
+        row.put("email", item.email());
+        row.put("applicant", item.applicant());
+        return row;
+    }
+
+    private List<String> splitCsv(String s) {
+        return (s != null && !s.isBlank()) ? Arrays.asList(s.split(",", -1)) : Collections.emptyList();
     }
 
     private String buildUnionSql(boolean includeRegular, boolean includeIrregular,
