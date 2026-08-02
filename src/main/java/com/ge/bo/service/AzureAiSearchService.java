@@ -29,7 +29,6 @@ public class AzureAiSearchService {
             String pageNumber
     ) {
 
-        // parameter setting
 
         int pageSize = 10;
         int skip = (pageNumber == null? 1 : Integer.parseInt(pageNumber)) * pageSize;
@@ -46,7 +45,6 @@ public class AzureAiSearchService {
                 true
         );
 
-        // Azure AI Search API 호출
         ApiCallRequest request = ApiCallRequest.post(apiUrl)
                 .header("Content-Type", "application/json")
                 .header("api-key", apiKey)
