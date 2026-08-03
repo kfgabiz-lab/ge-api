@@ -6,12 +6,14 @@ import com.ge.bo.dto.ContentsBatchLogResponse;
 import com.ge.bo.dto.ContentsBatchRunAllResponse;
 import com.ge.bo.dto.ContentsBatchTriggerResponse;
 import com.ge.bo.dto.ContentsIfFailRowResponse;
+import com.ge.bo.dto.ContentsProcessedDocResponse;
 import com.ge.bo.dto.SsqCategoryRemapResponse;
 import com.ge.bo.entity.ContentsBatchLog;
 import com.ge.bo.entity.ContentsIfFailRow;
 import com.ge.bo.exception.ErrorCode;
 import com.ge.bo.repository.ContentsBatchLogRepository;
 import com.ge.bo.repository.ContentsIfFailRowRepository;
+import com.ge.bo.repository.ContentsMasterRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -38,6 +41,7 @@ public class ContentsBatchController {
     private final ContentsBatchOrchestrator contentsBatchOrchestrator;
     private final ContentsBatchLogRepository batchLogRepository;
     private final ContentsIfFailRowRepository failRowRepository;
+    private final ContentsMasterRepository masterRepository;
     private final ObjectMapper objectMapper;
 
     /**
@@ -96,6 +100,24 @@ public class ContentsBatchController {
     }
 
     /**
+     * 소스(카탈로그/SSQ/인증서)별 가장 최근 배치 이력 조회 — 수동 실행 화면이 새로고침돼도 마지막 실행 결과를
+     * 다시 보여줄 수 있도록, 페이지 진입 시 이 API로 마지막 상태를 복원한다(실행 이력이 없는 소스는 결과에서 빠진다).
+     */
+    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
+    @GetMapping("/latest")
+    public ResponseEntity<List<ContentsBatchLogResponse>> getLatestBatchLogs() {
+        List<ContentsBatchLogResponse> response = new ArrayList<>();
+        for (String sourceSystem : List.of("CATALOG", "SSQ", "CERTI")) {
+            batchLogRepository.findFirstBySourceSystemOrderByBatchIdDesc(sourceSystem)
+                .ifPresent(batchLog -> response.add(new ContentsBatchLogResponse(
+                    batchLog.getBatchId(), batchLog.getSourceSystem(), batchLog.getStatus(), batchLog.getCurrentStep(),
+                    readJson(batchLog.getRowCounts()), readJson(batchLog.getReport()), batchLog.getErrorMessage(),
+                    batchLog.getStartedAt(), batchLog.getFinishedAt())));
+        }
+        return ResponseEntity.ok(response);
+    }
+
+    /**
      * 배치 1회 실행에서 격리된(적재 실패) 행 목록 조회 — 리포트 노트만으로는 원본 데이터를 볼 수 없어서,
      * 어떤 원천 행이 왜 걸렸는지 raw_data까지 그대로 내려준다.
      */
@@ -104,6 +126,23 @@ public class ContentsBatchController {
     public ResponseEntity<List<ContentsIfFailRowResponse>> getFailRows(@PathVariable Long batchId) {
         List<ContentsIfFailRowResponse> response = failRowRepository.findByBatchId(batchId).stream()
             .map(this::toFailRowResponse)
+            .toList();
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 배치 1회 실행에서 실제로 적재된(성공+부분성공) 문서 목록 조회 — 격리/실패 행만으로는 "뭐가 문제였는지"만
+     * 보이고 "뭐가 정상 처리됐는지"는 알 수 없어서, 성공 쪽도 어드민 화면에서 바로 확인할 수 있게 내려준다.
+     */
+    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
+    @GetMapping("/{batchId}/processed-docs")
+    public ResponseEntity<List<ContentsProcessedDocResponse>> getProcessedDocs(@PathVariable Long batchId) {
+        ContentsBatchLog batchLog = batchLogRepository.findById(batchId)
+            .orElseThrow(ErrorCode.CONTENTS_BATCH_LOG_NOT_FOUND::toException);
+        List<ContentsProcessedDocResponse> response = masterRepository
+            .findProcessedDocsByBatch(batchLog.getSourceSystem(), batchId).stream()
+            .map(row -> new ContentsProcessedDocResponse((Long) row[0], (String) row[1], (String) row[2],
+                (String) row[3], (Boolean) row[4], (Boolean) row[5], (Long) row[6], (Long) row[7], (Long) row[8]))
             .toList();
         return ResponseEntity.ok(response);
     }

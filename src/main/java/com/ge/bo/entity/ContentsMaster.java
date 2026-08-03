@@ -48,10 +48,10 @@ public class ContentsMaster {
     @Column(name = "doc_type", nullable = false, length = 2)
     private String docType;
 
-    @Column(name = "doc_title", length = 800)
+    @Column(name = "doc_title", length = 4000)
     private String docTitle;
 
-    @Column(name = "nahp_title", length = 800)
+    @Column(name = "nahp_title", length = 4000)
     private String nahpTitle;
 
     @Column(name = "nahp_lang", length = 10)

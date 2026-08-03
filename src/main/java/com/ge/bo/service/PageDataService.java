@@ -604,14 +604,14 @@ public class PageDataService {
             kwRegex = SearchSqlSupport.toWordStartRegex(trimmed);
         }
 
-        String siteCond = siteId != null ? " AND (site_id = :siteId OR site_id IS NULL)" : "";
-        String whereClause = " FROM page_data"
-            + " WHERE data_slug = 'product-data'"
-            + "  AND data_json->'product'->>'is_visible' = '001'"
+        String siteCond = siteId != null ? " AND (pd.site_id = :siteId OR pd.site_id IS NULL)" : "";
+        String fromClause = " FROM page_data pd";
+        String whereClause = " WHERE pd.data_slug = 'product-data'"
+            + "  AND pd.data_json->'product'->>'is_visible' = '001'"
             + siteCond;
         if (hasKeyword) {
-            whereClause += "  AND ( data_json->'product'->>'product_name'        ILIKE :kw ESCAPE '\\'"
-                + "     OR data_json->'product'->>'product_description' ILIKE :kw ESCAPE '\\' )";
+            whereClause += "  AND ( pd.data_json->'product'->>'product_name'        ILIKE :kw ESCAPE '\\'"
+                + "     OR pd.data_json->'product'->>'product_description' ILIKE :kw ESCAPE '\\' )";
         }
         if (hasCategories) {
             String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
@@ -619,13 +619,13 @@ public class PageDataService {
                 + " SELECT 1 FROM page_data j"
                 + " WHERE j.data_slug = 'category-data'"
                 + "  AND j.data_json->'product'->>'depth' = '3'"
-                + "  AND (j.data_json->'product'->>'id')::bigint = page_data.id"
+                + "  AND (j.data_json->'product'->>'id')::bigint = pd.id"
                 + "  AND (j.data_json->'product'->>'parentId')::bigint IN (:categoryIds)"
                 + junctionSiteCond
                 + " )";
         }
 
-        String countSql = "SELECT COUNT(*)" + whereClause;
+        String countSql = "SELECT COUNT(*)" + fromClause + whereClause;
         Query countQuery = entityManager.createNativeQuery(countSql);
         if (hasKeyword) {
             countQuery.setParameter("kw", kw);
@@ -643,7 +643,7 @@ public class PageDataService {
 
         String relevanceOrder = "";
         if (hasKeyword) {
-            String titleExpr = "data_json->'product'->>'product_name'";
+            String titleExpr = "pd.data_json->'product'->>'product_name'";
             relevanceOrder = " (CASE"
                 + " WHEN " + titleExpr + " ILIKE :kwExact  ESCAPE '\\' THEN 100"
                 + " WHEN " + titleExpr + " ILIKE :kwPrefix ESCAPE '\\' THEN 80"
@@ -651,13 +651,30 @@ public class PageDataService {
                 + " WHEN " + titleExpr + " ILIKE :kw ESCAPE '\\' THEN 40"
                 + " ELSE 10 END) DESC,";
         }
-        String listSql = "SELECT id,"
-            + "  data_json->'product'->>'product_name'        AS product_name,"
-            + "  data_json->'product'->>'product_description' AS product_description,"
-            + "  data_json->'product_info'->'image'->>0       AS image_media_id,"
-            + "  data_json->'seo'->>'slug'                     AS slug"
+        String categoryJoin = " LEFT JOIN LATERAL ("
+            + "  SELECT (j3.data_json->'product'->>'parentId')::bigint AS lv2_id"
+            + "  FROM page_data j3"
+            + "  WHERE j3.data_slug = 'category-data'"
+            + "   AND j3.data_json->'product'->>'depth' = '3'"
+            + "   AND (j3.data_json->'product'->>'id')::bigint = pd.id"
+            + "  ORDER BY"
+            + "   CASE WHEN j3.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j3.data_json->>'sortOrder')::int END ASC NULLS LAST,"
+            + "   j3.id ASC"
+            + "  LIMIT 1"
+            + " ) pc ON true"
+            + " LEFT JOIN page_data lv2 ON lv2.id = pc.lv2_id AND lv2.data_slug = 'category-data'"
+            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data'";
+        String listSql = "SELECT pd.id,"
+            + "  pd.data_json->'product'->>'product_name'        AS product_name,"
+            + "  pd.data_json->'product'->>'product_description' AS product_description,"
+            + "  pd.data_json->'product_info'->'image'->>0       AS image_media_id,"
+            + "  pd.data_json->'seo'->>'slug'                     AS slug,"
+            + "  lv1.data_json->'category'->>'title'              AS category,"
+            + "  lv2.data_json->'category'->>'title'              AS highlight"
+            + fromClause
+            + categoryJoin
             + whereClause
-            + " ORDER BY" + relevanceOrder + " updated_at DESC NULLS LAST, id ASC"
+            + " ORDER BY" + relevanceOrder + " pd.updated_at DESC NULLS LAST, pd.id ASC"
             + " LIMIT :limit OFFSET :offset";
         Query listQuery = entityManager.createNativeQuery(listSql);
         if (hasKeyword) {
@@ -685,7 +702,9 @@ public class PageDataService {
                 row[1] != null ? row[1].toString() : null,
                 row[2] != null ? row[2].toString() : null,
                 resolveMediaProxyUrl(row[3]),
-                row[4] != null ? row[4].toString() : null
+                row[4] != null ? row[4].toString() : null,
+                row[5] != null ? row[5].toString() : null,
+                row[6] != null ? row[6].toString() : null
             ));
         }
         return new FoProductSearchResponse(total, items);
@@ -987,17 +1006,22 @@ public class PageDataService {
     private List<ProductInsightRowResponse> queryCategoryInsights(String cte, Long categoryId, Long siteId) {
         String section = "n.data_json->(replace(n.data_slug,'-data',''))";
         String sql = cte
+            + ", matched AS ("
+            + "   SELECT DISTINCT n.id"
+            + "   FROM visible_product vp"
+            + "   JOIN page_data n"
+            + "     ON n.data_slug IN ('blog-data','press-data','articles-data')"
+            + "    AND n.data_json->'product_list' @> to_jsonb(vp.product_id)"
+            + " )"
             + " SELECT n.id, n.data_slug,"
             + "  " + section + "->>'title'        AS title,"
             + "  " + section + "->>'publish_dttm' AS publish_dttm,"
             + "  " + section + "->>'image'        AS image"
             + " FROM page_data n"
-            + " WHERE n.data_slug IN ('blog-data','press-data','articles-data')"
-            + "  AND " + section + "->>'is_visible' = '001'"
+            + " JOIN matched m ON m.id = n.id"
+            + " WHERE " + section + "->>'is_visible' = '001'"
             + "  AND substring(regexp_replace(" + section + "->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today"
             + "  AND (n.site_id = :siteId OR n.site_id IS NULL)"
-            + "  AND EXISTS (SELECT 1 FROM visible_product vp"
-            + "              WHERE n.data_json->'product_list' @> to_jsonb(vp.product_id))"
             + " ORDER BY " + section + "->>'publish_dttm' DESC, n.id DESC"
             + " LIMIT 3";
 
@@ -1099,11 +1123,23 @@ public class PageDataService {
     public PageDataResponse update(String slug, Long id, PageDataRequest request, Long siteId) {
     PageData existing = pageDataRepository.findByIdAndDataSlug(id, slug)
                 .orElseThrow(ErrorCode.PAGE_DATA_NOT_FOUND::toException);
-    if (request.getValidationRuleIds() != null && !request.getValidationRuleIds().isEmpty()) {
-      checkValidationRules(slug, request.getValidationRuleIds(), request.getDataJson(), id, siteId);
+
+    Map<String, Object> baseDataJson;
+    try {
+      baseDataJson = new LinkedHashMap<>(objectMapper.readValue(
+          existing.getDataJson(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
+    } catch (Exception e) {
+      baseDataJson = new LinkedHashMap<>();
     }
-    Map<String, Object> cleanDataJson = stripFetchedFields(request.getDataJson());
-    Map<String, Object> dataJsonWithId = new LinkedHashMap<>(cleanDataJson);
+    baseDataJson = stripFetchedFields(baseDataJson);
+    Map<String, Object> requestDataJson = stripFetchedFields(request.getDataJson());
+    Map<String, Object> mergedDataJson = deepMerge(baseDataJson, requestDataJson);
+
+    if (request.getValidationRuleIds() != null && !request.getValidationRuleIds().isEmpty()) {
+      checkValidationRules(slug, request.getValidationRuleIds(), mergedDataJson, id, siteId);
+    }
+
+    Map<String, Object> dataJsonWithId = new LinkedHashMap<>(mergedDataJson);
     dataJsonWithId.put("id", id);
     String dataJsonStr = serializeDataJson(dataJsonWithId);
     String currentUser = getCurrentUserId();
@@ -1121,9 +1157,26 @@ public class PageDataService {
     updateQuery.setParameter("slug", slug);
     updateQuery.executeUpdate();
 
-    integrationContentsSyncService.syncUpsert(slug, id, cleanDataJson, existing.getSiteId());
+    integrationContentsSyncService.syncUpsert(slug, id, mergedDataJson, existing.getSiteId());
 
     return getById(slug, id);
+  }
+
+  private Map<String, Object> deepMerge(Map<String, Object> base, Map<String, Object> patch) {
+    Map<String, Object> result = new LinkedHashMap<>(base);
+    patch.forEach((key, patchValue) -> {
+      Object baseValue = result.get(key);
+      if (baseValue instanceof Map && patchValue instanceof Map) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> baseMap = (Map<String, Object>) baseValue;
+        @SuppressWarnings("unchecked")
+        Map<String, Object> patchMap = (Map<String, Object>) patchValue;
+        result.put(key, deepMerge(baseMap, patchMap));
+      } else {
+        result.put(key, patchValue);
+      }
+    });
+    return result;
   }
 
   @Transactional
@@ -2932,6 +2985,7 @@ public class PageDataService {
 
         Map<Long, Map<String, Object>> tableFetchCache = new HashMap<>();
         Map<Long, Map<String, Object>> categoryFetchCache = new HashMap<>();
+        Map<String, Map<String, List<Map<String, Object>>>> groupedFetchCache = new HashMap<>();
         for (SlugRelation rel : fetchRelations) {
             boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
             boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
@@ -2959,7 +3013,14 @@ public class PageDataService {
                 }
                 continue;
             }
-            tableFetchCache.put(rel.getId(), batchResolveTableFetch(rel, masterValues, siteId));
+
+            /* slaveSlug/slaveKey/masterKey/slaveFilter가 같으면 조회 대상이 완전히 동일 —
+               relation별로 fetchFields만 다르게 뽑아 쓰므로, DB 조회+그룹핑은 조합당 1번만 수행하고 공유한다 */
+            String groupKey = rel.getSlaveSlug() + "#" + rel.getSlaveKey() + "#"
+                + rel.getMasterKey() + "#" + (rel.getSlaveFilter() == null ? "" : rel.getSlaveFilter());
+            Map<String, List<Map<String, Object>>> grouped = groupedFetchCache.computeIfAbsent(groupKey,
+                k -> fetchSlaveGrouped(rel.getSlaveSlug(), rel.getSlaveKey(), rel.getSlaveFilter(), masterValues, siteId));
+            tableFetchCache.put(rel.getId(), batchResolveTableFetch(grouped, rel));
         }
 
         return content.stream().map(item -> {
@@ -3006,7 +3067,8 @@ public class PageDataService {
         }).toList();
     }
 
-    private Map<String, Object> batchResolveTableFetch(SlugRelation rel, List<String> masterValues, Long siteId) {
+    private Map<String, List<Map<String, Object>>> fetchSlaveGrouped(
+            String slaveSlug, String slaveKey, String slaveFilter, List<String> masterValues, Long siteId) {
         if (masterValues.isEmpty()) return Collections.emptyMap();
 
         String idList = masterValues.stream().distinct()
@@ -3014,17 +3076,17 @@ public class PageDataService {
             .collect(java.util.stream.Collectors.joining(","));
 
         StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
-        appendSlaveKeyInCondition(sql, rel.getSlaveKey(), idList);
+        appendSlaveKeyInCondition(sql, slaveKey, idList);
         if (siteId != null) {
             sql.append(" AND (site_id = :siteId OR site_id IS NULL)");
         }
         Map<String, String> filterParams = new LinkedHashMap<>();
-        if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
-            appendSlaveFilter(sql, rel.getSlaveFilter(), filterParams);
+        if (slaveFilter != null && !slaveFilter.isBlank()) {
+            appendSlaveFilter(sql, slaveFilter, filterParams);
         }
 
         Query q = entityManager.createNativeQuery(sql.toString());
-        q.setParameter("slaveSlug", rel.getSlaveSlug());
+        q.setParameter("slaveSlug", slaveSlug);
         if (siteId != null) {
             q.setParameter("siteId", siteId);
         }
@@ -3033,7 +3095,10 @@ public class PageDataService {
         List<Object> results = q.getResultList();
         if (results.isEmpty()) return Collections.emptyMap();
 
-        Map<String, List<Map<String, Object>>> grouped = groupSlaveRecordsByKey(results, rel.getSlaveKey());
+        return groupSlaveRecordsByKey(results, slaveKey);
+    }
+
+    private Map<String, Object> batchResolveTableFetch(Map<String, List<Map<String, Object>>> grouped, SlugRelation rel) {
         if (grouped.isEmpty()) return Collections.emptyMap();
 
         boolean hasFetchFields = StringUtils.hasText(rel.getFetchFields());

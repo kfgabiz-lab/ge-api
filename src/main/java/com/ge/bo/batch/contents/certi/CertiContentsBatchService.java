@@ -10,7 +10,6 @@ import com.ge.bo.entity.ContentsCategory;
 import com.ge.bo.entity.ContentsFile;
 import com.ge.bo.entity.ContentsIfFailRow;
 import com.ge.bo.entity.ContentsVersion;
-import com.ge.bo.entity.IfCertiMaster;
 import com.ge.bo.exception.BusinessException;
 import com.ge.bo.repository.ContentsBatchLogRepository;
 import com.ge.bo.repository.ContentsCategoryRepository;
@@ -68,15 +67,15 @@ public class CertiContentsBatchService {
 
         try {
             markStep(batchLog, "CLEANSE");
-            quarantineDuplicateKeys(batchId);
-            Map<String, List<IfCertiMaster>> groups = reader.loadPendingGroups();
+            quarantineDuplicateKeys(batchId, tally);
+            Map<String, List<CertiRow>> groups = reader.loadPendingGroups();
             tally.receivedRowCount = groups.values().stream().mapToInt(List::size).sum();
             tally.receivedDocumentCount = groups.size();
 
             markStep(batchLog, "UPSERT");
             Set<Long> cleanSuccessContentsIds = new LinkedHashSet<>();
 
-            for (Map.Entry<String, List<IfCertiMaster>> entry : groups.entrySet()) {
+            for (Map.Entry<String, List<CertiRow>> entry : groups.entrySet()) {
                 processDocument(entry.getValue(), batchId, tally, cleanSuccessContentsIds);
             }
 
@@ -104,11 +103,11 @@ public class CertiContentsBatchService {
         return sw.toString();
     }
 
-    private void processDocument(List<IfCertiMaster> rows, long batchId, BatchTally tally,
+    private void processDocument(List<CertiRow> rows, long batchId, BatchTally tally,
                                   Set<Long> cleanSuccessContentsIds) {
-        IfCertiMaster first = rows.get(0);
-        String certiNo = first.getCertiNo();
-        String bi = first.getBi();
+        CertiRow first = rows.get(0);
+        String certiNo = first.certiNo();
+        String bi = first.bi();
         String sourceDocKey = certiNo + "|" + bi;
 
         ConversionResult result;
@@ -229,16 +228,19 @@ public class CertiContentsBatchService {
      * 인식해 값이 조용히 유실될 위험이 있다. loadPendingGroups() 호출 전에 먼저 실행해
      * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
      */
-    private void quarantineDuplicateKeys(long batchId) {
+    private void quarantineDuplicateKeys(long batchId, BatchTally tally) {
         for (Object[] row : reader.findDuplicateKeyRows()) {
             String certiNo = String.valueOf(row[0]);
             String bi = String.valueOf(row[1]);
             Object levelSeq = row[2];
+            Object keptIfDate = row[3];
             String sourceDocKey = certiNo + "|" + bi;
             saveFailRow(batchId, "if_r_certi_master", sourceDocKey, sourceDocKey + ", nahp_level_seq=" + levelSeq,
                 "CLEANSE", "DUPLICATE_KEY",
-                "동일 복합키(certi_no+bi+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리",
-                Map.of("certiNo", certiNo, "bi", bi, "nahpLevelSeq", String.valueOf(levelSeq)));
+                "동일 복합키(certi_no+bi+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리"
+                    + (keptIfDate != null ? " (채택된 행 if_date=" + keptIfDate + ")" : ""),
+                Map.of("certiNo", certiNo, "bi", bi, "nahpLevelSeq", String.valueOf(levelSeq), "keptIfDate", String.valueOf(keptIfDate)));
+            tally.duplicateKeyCount++;
         }
         int quarantined = reader.quarantineDuplicateKeys();
         if (quarantined > 0) {
@@ -267,6 +269,7 @@ public class CertiContentsBatchService {
         int successDocCount;
         int partialDocCount;
         int failedDocCount;
+        int duplicateKeyCount;
         int quarantineCount;
         int masterInsert;
         int masterUpdate;
@@ -296,7 +299,8 @@ public class CertiContentsBatchService {
             map.put("success_count", successDocCount);
             map.put("partial_count", partialDocCount);
             map.put("failure_count", failedDocCount);
-            map.put("quarantine_count", quarantineCount);
+            map.put("duplicate_key_count", duplicateKeyCount);
+            map.put("row_failure_count", quarantineCount);
             map.put("master_insert_count", masterInsert);
             map.put("master_update_count", masterUpdate);
             map.put("category_insert_count", categoryInsert);

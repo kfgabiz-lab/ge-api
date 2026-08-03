@@ -23,12 +23,16 @@ public record FoProductSearchResponse(
      * @param productDescription 제품 설명(data_json.product.product_description)
      * @param image              대표 이미지 프록시 URL("/api/v1/fo/page-files/{미디어ID}") 또는 null
      * @param slug               상세 페이지 slug(data_json.seo.slug) 또는 null
+     * @param category           소속 L1 카테고리명(category-data depth=1 title) 또는 null
+     * @param highlight          소속 L2 카테고리명(category-data depth=2 title) 또는 null
      */
     public record Item(
             Long id,
             String productName,
             String productDescription,
             String image,
-            String slug
+            String slug,
+            String category,
+            String highlight
     ) {}
 }
