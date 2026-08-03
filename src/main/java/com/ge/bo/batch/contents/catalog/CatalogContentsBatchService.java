@@ -12,7 +12,6 @@ import com.ge.bo.entity.ContentsIfFailRow;
 import com.ge.bo.entity.ContentsMaster;
 import com.ge.bo.entity.ContentsVersion;
 import com.ge.bo.entity.IfCatalogFileInfo;
-import com.ge.bo.entity.IfCatalogInfo;
 import com.ge.bo.exception.BusinessException;
 import com.ge.bo.repository.ContentsBatchLogRepository;
 import com.ge.bo.repository.ContentsCategoryRepository;
@@ -74,8 +73,8 @@ public class CatalogContentsBatchService {
 
         try {
             markStep(batchLog, "CLEANSE");
-            quarantineDuplicateKeys(batchId);
-            Map<String, List<IfCatalogInfo>> headerGroups = reader.loadPendingHeaderGroups();
+            quarantineDuplicateKeys(batchId, tally);
+            Map<String, List<CatalogHeaderRow>> headerGroups = reader.loadPendingHeaderGroups();
             Map<String, List<IfCatalogFileInfo>> fileGroups = reader.loadPendingFileGroups();
             tally.receivedRowCount = headerGroups.values().stream().mapToInt(List::size).sum()
                 + fileGroups.values().stream().mapToInt(List::size).sum();
@@ -118,7 +117,7 @@ public class CatalogContentsBatchService {
         return sw.toString();
     }
 
-    private void processDocument(String ctlgCode, List<IfCatalogInfo> headers, List<IfCatalogFileInfo> files,
+    private void processDocument(String ctlgCode, List<CatalogHeaderRow> headers, List<IfCatalogFileInfo> files,
                                   long batchId, BatchTally tally, Set<Long> cleanSuccessContentsIds) {
         List<IfCatalogFileInfo> fileRows = files != null ? files : List.of();
 
@@ -313,14 +312,17 @@ public class CatalogContentsBatchService {
      * 값이 조용히 유실될 위험이 있다. loadPendingHeaderGroups() 호출 전에 먼저 실행해
      * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
      */
-    private void quarantineDuplicateKeys(long batchId) {
+    private void quarantineDuplicateKeys(long batchId, BatchTally tally) {
         for (Object[] row : reader.findDuplicateKeyRows()) {
             String ctlgCode = String.valueOf(row[0]);
             Object levelSeq = row[1];
+            Object keptIfDate = row[2];
             saveFailRow(batchId, "if_r_catalog_info", ctlgCode, "ctlg_code=" + ctlgCode + ", nahp_level_seq=" + levelSeq,
                 "CLEANSE", "DUPLICATE_KEY",
-                "동일 복합키(ctlg_code+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리",
-                Map.of("ctlgCode", ctlgCode, "nahpLevelSeq", String.valueOf(levelSeq)));
+                "동일 복합키(ctlg_code+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리"
+                    + (keptIfDate != null ? " (채택된 행 if_date=" + keptIfDate + ")" : ""),
+                Map.of("ctlgCode", ctlgCode, "nahpLevelSeq", String.valueOf(levelSeq), "keptIfDate", String.valueOf(keptIfDate)));
+            tally.duplicateKeyCount++;
         }
         int quarantined = reader.quarantineDuplicateKeys();
         if (quarantined > 0) {
@@ -350,6 +352,7 @@ public class CatalogContentsBatchService {
         int successDocCount;
         int partialDocCount;
         int failedDocCount;
+        int duplicateKeyCount;
         int quarantineCount;
         int masterInsert;
         int masterUpdate;
@@ -379,7 +382,8 @@ public class CatalogContentsBatchService {
             map.put("success_count", successDocCount);
             map.put("partial_count", partialDocCount);
             map.put("failure_count", failedDocCount);
-            map.put("quarantine_count", quarantineCount);
+            map.put("duplicate_key_count", duplicateKeyCount);
+            map.put("row_failure_count", quarantineCount);
             map.put("master_insert_count", masterInsert);
             map.put("master_update_count", masterUpdate);
             map.put("category_insert_count", categoryInsert);

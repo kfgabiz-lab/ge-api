@@ -9,7 +9,6 @@ import com.ge.bo.batch.contents.RowFailure;
 import com.ge.bo.batch.contents.SourceSystem;
 import com.ge.bo.batch.contents.VersionItem;
 import com.ge.bo.entity.IfCatalogFileInfo;
-import com.ge.bo.entity.IfCatalogInfo;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -39,26 +38,26 @@ public class CatalogContentsConverter {
      * @param headerRows 이 ctlgCode에 속한 if_r_catalog_info 행(카테고리 등록 수만큼, 1건 이상)
      * @param fileRows  이 ctlgCode에 속한 if_r_catalog_file_info 행(0건 이상 — 헤더만 오고 파일이 아직 없을 수 있음)
      */
-    public ConversionResult convert(String ctlgCode, List<IfCatalogInfo> headerRows, List<IfCatalogFileInfo> fileRows) {
+    public ConversionResult convert(String ctlgCode, List<CatalogHeaderRow> headerRows, List<IfCatalogFileInfo> fileRows) {
         List<RowFailure> rowFailures = new ArrayList<>();
         List<String> reportNotes = new ArrayList<>();
 
-        IfCatalogInfo first = headerRows.get(0);
-        String docTitle = ContentsNormalizer.trimToNull(first.getCtlgName());
-        String dataCode = ContentsNormalizer.trimToNull(first.getDataCode());
-        String useYn = ContentsNormalizer.trimToNull(first.getUseYn());
-        String prtYymm = ContentsNormalizer.trimToNull(first.getPrtYymm());
-        String prtVer = ContentsNormalizer.trimToNull(first.getPrtVer());
-        String ctpDispYn = ContentsNormalizer.trimToNull(first.getCtpDispYn());
+        CatalogHeaderRow first = headerRows.get(0);
+        String docTitle = ContentsNormalizer.trimToNull(first.ctlgName());
+        String dataCode = ContentsNormalizer.trimToNull(first.dataCode());
+        String useYn = ContentsNormalizer.trimToNull(first.useYn());
+        String prtYymm = ContentsNormalizer.trimToNull(first.prtYymm());
+        String prtVer = ContentsNormalizer.trimToNull(first.prtVer());
+        String ctpDispYn = ContentsNormalizer.trimToNull(first.ctpDispYn());
 
         // 문서 가드: 헤더 반복 행 사이의 문서 레벨 값 충돌 검증 — 하나라도 다르면 문서 전체를 만들 수 없음
-        for (IfCatalogInfo row : headerRows) {
-            boolean conflict = !eq(docTitle, ContentsNormalizer.trimToNull(row.getCtlgName()))
-                || !eq(dataCode, ContentsNormalizer.trimToNull(row.getDataCode()))
-                || !eq(useYn, ContentsNormalizer.trimToNull(row.getUseYn()))
-                || !eq(prtYymm, ContentsNormalizer.trimToNull(row.getPrtYymm()))
-                || !eq(prtVer, ContentsNormalizer.trimToNull(row.getPrtVer()))
-                || !eq(ctpDispYn, ContentsNormalizer.trimToNull(row.getCtpDispYn()));
+        for (CatalogHeaderRow row : headerRows) {
+            boolean conflict = !eq(docTitle, ContentsNormalizer.trimToNull(row.ctlgName()))
+                || !eq(dataCode, ContentsNormalizer.trimToNull(row.dataCode()))
+                || !eq(useYn, ContentsNormalizer.trimToNull(row.useYn()))
+                || !eq(prtYymm, ContentsNormalizer.trimToNull(row.prtYymm()))
+                || !eq(prtVer, ContentsNormalizer.trimToNull(row.prtVer()))
+                || !eq(ctpDispYn, ContentsNormalizer.trimToNull(row.ctpDispYn()));
             if (conflict) {
                 return documentLevelFailure(ctlgCode, "VALUE_CONFLICT",
                     "같은 CTLG_CODE의 헤더 행 사이에 문서 레벨 값(CTLG_NAME/DATA_CODE/USE_YN/PRT_YYMM/PRT_VER/CTP_DISP_YN)이 서로 다름", rawRow(row));
@@ -86,22 +85,22 @@ public class CatalogContentsConverter {
         }
         // 카테고리 — 헤더 행마다 1건, source_path 기준 dedupe
         Map<String, CategoryItem> categoriesByPath = new LinkedHashMap<>();
-        for (IfCatalogInfo row : headerRows) {
+        for (CatalogHeaderRow row : headerRows) {
             String sourcePath = ContentsNormalizer.buildCategoryPath("|",
-                row.getNahpLevel1Id(), row.getNahpLevel2Id(), row.getNahpLevel3Id());
+                row.nahpLevel1Id(), row.nahpLevel2Id(), row.nahpLevel3Id());
             if (sourcePath == null) {
-                rowFailures.add(new RowFailure(SOURCE_TABLE_INFO, rowKey(ctlgCode, row.getNahpLevelSeq()),
+                rowFailures.add(new RowFailure(SOURCE_TABLE_INFO, rowKey(ctlgCode, row.nahpLevelSeq()),
                     "NULL_KEY", "카테고리 레벨 ID(NAHP_LEVEL1_ID~NAHP_LEVEL3_ID)가 전부 비어있음", rawRow(row)));
                 continue;
             }
             String nahpCategoryId = ContentsNormalizer.firstNonBlank(
-                row.getNahpLevel3Id(), row.getNahpLevel2Id(), row.getNahpLevel1Id());
+                row.nahpLevel3Id(), row.nahpLevel2Id(), row.nahpLevel1Id());
             boolean displayFlag;
             try {
-                String dispYn = ContentsNormalizer.trimToNull(row.getNahpDispYn());
+                String dispYn = ContentsNormalizer.trimToNull(row.nahpDispYn());
                 displayFlag = dispYn == null || ContentsNormalizer.parseStrictBoolean(dispYn);
             } catch (IllegalArgumentException e) {
-                rowFailures.add(new RowFailure(SOURCE_TABLE_INFO, rowKey(ctlgCode, row.getNahpLevelSeq()),
+                rowFailures.add(new RowFailure(SOURCE_TABLE_INFO, rowKey(ctlgCode, row.nahpLevelSeq()),
                     "VALUE_CONFLICT", "NAHP_DISP_YN 값 해석 불가: " + e.getMessage(), rawRow(row)));
                 continue;
             }
@@ -109,17 +108,17 @@ public class CatalogContentsConverter {
             CategoryItem candidate = CategoryItem.builder()
                 .sourcePath(sourcePath)
                 .nahpCategoryId(nahpCategoryId)
-                .categoryL1Id(ContentsNormalizer.trimToNull(row.getNahpLevel1Id()))
-                .categoryL2Id(ContentsNormalizer.trimToNull(row.getNahpLevel2Id()))
-                .categoryL3Id(ContentsNormalizer.trimToNull(row.getNahpLevel3Id()))
-                .nahpLevelSeq(row.getNahpLevelSeq() != null ? row.getNahpLevelSeq().intValue() : null)
+                .categoryL1Id(ContentsNormalizer.trimToNull(row.nahpLevel1Id()))
+                .categoryL2Id(ContentsNormalizer.trimToNull(row.nahpLevel2Id()))
+                .categoryL3Id(ContentsNormalizer.trimToNull(row.nahpLevel3Id()))
+                .nahpLevelSeq(row.nahpLevelSeq() != null ? row.nahpLevelSeq().intValue() : null)
                 .nahpDisplayFlag(displayFlag)
                 .build();
 
             CategoryItem existing = categoriesByPath.get(sourcePath);
             if (existing != null && (existing.isNahpDisplayFlag() != candidate.isNahpDisplayFlag()
                 || !eq(existing.getNahpCategoryId(), candidate.getNahpCategoryId()))) {
-                rowFailures.add(new RowFailure(SOURCE_TABLE_INFO, rowKey(ctlgCode, row.getNahpLevelSeq()),
+                rowFailures.add(new RowFailure(SOURCE_TABLE_INFO, rowKey(ctlgCode, row.nahpLevelSeq()),
                     "VALUE_CONFLICT", "동일 source_path에 서로 다른 카테고리 값이 반복 수신됨: " + sourcePath, rawRow(row)));
                 continue;
             }
@@ -196,7 +195,7 @@ public class CatalogContentsConverter {
                 // if_r_catalog_file_info 실물에 USE_YN 컬럼이 없음(헤더에서만 관리) — 헤더 USE_YN 기준 노출값을 그대로 사용
                 .fileExpose(expose)
                 // if_r_catalog_file_info에는 파일 단위 언어 컬럼이 없어, 문서 헤더(NAHP_LANG)의 언어를 그대로 사용한다.
-                .fileLang(ContentsNormalizer.normalizeLang(first.getNahpLang()))
+                .fileLang(ContentsNormalizer.normalizeLang(first.nahpLang()))
                 .sourceUpdatedAt(ContentsNormalizer.koreaTimeToUtc(fileRow.getCreatedDate()))
                 .build();
 
@@ -222,8 +221,8 @@ public class CatalogContentsConverter {
         }
 
         Map<String, Object> attrs = new LinkedHashMap<>();
-        if (first.getNahpVideoProdStandard() != null) {
-            attrs.put("video_prod_standard", first.getNahpVideoProdStandard());
+        if (first.nahpVideoProdStandard() != null) {
+            attrs.put("video_prod_standard", first.nahpVideoProdStandard());
         }
 
         VersionItem version = VersionItem.builder()
@@ -242,12 +241,12 @@ public class CatalogContentsConverter {
             .sourceDocKey(ctlgCode)
             .docType(dataCode)
             .docTitle(docTitle)
-            .nahpTitle(ContentsNormalizer.trimToNull(first.getNahpTitle()))
-            .nahpLang(ContentsNormalizer.normalizeLang(first.getNahpLang()))
+            .nahpTitle(ContentsNormalizer.trimToNull(first.nahpTitle()))
+            .nahpLang(ContentsNormalizer.normalizeLang(first.nahpLang()))
             .expose(expose)
             .attrs(attrs)
             .sourceCreatedAt(null)
-            .sourceUpdatedAt(ContentsNormalizer.koreaTimeToUtc(first.getUpdatedDate()))
+            .sourceUpdatedAt(ContentsNormalizer.koreaTimeToUtc(first.updatedDate()))
             .explicitDelete(explicitDelete)
             .categories(new ArrayList<>(categoriesByPath.values()))
             .versions(List.of(version))
@@ -276,19 +275,19 @@ public class CatalogContentsConverter {
         return "ctlg_code=" + ctlgCode + ", nahp_level_seq=" + levelSeq;
     }
 
-    private Map<String, Object> rawRow(IfCatalogInfo row) {
+    private Map<String, Object> rawRow(CatalogHeaderRow row) {
         Map<String, Object> map = new LinkedHashMap<>();
-        map.put("ctlg_code", row.getCtlgCode());
-        map.put("nahp_level_seq", row.getNahpLevelSeq());
-        map.put("ctlg_name", row.getCtlgName());
-        map.put("data_code", row.getDataCode());
-        map.put("use_yn", row.getUseYn());
-        map.put("prt_yymm", row.getPrtYymm());
-        map.put("prt_ver", row.getPrtVer());
-        map.put("nahp_disp_yn", row.getNahpDispYn());
-        map.put("nahp_level1_id", row.getNahpLevel1Id());
-        map.put("nahp_level2_id", row.getNahpLevel2Id());
-        map.put("nahp_level3_id", row.getNahpLevel3Id());
+        map.put("ctlg_code", row.ctlgCode());
+        map.put("nahp_level_seq", row.nahpLevelSeq());
+        map.put("ctlg_name", row.ctlgName());
+        map.put("data_code", row.dataCode());
+        map.put("use_yn", row.useYn());
+        map.put("prt_yymm", row.prtYymm());
+        map.put("prt_ver", row.prtVer());
+        map.put("nahp_disp_yn", row.nahpDispYn());
+        map.put("nahp_level1_id", row.nahpLevel1Id());
+        map.put("nahp_level2_id", row.nahpLevel2Id());
+        map.put("nahp_level3_id", row.nahpLevel3Id());
         return map;
     }
 
