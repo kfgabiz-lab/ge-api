@@ -1,8 +1,10 @@
 package com.ge.bo.controller;
 
 import com.ge.bo.dto.FoProductCategoryCountResponse;
+import com.ge.bo.dto.FoProductRelevanceRowResponse;
 import com.ge.bo.dto.FoProductSearchResponse;
 import com.ge.bo.dto.ProductInsightRowResponse;
+import com.ge.bo.service.FoProductRelevanceService;
 import com.ge.bo.service.PageDataService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +26,14 @@ import java.util.Map;
 public class FoProductController {
 
     private final PageDataService pageDataService;
+    private final FoProductRelevanceService foProductRelevanceService;
+
+    @GetMapping("/{slug}/relevant-products")
+    public ResponseEntity<List<FoProductRelevanceRowResponse>> getRelevantProducts(
+            @PathVariable String slug,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.ok(foProductRelevanceService.findRelevantProducts(slug, siteId));
+    }
 
     @GetMapping("/{productId}/manager-email")
     public ResponseEntity<Map<String, String>> getManagerEmail(
