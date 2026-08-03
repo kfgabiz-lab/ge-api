@@ -9,6 +9,8 @@ import com.ge.bo.exception.ErrorCode;
 import com.ge.bo.repository.SearchManageRepository;
 import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.CachePut;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -44,6 +46,7 @@ public class SearchManageService {
 
     /* ══════════ 등록 ══════════ */
 
+    @CachePut(cacheNames = "searchManage", key = "#result.id()")
     @Transactional
     public SearchManageResponse create(SearchManageRequest request) {
         SearchManage entity = SearchManage.builder()
@@ -57,6 +60,7 @@ public class SearchManageService {
 
     /* ══════════ 수정 ══════════ */
 
+    @CachePut(cacheNames = "searchManage", key = "#id")
     @Transactional
     public SearchManageResponse update(Long id, SearchManageRequest request) {
         SearchManage entity = findOrThrow(id);
@@ -76,6 +80,7 @@ public class SearchManageService {
 
     /* ══════════ 삭제 (하위 검색텍스트 CASCADE) ══════════ */
 
+    @CacheEvict(cacheNames = "searchManage", key = "#id")
     @Transactional
     public void delete(Long id) {
         searchManageRepository.delete(findOrThrow(id));
@@ -83,6 +88,7 @@ public class SearchManageService {
 
     /* ══════════ 검색텍스트 등록 — 최신순 정렬이라 조회 시 자동으로 맨 위에 노출 ══════════ */
 
+    @CachePut(cacheNames = "searchManage", key = "#id")
     @Transactional
     public SearchManageResponse addText(Long id, SearchManageTextRequest request) {
         SearchManage entity = findOrThrow(id);
@@ -101,6 +107,7 @@ public class SearchManageService {
 
     /* ══════════ 검색텍스트 삭제 ══════════ */
 
+    @CachePut(cacheNames = "searchManage", key = "#id")
     @Transactional
     public SearchManageResponse deleteText(Long id, Long textId) {
         SearchManage entity = findOrThrow(id);

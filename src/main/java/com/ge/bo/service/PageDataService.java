@@ -33,6 +33,9 @@ import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.CachePut;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -65,6 +68,11 @@ public class PageDataService {
     private EntityManager entityManager;
 
   private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude");
+
+  private static final String PRODUCT_DATA_SLUG_COND = "#slug == 'product-data'";
+
+  private static final String CONTENTS_DATA_SLUG_COND =
+      "#slug == 'blog-data' or #slug == 'press-data' or #slug == 'articles-data'";
 
   private static final String CATEGORY_LV2_CTE =
         "WITH visible_lv2 AS ("
@@ -1069,6 +1077,10 @@ public class PageDataService {
   }
 
   @Transactional
+    @Caching(put = {
+        @CachePut(cacheNames = "productData", key = "#result.getId()", condition = PRODUCT_DATA_SLUG_COND),
+        @CachePut(cacheNames = "contentsData", key = "#result.getId()", condition = CONTENTS_DATA_SLUG_COND)
+    })
     public PageDataResponse create(String slug, PageDataRequest request, Long siteId) {
     if (request.getPkKeys() != null && !request.getPkKeys().isEmpty()) {
       checkPkDuplicate(slug, request.getPkKeys(), request.getDataJson(), null, siteId);
@@ -1120,6 +1132,10 @@ public class PageDataService {
   }
 
   @Transactional
+    @Caching(put = {
+        @CachePut(cacheNames = "productData", key = "#id", condition = PRODUCT_DATA_SLUG_COND),
+        @CachePut(cacheNames = "contentsData", key = "#id", condition = CONTENTS_DATA_SLUG_COND)
+    })
     public PageDataResponse update(String slug, Long id, PageDataRequest request, Long siteId) {
     PageData existing = pageDataRepository.findByIdAndDataSlug(id, slug)
                 .orElseThrow(ErrorCode.PAGE_DATA_NOT_FOUND::toException);
@@ -1180,6 +1196,10 @@ public class PageDataService {
   }
 
   @Transactional
+    @Caching(put = {
+        @CachePut(cacheNames = "productData", key = "#id", condition = PRODUCT_DATA_SLUG_COND),
+        @CachePut(cacheNames = "contentsData", key = "#id", condition = CONTENTS_DATA_SLUG_COND)
+    })
     public PageDataResponse patchField(String slug, Long id, String fieldKey, Object value) {
     PageData existing = pageDataRepository.findByIdAndDataSlug(id, slug)
                 .orElseThrow(ErrorCode.PAGE_DATA_NOT_FOUND::toException);
@@ -1225,6 +1245,7 @@ public class PageDataService {
     return getById(slug, id);
   }
 
+  @CacheEvict(cacheNames = "contentsData", key = "#id", condition = CONTENTS_DATA_SLUG_COND)
   @Transactional
     public void delete(String slug, Long id) {
     pageDataRepository.findByIdAndDataSlug(id, slug)
@@ -1237,6 +1258,7 @@ public class PageDataService {
     integrationContentsSyncService.syncSoftDelete(slug, id);
   }
 
+  @CacheEvict(cacheNames = "contentsData", allEntries = true, condition = CONTENTS_DATA_SLUG_COND)
   @Transactional
     public void deleteByPk(String slug, List<String> pkKeys, Map<String, Object> dataJson) {
     if (pkKeys == null || pkKeys.isEmpty()) {
@@ -1431,6 +1453,7 @@ public class PageDataService {
     return PageDataResponse.from(pageData);
   }
 
+  @CacheEvict(cacheNames = "contentsData", allEntries = true)
   @Transactional
     public void deleteByGroupId(String groupId) {
     List<PageData> list = pageDataRepository.findByGroupId(groupId);
