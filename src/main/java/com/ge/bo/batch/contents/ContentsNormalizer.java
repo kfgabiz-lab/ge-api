@@ -18,8 +18,8 @@ import java.util.Set;
 public final class ContentsNormalizer {
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
-    private static final Set<String> TRUE_VALUES = Set.of("Y", "YES", "TRUE", "1");
-    private static final Set<String> FALSE_VALUES = Set.of("N", "NO", "FALSE", "0");
+    private static final Set<String> TRUE_VALUES = Set.of("Y", "YES", "TRUE", "T", "1");
+    private static final Set<String> FALSE_VALUES = Set.of("N", "NO", "FALSE", "F", "0");
     private static final DateTimeFormatter SSQ_DATETIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-M-d H:m[:s]");
 
     private ContentsNormalizer() {

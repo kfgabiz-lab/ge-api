@@ -8,7 +8,6 @@ import com.ge.bo.batch.contents.FileItem;
 import com.ge.bo.batch.contents.RowFailure;
 import com.ge.bo.batch.contents.SourceSystem;
 import com.ge.bo.batch.contents.VersionItem;
-import com.ge.bo.entity.IfSsqDocument;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -44,27 +43,27 @@ public class SsqContentsConverter {
     private final SsqCategoryMapping categoryMapping;
     private final SsqHtmlSupport htmlSupport;
 
-    public ConversionResult convert(int docId, List<IfSsqDocument> categoryRows, List<SsqFileInfoRow> fileRows) {
+    public ConversionResult convert(int docId, List<SsqDocumentRow> categoryRows, List<SsqFileInfoRow> fileRows) {
         List<RowFailure> rowFailures = new ArrayList<>();
         List<String> reportNotes = new ArrayList<>();
 
-        IfSsqDocument first = categoryRows.get(0);
-        String docTitle = ContentsNormalizer.trimToNull(first.getDocTitle());
-        String rawDocType = ContentsNormalizer.trimToNull(first.getDocType());
-        boolean expose = Boolean.TRUE.equals(first.getExpose());
-        String siteLanguage = first.getSiteLanguage();
-        String createDatetime = first.getCreateDatetime();
-        String updateDatetime = first.getUpdateDatetime();
-        String deleteYn = ContentsNormalizer.trimToNull(first.getDeleteYn());
+        SsqDocumentRow first = categoryRows.get(0);
+        String docTitle = ContentsNormalizer.trimToNull(first.docTitle());
+        String rawDocType = ContentsNormalizer.trimToNull(first.docType());
+        boolean expose = Boolean.TRUE.equals(first.expose());
+        String siteLanguage = first.siteLanguage();
+        String createDatetime = first.createDatetime();
+        String updateDatetime = first.updateDatetime();
+        String deleteYn = ContentsNormalizer.trimToNull(first.deleteYn());
 
-        for (IfSsqDocument row : categoryRows) {
-            boolean conflict = !eq(docTitle, ContentsNormalizer.trimToNull(row.getDocTitle()))
-                || !eq(rawDocType, ContentsNormalizer.trimToNull(row.getDocType()))
-                || !Objects.equals(expose, Boolean.TRUE.equals(row.getExpose()))
-                || !eq(siteLanguage, row.getSiteLanguage())
-                || !eq(createDatetime, row.getCreateDatetime())
-                || !eq(updateDatetime, row.getUpdateDatetime())
-                || !eq(deleteYn, ContentsNormalizer.trimToNull(row.getDeleteYn()));
+        for (SsqDocumentRow row : categoryRows) {
+            boolean conflict = !eq(docTitle, ContentsNormalizer.trimToNull(row.docTitle()))
+                || !eq(rawDocType, ContentsNormalizer.trimToNull(row.docType()))
+                || !Objects.equals(expose, Boolean.TRUE.equals(row.expose()))
+                || !eq(siteLanguage, row.siteLanguage())
+                || !eq(createDatetime, row.createDatetime())
+                || !eq(updateDatetime, row.updateDatetime())
+                || !eq(deleteYn, ContentsNormalizer.trimToNull(row.deleteYn()));
             if (conflict) {
                 return documentLevelFailure(SOURCE_TABLE_DOC, docId,
                     "같은 doc_id의 문서 반복 행 사이에 문서 레벨 값(doc_title/doc_type/expose/site_language/"
@@ -91,22 +90,30 @@ public class SsqContentsConverter {
 
         // 카테고리 — 행마다 1건
         Map<String, CategoryItem> categoriesByPath = new LinkedHashMap<>();
-        for (IfSsqDocument row : categoryRows) {
+        for (SsqDocumentRow row : categoryRows) {
             String sourcePath = ContentsNormalizer.buildCategoryPath(">",
-                row.getLevel1(), row.getLevel2(), row.getLevel3(), row.getLevel4());
+                row.level1(), row.level2(), row.level3(), row.level4());
             if (sourcePath == null) {
-                rowFailures.add(new RowFailure(SOURCE_TABLE_DOC, rowKey(docId, row.getSpecGroup()), "NULL_KEY",
+                rowFailures.add(new RowFailure(SOURCE_TABLE_DOC, rowKey(docId, row.specGroup()), "NULL_KEY",
                     "카테고리 레벨(level_1~level_4)이 전부 비어있음", rawRow(row)));
                 continue;
             }
             SsqCategoryResolution resolution = categoryMapping.resolve(
-                row.getLevel1(), row.getLevel2(), row.getLevel3(), row.getLevel4())
+                row.level1(), row.level2(), row.level3(), row.level4())
                 .orElse(null);
             if (resolution == null) {
                 reportNotes.add("미매핑 카테고리 경로(level_1~level_4, SsqCategoryMapping 보완 필요): doc_id=" + docId + ", path=" + sourcePath);
             }
-            // nahp_display_flag가 bit -> varchar(1)('t'/'f')로 변경됨(2026-07-16) — null이면 기존과 동일하게 노출로 간주.
-            boolean displayFlag = row.getNahpDisplayFlag() == null || "t".equalsIgnoreCase(row.getNahpDisplayFlag().trim());
+            // nahp_display_flag 원천값이 t/f, Y/N 두 표기가 섞여 온다 — null이면 기존과 동일하게 노출로 간주.
+            boolean displayFlag;
+            try {
+                String flag = ContentsNormalizer.trimToNull(row.nahpDisplayFlag());
+                displayFlag = flag == null || ContentsNormalizer.parseStrictBoolean(flag);
+            } catch (IllegalArgumentException e) {
+                rowFailures.add(new RowFailure(SOURCE_TABLE_DOC, rowKey(docId, row.specGroup()), "VALUE_CONFLICT",
+                    "NAHP_DISPLAY_FLAG 값 해석 불가: " + e.getMessage(), rawRow(row)));
+                continue;
+            }
 
             CategoryItem candidate = CategoryItem.builder()
                 .sourcePath(sourcePath)
@@ -120,7 +127,7 @@ public class SsqContentsConverter {
             CategoryItem existing = categoriesByPath.get(sourcePath);
             if (existing != null && (existing.isNahpDisplayFlag() != candidate.isNahpDisplayFlag()
                 || !eq(existing.getNahpCategoryId(), candidate.getNahpCategoryId()))) {
-                rowFailures.add(new RowFailure(SOURCE_TABLE_DOC, rowKey(docId, row.getSpecGroup()), "VALUE_CONFLICT",
+                rowFailures.add(new RowFailure(SOURCE_TABLE_DOC, rowKey(docId, row.specGroup()), "VALUE_CONFLICT",
                     "동일 source_path에 서로 다른 카테고리 값이 반복 수신됨: " + sourcePath, rawRow(row)));
                 continue;
             }
@@ -375,16 +382,16 @@ public class SsqContentsConverter {
         return "doc_id=" + docId + ", spec_group=" + specGroup;
     }
 
-    private Map<String, Object> rawRow(IfSsqDocument row) {
+    private Map<String, Object> rawRow(SsqDocumentRow row) {
         Map<String, Object> map = new LinkedHashMap<>();
-        map.put("doc_id", row.getDocId());
-        map.put("spec_group", row.getSpecGroup());
-        map.put("doc_title", row.getDocTitle());
-        map.put("doc_type", row.getDocType());
-        map.put("level_1", row.getLevel1());
-        map.put("level_2", row.getLevel2());
-        map.put("level_3", row.getLevel3());
-        map.put("level_4", row.getLevel4());
+        map.put("doc_id", row.docId());
+        map.put("spec_group", row.specGroup());
+        map.put("doc_title", row.docTitle());
+        map.put("doc_type", row.docType());
+        map.put("level_1", row.level1());
+        map.put("level_2", row.level2());
+        map.put("level_3", row.level3());
+        map.put("level_4", row.level4());
         return map;
     }
 

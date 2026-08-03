@@ -10,7 +10,6 @@ import com.ge.bo.entity.ContentsCategory;
 import com.ge.bo.entity.ContentsFile;
 import com.ge.bo.entity.ContentsIfFailRow;
 import com.ge.bo.entity.ContentsVersion;
-import com.ge.bo.entity.IfSsqDocument;
 import com.ge.bo.exception.BusinessException;
 import com.ge.bo.repository.ContentsBatchLogRepository;
 import com.ge.bo.repository.ContentsCategoryRepository;
@@ -67,8 +66,8 @@ public class SsqContentsBatchService {
 
         try {
             markStep(batchLog, "CLEANSE");
-            quarantineDuplicateKeys(batchId);
-            Map<Integer, List<IfSsqDocument>> docGroups = reader.loadPendingDocumentGroups();
+            quarantineDuplicateKeys(batchId, tally);
+            Map<Integer, List<SsqDocumentRow>> docGroups = reader.loadPendingDocumentGroups();
             Map<Integer, List<SsqFileInfoRow>> fileGroups = reader.loadPendingFileGroups();
             tally.receivedRowCount = docGroups.values().stream().mapToInt(List::size).sum()
                 + fileGroups.values().stream().mapToInt(List::size).sum();
@@ -110,7 +109,7 @@ public class SsqContentsBatchService {
         return sw.toString();
     }
 
-    private void processDocument(int docId, List<IfSsqDocument> docRows, List<SsqFileInfoRow> fileRows, long batchId,
+    private void processDocument(int docId, List<SsqDocumentRow> docRows, List<SsqFileInfoRow> fileRows, long batchId,
                                   BatchTally tally, Map<Long, Integer> cleanSuccessDocIdsByContentsId) {
         List<SsqFileInfoRow> files = fileRows != null ? fileRows : List.of();
 
@@ -262,14 +261,19 @@ public class SsqContentsBatchService {
      * 인식해 값이 조용히 유실될 위험이 있다. loadPendingDocumentGroups() 호출 전에 먼저 실행해
      * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
      */
-    private void quarantineDuplicateKeys(long batchId) {
+    private void quarantineDuplicateKeys(long batchId, BatchTally tally) {
         for (Object[] row : reader.findDuplicateKeyRows()) {
             int docId = ((Number) row[0]).intValue();
             String rowKey = "doc_id=" + docId + ", spec_group=" + row[1] + ", level_1~4=["
                 + row[2] + "," + row[3] + "," + row[4] + "," + row[5] + "]";
+            Object keptIfDate = row[6];
             saveFailRow(batchId, "if_r_ssq_document", String.valueOf(docId), rowKey, "CLEANSE", "DUPLICATE_KEY",
-                "동일 복합키(doc_id+spec_group+level_1~4)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리",
-                Map.of("docId", docId));
+                "동일 복합키(doc_id+spec_group+level_1~4)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리"
+                    + (keptIfDate != null ? " (채택된 행 if_date=" + keptIfDate + ")" : ""),
+                Map.of("docId", docId, "specGroup", String.valueOf(row[1]), "level1", String.valueOf(row[2]),
+                    "level2", String.valueOf(row[3]), "level3", String.valueOf(row[4]), "level4", String.valueOf(row[5]),
+                    "keptIfDate", String.valueOf(keptIfDate)));
+            tally.duplicateKeyCount++;
         }
         int quarantined = reader.quarantineDuplicateKeys();
         if (quarantined > 0) {
@@ -298,6 +302,7 @@ public class SsqContentsBatchService {
         int successDocCount;
         int partialDocCount;
         int failedDocCount;
+        int duplicateKeyCount;
         int quarantineCount;
         int masterInsert;
         int masterUpdate;
@@ -327,7 +332,8 @@ public class SsqContentsBatchService {
             map.put("success_count", successDocCount);
             map.put("partial_count", partialDocCount);
             map.put("failure_count", failedDocCount);
-            map.put("quarantine_count", quarantineCount);
+            map.put("duplicate_key_count", duplicateKeyCount);
+            map.put("row_failure_count", quarantineCount);
             map.put("master_insert_count", masterInsert);
             map.put("master_update_count", masterUpdate);
             map.put("category_insert_count", categoryInsert);
