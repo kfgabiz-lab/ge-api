@@ -2,6 +2,7 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.BatchSize;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedBy;
@@ -64,6 +65,7 @@ public class Menu {
     /** 하위 메뉴 목록 */
   @OneToMany(mappedBy = "parent", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("sortOrder ASC")
+    @BatchSize(size = 20)
     @Builder.Default
     private List<Menu> children = new ArrayList<>();
 

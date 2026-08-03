@@ -42,6 +42,8 @@ public class MediaSearchService {
 
     private static final int SNIPPET_MAX_CHARS = 200;
 
+    private static final int SNIPPET_EARLY_TRUNCATE_CHARS = 4000;
+
     private static final List<String> SOURCE_KEYS = List.of("TECH_HUB", "BLOG", "PRESS", "ARTICLE");
 
     private static final DateTimeFormatter SORT_DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -93,7 +95,8 @@ public class MediaSearchService {
             + "   LIMIT :size OFFSET :offset"
             + " )"
             + " SELECT a.c_tech_hub, a.c_blog, a.c_press, a.c_article,"
-            + "        p.source_type, p.id, p.title, p.snippet, p.video_url, p.file_id, p.sort_ts"
+            + "        p.source_type, p.id, p.title, " + buildFinalSnippetExpr() + " AS snippet,"
+            + "        p.video_url, p.file_id, p.sort_ts"
             + " FROM agg a"
             + " LEFT JOIN pg p ON true"
             + " ORDER BY p.score DESC, p.sort_ts DESC NULLS LAST, p.source_type, p.row_id DESC";
@@ -178,10 +181,7 @@ public class MediaSearchService {
     }
 
     private String buildIntegrationBlock(boolean hasKeyword, boolean hasSite) {
-        String plainExpr = SearchSqlSupport.buildPlainTextExpr("ic.content");
-        String snippetExpr = SNIPPET_MAX_CHARS > 0
-                ? "btrim(left(" + plainExpr + ", :snippetCap))::text"
-                : plainExpr + "::text";
+        String snippetExpr = "left(ic.content, " + SNIPPET_EARLY_TRUNCATE_CHARS + ")::text";
 
         StringBuilder sb = new StringBuilder();
         sb.append("SELECT CASE ic.type WHEN 'B' THEN 'BLOG' WHEN 'P' THEN 'PRESS'")
@@ -212,6 +212,13 @@ public class MediaSearchService {
             sb.append(" AND (ic.title ILIKE :q ESCAPE '\\' OR ic.content COLLATE \"C\" ILIKE :qHtml ESCAPE '\\')");
         }
         return sb.toString();
+    }
+
+    private String buildFinalSnippetExpr() {
+        String plainExpr = SearchSqlSupport.buildPlainTextExpr("p.snippet");
+        return SNIPPET_MAX_CHARS > 0
+                ? "btrim(left(" + plainExpr + ", :snippetCap))::text"
+                : plainExpr + "::text";
     }
 
     private void bindCommon(Query query, boolean hasKeyword, String kw, String kwHtml,
