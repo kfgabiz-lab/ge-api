@@ -51,7 +51,7 @@ public class ContentsMaster {
     @Column(name = "doc_title", length = 800)
     private String docTitle;
 
-    @Column(name = "nahp_title", length = 800)
+    @Column(name = "nahp_title", length = 4000)
     private String nahpTitle;
 
     @Column(name = "nahp_lang", length = 10)
