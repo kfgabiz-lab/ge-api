@@ -2935,7 +2935,17 @@ public class PageDataService {
         for (SlugRelation rel : fetchRelations) {
             boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
             boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
-            if (isArrayContains) continue;
+            if (isArrayContains) {
+                if (isCategory && StringUtils.hasText(rel.getFetchFields())) {
+                    List<String> arrayValues = content.stream()
+                        .flatMap(item -> extractFieldAsList(item.getDataJson(), rel.getMasterKey()).stream())
+                        .filter(v -> v != null && !v.isBlank())
+                        .distinct()
+                        .toList();
+                    categoryFetchCache.put(rel.getId(), batchResolveCategoryFetch(rel, arrayValues, siteId));
+                }
+                continue;
+            }
 
             List<String> masterValues = content.stream()
                 .map(item -> extractField(item.getDataJson(), rel.getMasterKey()))
@@ -2956,18 +2966,22 @@ public class PageDataService {
             Map<String, Object> enriched = new LinkedHashMap<>(item.getDataJson());
             for (SlugRelation rel : fetchRelations) {
                 boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
+                boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
 
                 Object fetchedValue;
                 if (isArrayContains) {
-                    if ("CATEGORY".equals(rel.getSlaveType())) {
-                        log.warn("ARRAY_CONTAINS는 CATEGORY 타입을 지원하지 않습니다. relationId={}", rel.getId());
-                        continue;
-                    }
                     List<String> masterValues = extractFieldAsList(item.getDataJson(), rel.getMasterKey());
                     if (masterValues.isEmpty()) continue;
-                    fetchedValue = resolveArrayContainsFetch(rel, masterValues);
+                    if (isCategory) {
+                        Map<String, Object> resolved = categoryFetchCache.get(rel.getId());
+                        if (resolved == null || resolved.isEmpty()) continue;
+                        List<String> names = collectCategoryNames(resolved, masterValues);
+                        if (names.isEmpty()) continue;
+                        fetchedValue = names.size() == 1 ? names.get(0) : names;
+                    } else {
+                        fetchedValue = resolveArrayContainsFetch(rel, masterValues);
+                    }
                 } else {
-                    boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
                     String masterValue = extractField(item.getDataJson(), rel.getMasterKey());
                     if (masterValue == null || masterValue.isBlank()) continue;
 
@@ -2982,7 +2996,7 @@ public class PageDataService {
 
                 if (fetchedValue != null) {
                     enriched.put(buildFetchKey(rel.getId()), fetchedValue);
-                    if (!isArrayContains && fetchedValue instanceof List) {
+                    if ((!isArrayContains || isCategory) && fetchedValue instanceof List) {
                         String sep = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
                         enriched.put(buildFetchKey(rel.getId()) + "_sep", sep);
                     }
@@ -3221,6 +3235,28 @@ public class PageDataService {
         return resultMap;
     }
 
+    private List<String> collectCategoryNames(Map<String, Object> resolved, List<String> masterValues) {
+        List<String> names = new ArrayList<>();
+        Set<String> seenValues = new LinkedHashSet<>();
+        for (String masterValue : masterValues) {
+            if (masterValue == null || masterValue.isBlank()) continue;
+            if (!seenValues.add(masterValue)) continue;
+            Object cached = resolved.get(masterValue);
+            if (cached == null) continue;
+            if (cached instanceof List<?> list) {
+                for (Object element : list) {
+                    if (element == null) continue;
+                    String name = element.toString();
+                    if (!name.isBlank()) names.add(name);
+                }
+            } else {
+                String name = cached.toString();
+                if (!name.isBlank()) names.add(name);
+            }
+        }
+        return names;
+    }
+
     private void applyFetchBatch(String slug, List<Map<String, Object>> rows, List<Long> relationIds) {
         if (relationIds == null || relationIds.isEmpty() || rows.isEmpty()) return;
 
@@ -3234,12 +3270,12 @@ public class PageDataService {
                 log.warn("applyFetchBatch: relationId={}는 FETCH 방향이 아니므로 건너뜀 (relationDir={})", relationId, rel.getRelationDir());
                 continue;
             }
-            if ("CATEGORY".equals(rel.getSlaveType())) {
+            boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
+            if ("CATEGORY".equals(rel.getSlaveType()) && !isArrayContains) {
                 log.warn("applyFetchBatch: relationId={}는 CATEGORY 타입이라 배치 처리 대상이 아니므로 건너뜀", relationId);
                 continue;
             }
 
-            boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
             if (isArrayContains) {
                 applyArrayContainsFetchBatch(rel, rows);
             } else {
@@ -3295,16 +3331,23 @@ public class PageDataService {
 
     @SuppressWarnings("unchecked")
     private void applyArrayContainsFetchBatch(SlugRelation rel, List<Map<String, Object>> rows) {
+        boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
         List<List<String>> rowMasterValues = new ArrayList<>(rows.size());
         List<String> allValues = new ArrayList<>();
         for (Map<String, Object> row : rows) {
-            List<String> values = extractFieldAsList(row, rel.getMasterKey()).stream()
-                .filter(v -> v.matches("-?\\d+"))
-                .toList();
+            List<String> extracted = extractFieldAsList(row, rel.getMasterKey());
+            List<String> values = isCategory
+                ? extracted
+                : extracted.stream().filter(v -> v.matches("-?\\d+")).toList();
             rowMasterValues.add(values);
             allValues.addAll(values);
         }
         if (allValues.isEmpty()) return;
+
+        if (isCategory) {
+            applyArrayContainsCategoryFetchBatch(rel, rows, rowMasterValues, allValues);
+            return;
+        }
 
         String idList = allValues.stream().distinct()
             .map(v -> "'" + v + "'")
@@ -3344,6 +3387,28 @@ public class PageDataService {
 
             Object fetchedValue = buildFetchedValue(matched, hasFetchFields, rel.getFetchFields(), separator);
             if (fetchedValue != null) rows.get(i).put(fetchKey, fetchedValue);
+        }
+    }
+
+    private void applyArrayContainsCategoryFetchBatch(SlugRelation rel, List<Map<String, Object>> rows,
+                                                      List<List<String>> rowMasterValues, List<String> allValues) {
+        if (!StringUtils.hasText(rel.getFetchFields())) {
+            log.warn("applyArrayContainsCategoryFetchBatch: relationId={}는 fetchFields가 없어 건너뜀", rel.getId());
+            return;
+        }
+
+        Map<String, Object> resolved = batchResolveCategoryFetch(rel, allValues.stream().distinct().toList(), null);
+        if (resolved.isEmpty()) return;
+
+        String separator = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
+        String fetchKey = buildFetchKey(rel.getId());
+
+        for (int i = 0; i < rows.size(); i++) {
+            List<String> values = rowMasterValues.get(i);
+            if (values.isEmpty()) continue;
+            List<String> names = collectCategoryNames(resolved, values);
+            if (names.isEmpty()) continue;
+            rows.get(i).put(fetchKey, String.join(separator, names));
         }
     }
 
