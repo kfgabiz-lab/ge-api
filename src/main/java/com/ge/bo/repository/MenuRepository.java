@@ -28,8 +28,7 @@ public interface MenuRepository extends JpaRepository<Menu, Long> {
   @EntityGraph(attributePaths = {"children"})
     List<Menu> findByMenuTypeAndSiteIdAndParentIsNullOrderBySortOrderAsc(String menuType, Long siteId);
 
-    /** FO GNB용: 공통(NULL) + 특정 사이트, visible=true 루트 메뉴만 조회 (자식/손자까지 EntityGraph로 한번에 로드) */
-    @EntityGraph(attributePaths = {"children", "children.children"})
+    @EntityGraph(attributePaths = {"children"})
     @Query("SELECT m FROM Menu m WHERE m.menuType = 'FO'"
         + " AND m.parent IS NULL AND m.visible = true"
         + " AND (m.siteId IS NULL OR m.siteId = :siteId)"
