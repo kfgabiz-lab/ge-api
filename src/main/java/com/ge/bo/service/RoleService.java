@@ -30,7 +30,10 @@ public class RoleService {
   @Transactional(readOnly = true)
   public List<RoleDto.Response> getAllRoles() {
     boolean isSystemAdmin = isCurrentUserSystemAdmin();
-    return roleRepository.findAll().stream()
+    return roleRepository.findAll(org.springframework.data.domain.Sort.by(
+            org.springframework.data.domain.Sort.Order.desc("createdAt"),
+            org.springframework.data.domain.Sort.Order.desc("id")))
+        .stream()
         .filter(r -> isSystemAdmin || !r.isSystem())
         .map(this::toResponse)
         .collect(Collectors.toList());

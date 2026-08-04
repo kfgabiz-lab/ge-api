@@ -30,9 +30,12 @@ public class SiteService {
   /** 홈페이지 목록 조회 */
   @Transactional(readOnly = true)
   public List<SiteDto.Response> getAllSites(Boolean isActive) {
+    org.springframework.data.domain.Sort sort = org.springframework.data.domain.Sort.by(
+        org.springframework.data.domain.Sort.Order.desc("createdAt"),
+        org.springframework.data.domain.Sort.Order.desc("id"));
     List<Site> sites = (isActive != null)
-        ? siteRepository.findByIsActive(isActive)
-        : siteRepository.findAll();
+        ? siteRepository.findByIsActive(isActive, sort)
+        : siteRepository.findAll(sort);
     return sites.stream().map(this::toResponse).collect(Collectors.toList());
   }
 
