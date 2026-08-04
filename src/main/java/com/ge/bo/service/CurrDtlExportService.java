@@ -46,32 +46,6 @@ public class CurrDtlExportService {
     String idList = filterIds.stream().map(String::valueOf).collect(Collectors.joining(","));
     StringBuilder addWhere = new StringBuilder(" AND pd.id IN (").append(idList).append(") ");
 
-//    String dataSql = "SELECT "
-//	        + "  curr.data_json -> 'curriculum' ->> 'title' AS curr_title "
-//	        + " , NULLIF(pd.data_json -> 'curriculum_detail2' ->> 'training_date_from', '')::date AS training_date_from "
-//            + " , NULLIF(pd.data_json -> 'curriculum_detail2' ->> 'training_date_to', '')::date AS training_date_to"
-//            + " , NULLIF(training.item ->> 'date', '')::date AS training_date "
-//            + " , NULLIF(training.item ->> 'time_from', '')::time AS time_from "
-//            + " , NULLIF(training.item ->> 'time_to', '')::time AS time_to "
-//            + " , training.item ->> 'title' AS title "
-//            + " , training.item ->> 'description' AS description "
-//            + " , training.item ->> 'trainer' AS trainer "
-//            + " , CASE WHEN pd.data_json -> 'curriculum_detail3' ->> 'training_fee_type' = '001' THEN 'free' "
-//            + " WHEN NULLIF(btrim(pd.data_json -> 'curriculum_detail3' ->> 'training_fee'), '') IS NOT NULL "
-//            + " THEN '$' || btrim(pd.data_json -> 'curriculum_detail3' ->> 'training_fee') "
-//            + " ELSE NULL END AS training_fee "
-//            + " FROM page_data pd "
-//            + " LEFT JOIN page_data curr ON curr.id::text = pd.data_json -> 'curriculum_detail1' ->> 'curriculum_id' "
-//            + "                         AND curr.data_slug = 'currMgmt-data' "
-//            + " LEFT JOIN LATERAL jsonb_array_elements( "
-//            + "         COALESCE (pd.data_json -> 'training_schedule', '[]'::jsonb) "
-//            + " ) AS training(item) ON TRUE "
-//            + " WHERE pd.data_json IS NOT NULL "
-//            + " AND pd.data_slug = 'currDtlMgmt-data' "
-//            + " AND NULLIF(pd.data_json -> 'curriculum_detail1' ->> 'curriculum_id', '') IS NOT NULL "
-//            + addWhere
-//            + " ORDER BY curr_title, training_date_from, training_date_to, training_date, time_from, time_to";
-
     StringBuilder dataSql = new StringBuilder("SELECT ");
     dataSql.append("  curr.data_json -> 'curriculum' ->> 'title' AS curr_title ")
             .append(" , NULLIF(pd.data_json -> 'curriculum_detail2' ->> 'training_date_from', '')::date AS training_date_from ")
@@ -98,13 +72,6 @@ public class CurrDtlExportService {
             .append(addWhere)
             .append(" ORDER BY curr_title, training_date_from, training_date_to, training_date, time_from, time_to");
 
-//    Query dataQuery = entityManager.createNativeQuery(String.valueOf(dataSql));
-
-//    @SuppressWarnings("unchecked")
-//    List<Map<String, Object>> rows = dataQuery
-//            .unwrap(NativeQuery.class)
-//            .setTupleTransformer(AliasToEntityMapResultTransformer.INSTANCE)
-//            .getResultList();
 
     @SuppressWarnings("unchecked")
     NativeQuery<Map<String, Object>> dataQuery = entityManager
@@ -139,75 +106,6 @@ public class CurrDtlExportService {
     String idList = filterIds.stream().map(String::valueOf).collect(Collectors.joining(","));
     StringBuilder addWhere = new StringBuilder(" AND pd.id IN (").append(idList).append(") ");
 
-//    String dataSql = " SELECT "
-//            + " ( "
-//            + "     SELECT cd.name "
-//            + "     FROM code_group cg "
-//            + "     JOIN code_detail cd "
-//            + "     ON cd.group_id = cg.id "
-//            + "     WHERE cg.group_code = 'TRAININGCOURSE' "
-//            + "     AND cd.code = trim(pd.data_json -> 'curriculum_detail1' ->> 'training_course') "
-//            + "     AND cg.is_active = true "
-//            + "     AND cd.is_active = true "
-//            + " ) AS training_course, "
-//            + " curr.data_json -> 'curriculum' ->> 'title' AS curr_title, "
-//            + " ( "
-//            + "   SELECT string_agg( "
-//            + "      cd.name, "
-//            + "      ',' "
-//            + "   ORDER BY codes.ord "
-//            + "   ) "
-//            + "   FROM string_to_table(pd.data_json -> 'curriculum_detail1' ->> 'training_type', ',') "
-//            + "   WITH ORDINALITY AS codes(code, ord) "
-//            + "   JOIN code_group cg "
-//            + "   ON cg.group_code = 'TRAININGTYPE' "
-//            + "   JOIN code_detail cd "
-//            + "   ON cd.group_id = cg.id "
-//            + "   AND cd.code = TRIM(codes.code) "
-//            + "   AND cg.is_active = true "
-//            + "   AND cd.is_active = true "
-//            + " ) AS training_type, "
-//            + " COALESCE( "
-//            + "     ( "
-//            + "       SELECT string_agg(value, ',') "
-//            + "       FROM jsonb_array_elements_text(COALESCE(pd.data_json -> 'power_list','[]'::jsonb)) AS arr(value) "
-//            + "     ), "
-//            + " '') AS power_list, "
-//            + " COALESCE( "
-//            + "     ( "
-//            + "       SELECT string_agg(value, ',') "
-//            + "       FROM jsonb_array_elements_text(COALESCE(pd.data_json -> 'automation_list', '[]'::jsonb)) AS arr(value) "
-//            + "     ), "
-//            + " '') AS automation_list, "
-//            + " pd.data_json -> 'curriculum_detail2' ->> 'title' AS title, "
-//            + " NULLIF(pd.data_json -> 'curriculum_detail2' ->> 'training_date_from', '')::date AS training_date_from, "
-//            + " NULLIF(pd.data_json -> 'curriculum_detail2' ->> 'training_date_to', '')::date AS training_date_to, "
-//            + " pd.data_json -> 'curriculum_detail2' ->> 'duration' AS duration, "
-//            + " (pd.data_json -> 'curriculum_detail2' ->> 'capacity') || ' ppl' AS capacity, "
-//            + " CONCAT_WS( "
-//            + "     ', ', "
-//            + "     NULLIF(TRIM(pd.data_json -> 'curriculum_detail2' ->> 'address_detail'), ''), "
-//            + "     NULLIF(TRIM(pd.data_json -> 'curriculum_detail2' ->> 'address'), '') "
-//            + " ) AS address, "
-//            + " CASE "
-//            + "   WHEN REGEXP_REPLACE(pd.data_json -> 'curriculum_detail2' ->> 'phone', '-', '', 'g') ~ '^[0-9]{10}$' "
-//            + "   THEN REGEXP_REPLACE( "
-//            + "           REGEXP_REPLACE(pd.data_json -> 'curriculum_detail2' ->> 'phone', '-', '', 'g'), "
-//            + "           '^([0-9]{3})([0-9]{3})([0-9]{4})$', "
-//            + "           '\\1-\\2-\\3' "
-//            + "   ) "
-//            + "   ELSE pd.data_json -> 'curriculum_detail2' ->> 'phone' "
-//            + " END AS phone, "
-//            + " pd.data_json -> 'curriculum_detail2' ->> 'email' AS email "
-//            + " FROM page_data pd "
-//            + " LEFT JOIN page_data curr "
-//            + " ON curr.id::text = pd.data_json -> 'curriculum_detail1' ->> 'curriculum_id' "
-//            + " AND curr.data_slug = 'currMgmt-data' "
-//            + " WHERE pd.data_json IS NOT NULL "
-//            + " AND pd.data_slug = 'currDtlMgmt-data' "
-//            + " AND NULLIF(pd.data_json -> 'curriculum_detail1' ->> 'curriculum_id', '') IS NOT NULL "
-//            + addWhere
-//            + " ORDER BY training_course, curr_title ";
     StringBuilder dataSql = new StringBuilder(" SELECT ");
                   dataSql.append(" ( ")
                           .append("     SELECT cd.name ")
@@ -238,14 +136,17 @@ public class CurrDtlExportService {
                           .append(" ) AS training_type, ")
                           .append(" COALESCE( ")
                           .append("     ( ")
-                          .append("       SELECT string_agg(value, ',') ")
-                          .append("       FROM jsonb_array_elements_text(COALESCE(pd.data_json -> 'power_list','[]'::jsonb)) AS arr(value) ")
+                          .append("       SELECT string_agg(a.data_json -> 'category' ->> 'title', ',' ORDER BY arr.ord) ")
+                          .append("       FROM jsonb_array_elements_text(COALESCE(pd.data_json -> 'power_list','[]'::jsonb)) WITH ORDINALITY AS arr(value, ord) ")
+                          .append("       JOIN page_data a ON a.id = arr.value::bigint")
                           .append("     ), ")
                           .append(" '') AS power_list, ")
                           .append(" COALESCE( ")
                           .append("     ( ")
-                          .append("       SELECT string_agg(value, ',') ")
-                          .append("       FROM jsonb_array_elements_text(COALESCE(pd.data_json -> 'automation_list', '[]'::jsonb)) AS arr(value) ")
+                          .append("       SELECT string_agg(b.data_json -> 'product' ->> 'product_name', ',' ORDER BY arr.ord) ")
+                          .append("       FROM jsonb_array_elements_text(COALESCE(pd.data_json -> 'automation_list', '[]'::jsonb)) WITH ORDINALITY AS arr(value, ord) ")
+                          .append("       JOIN page_data a ON a.id = arr.value::bigint")
+                          .append("       JOIN page_data b ON b.id = (a.data_json -> 'product' ->> 'id')::bigint")
                           .append("     ), ")
                           .append(" '') AS automation_list, ")
                           .append(" pd.data_json -> 'curriculum_detail2' ->> 'title' AS title, ")
@@ -278,13 +179,6 @@ public class CurrDtlExportService {
                           .append(addWhere)
                           .append(" ORDER BY training_course, curr_title, training_date_from, training_date_to ");
 
-//    Query dataQuery = entityManager.createNativeQuery(String.valueOf(dataSql));
-//
-//    @SuppressWarnings("unchecked")
-//    List<Map<String, Object>> rows = dataQuery
-//            .unwrap(NativeQuery.class)
-//            .setTupleTransformer(AliasToEntityMapResultTransformer.INSTANCE)
-//            .getResultList();
     @SuppressWarnings("unchecked")
     NativeQuery<Map<String, Object>> dataQuery = entityManager
             .createNativeQuery(String.valueOf(dataSql))
