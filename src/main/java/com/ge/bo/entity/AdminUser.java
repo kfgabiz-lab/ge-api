@@ -32,7 +32,7 @@ public class AdminUser {
   @Column(nullable = false, length = 50)
     private String name;
 
-  @Column(nullable = false, length = 255)
+  @Column(length = 255)
     private String passwordHash;
 
   @Column(nullable = false, length = 20, name = "role_code")

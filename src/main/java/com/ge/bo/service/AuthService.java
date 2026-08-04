@@ -45,8 +45,6 @@ public class AuthService {
 
   private static final long REFRESH_TOKEN_DAYS = 7L;
   private static final String PENDING_ROLE = "PENDING_ADMIN";
-  /** SSO 로그인 유저는 로컬 비밀번호를 쓰지 않으므로 실제 해시 대신 고정 마커 문자열 저장 (NOT NULL 제약 충족용) */
-  private static final String SSO_NO_PASSWORD_MARKER = "SSO_LOGIN_NO_PASSWORD";
 
   private final SessionAuthenticationStrategy sessionAuthenticationStrategy;
   private final SecurityContextRepository securityContextRepository;
@@ -370,7 +368,6 @@ public class AuthService {
     return AdminUser.builder()
         .email(email)
         .name(sso.userName() != null ? sso.userName() : sso.userId())
-        .passwordHash(SSO_NO_PASSWORD_MARKER)
         .role(ssoDefaultRole)
         .deptCode(sso.deptCode())
         .deptName(sso.deptName())
