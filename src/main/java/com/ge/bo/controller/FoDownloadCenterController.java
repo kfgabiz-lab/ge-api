@@ -97,6 +97,40 @@ public class FoDownloadCenterController {
         return ResponseEntity.ok(downloadCenterService.searchDocuments(q, limit));
     }
 
+    /**
+     * All탭 AI챗봇 keyword 기반 문서 프리뷰
+     * GET /api/v1/fo/download-center/keyword-search?keyword={챗봇 keyword,연관검색어 콤마구분}&limit={기본4}
+     * - Azure AI Search 후보(관련도순) → contents_file.file_name 매칭 → 상위 limit건.
+     */
+    @GetMapping("/keyword-search")
+    public ResponseEntity<FoDocumentSearchResponse> searchDocumentsByKeyword(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "4") int limit) {
+        return ResponseEntity.ok(downloadCenterService.previewByKeyword(keyword, limit));
+    }
+
+    /**
+     * Documents탭 AI챗봇 keyword 기반 문서 목록(필터+페이징)
+     * GET /api/v1/fo/download-center/keyword-contents?keyword={...}&categories=...&parentCategories=...&docTypes=...&productCodes=...&page=0&size=12
+     * - Azure/DB 매칭 전체 결과 안에서 page/size만큼만 잘라 반환(쿼리 재호출 없음).
+     */
+    @GetMapping("/keyword-contents")
+    public ResponseEntity<DownloadCenterContentPageResponse> getContentsByKeyword(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String categories,
+            @RequestParam(required = false) String parentCategories,
+            @RequestParam(required = false) String docTypes,
+            @RequestParam(required = false) String productCodes,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "12") int size) {
+        List<String> categoryL2Ids = parseCsv(categories);
+        List<String> categoryL1Ids = parseCsv(parentCategories);
+        List<String> docTypeList = parseCsv(docTypes);
+        List<String> productCodeList = parseCsv(productCodes);
+        return ResponseEntity.ok(downloadCenterService.getContentsByKeyword(
+            keyword, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList, page, size));
+    }
+
     /** "C,M,R" → ["C","M","R"] (공백/빈값 제거). null/blank → null(필터 미적용). */
     private List<String> parseCsv(String csv) {
         if (csv == null || csv.isBlank()) return null;

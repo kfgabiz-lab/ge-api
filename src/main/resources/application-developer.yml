@@ -102,6 +102,10 @@ ls:
       chatbotSearch:
         apiUrl: https://cxai-dev.ls-electric.com/api/v1/search/stream?include_keywords=true
         apiKey: ${CHATBOT_SEACH_API_KEY:}
+      # Azure AI Search API
+      azureSearch:
+        apiUrl: https://ais-lse-eus-prd-ctp-02.search.windows.net/indexes('customerportal-index')/docs/search.post.search?api-version=2025-09-01
+        apiKey: ${AZURE_SEARCH_API_KEY:}
 
     # Azure Blob Storage 정보
     azure:

@@ -1,5 +1,6 @@
 package com.ge.bo.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.dto.ChatbotSearchRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -13,6 +14,10 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 
 import java.time.LocalTime;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * 외부 AI 챗봇 API 호출 Service.
@@ -53,6 +58,14 @@ public class ChatbotSearchService {
             > SSE_STRING_TYPE =
             new ParameterizedTypeReference<>() {
             };
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private static final String QUERY_1 =
+            "What is the surge capacity per phase and the nominal discharge current (In) of the USPE series SPD?";
+    private static final String QUERY_2 = "MCCB";
+    private static final String QUERY_3 = "SPD";
+    private static final String QUERY_4 = "VFD";
 
     private static final String KEYWORD_1 = "USPE Series";
     private static final String[] RELATED_KEYWORDS_1 = {
@@ -601,6 +614,20 @@ public class ChatbotSearchService {
     public Flux<ServerSentEvent<String>> search(
             ChatbotSearchRequest request
     ) {
+        String query = request.query() == null ? "" : request.query().trim();
+
+        if (QUERY_1.equals(query)) {
+            return hardcodedResponse("POWER", KEYWORD_1, RELATED_KEYWORDS_1, RESPONSE_1);
+        }
+        if (QUERY_2.equals(query)) {
+            return hardcodedResponse("POWER", KEYWORD_2, RELATED_KEYWORDS_2, RESPONSE_2);
+        }
+        if (QUERY_3.equals(query)) {
+            return hardcodedResponse("POWER", KEYWORD_3, RELATED_KEYWORDS_3, RESPONSE_3);
+        }
+        if (QUERY_4.equals(query)) {
+            return hardcodedResponse("AUTOMATION", KEYWORD_4, RELATED_KEYWORDS_4, RESPONSE_4);
+        }
 
         return chatbotWebClient
                 .post()
@@ -689,5 +716,78 @@ public class ChatbotSearchService {
                                 error
                         )
                 );
+    }
+
+    /**
+     * 지정된 4개 검색어(QUERY_1~4)로 들어온 요청은 외부 API를 호출하지 않고
+     * 미리 캡처해둔 KEYWORD/RESPONSE 값으로 SSE 이벤트(response.keyword → response.chunk → response.completed)를 합성해 반환한다.
+     */
+    private Flux<ServerSentEvent<String>> hardcodedResponse(
+            String domain,
+            String keyword,
+            String[] relatedKeywords,
+            String content
+    ) {
+        String sessionId = UUID.randomUUID().toString();
+        String messageId = "msg_" + UUID.randomUUID().toString().replace("-", "");
+
+        Map<String, Object> keywordData = new LinkedHashMap<>();
+        keywordData.put("session_id", sessionId);
+        keywordData.put("domain", domain);
+        keywordData.put("keyword", keyword);
+        keywordData.put("related_keywords", Arrays.asList(relatedKeywords));
+        keywordData.put("matched", true);
+        keywordData.put("source", "hardcoded");
+
+        Map<String, Object> chunkData = new LinkedHashMap<>();
+        chunkData.put("session_id", sessionId);
+        chunkData.put("domain", domain);
+        chunkData.put("chunk", content);
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("source", "hardcoded");
+        meta.put("should_fallback", false);
+        meta.put("is_translation", false);
+        meta.put("engine", "hardcoded");
+        meta.put("domain_result_status", "SUCCESS");
+        meta.put("domain_result_reason", "hardcoded_response");
+        meta.put("no_result", false);
+
+        Map<String, Object> completedData = new LinkedHashMap<>();
+        completedData.put("session_id", sessionId);
+        completedData.put("domain", domain);
+        completedData.put("message_id", messageId);
+        completedData.put("content", content);
+        completedData.put("product_name", null);
+        completedData.put("references", java.util.Collections.emptyList());
+        completedData.put("actions", java.util.Collections.emptyList());
+        completedData.put("meta", meta);
+
+        ServerSentEvent<String> keywordEvent = ServerSentEvent.<String>builder()
+                .event(EVENT_KEYWORD)
+                .data(toJson(keywordData))
+                .build();
+
+        ServerSentEvent<String> chunkEvent = ServerSentEvent.<String>builder()
+                .event(EVENT_CHUNK)
+                .data(toJson(chunkData))
+                .build();
+
+        ServerSentEvent<String> completedEvent = ServerSentEvent.<String>builder()
+                .event(EVENT_COMPLETED)
+                .data(toJson(completedData))
+                .build();
+
+        log.info("[CHATBOT HARDCODED] keyword={}, domain={}", keyword, domain);
+
+        return Flux.just(keywordEvent, chunkEvent, completedEvent);
+    }
+
+    private String toJson(Object value) {
+        try {
+            return MAPPER.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new IllegalStateException("하드코딩 챗봇 응답 JSON 직렬화 실패", e);
+        }
     }
 }

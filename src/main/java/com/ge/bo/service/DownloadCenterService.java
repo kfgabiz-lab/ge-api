@@ -1,6 +1,8 @@
 package com.ge.bo.service;
 
 import com.ge.bo.common.search.SearchSqlSupport;
+import com.ge.bo.dto.AzureAiSearchDocument;
+import com.ge.bo.dto.AzureAiSearchResponse;
 import com.ge.bo.dto.DownloadCenterCategoryCountResponse;
 import com.ge.bo.dto.DownloadCenterDocTypeCountResponse;
 import com.ge.bo.dto.DownloadCenterContentPageResponse;
@@ -31,6 +33,7 @@ public class DownloadCenterService {
     private EntityManager entityManager;
 
     private final CodeService codeService;
+    private final AzureAiSearchService azureAiSearchService;
 
     private static final String MASTER_GATE =
         " m.expose = true AND m.is_deleted = false AND m.doc_type <> 'V'"
@@ -183,6 +186,135 @@ public class DownloadCenterService {
             pageIds.isEmpty() ? new ArrayList<>() : loadContents(pageIds);
 
         return new FoDocumentSearchResponse(total, items);
+    }
+
+    /**
+     * 챗봇 keyword(+연관검색어, 콤마구분)로 Azure AI Search 후보를 조회한 뒤,
+     * 실제 우리 DB(contents_file.file_name)에 존재하는 문서만 골라 반환한다.
+     * Azure 결과의 관련도 순서를 그대로 유지한다. 페이징 없이 매칭된 전체 리스트를 반환하며,
+     * All탭 프리뷰/Documents탭은 이 리스트를 필요한 만큼만 잘라서 쓴다.
+     */
+    @Transactional(readOnly = true)
+    public List<DownloadCenterContentResponse> searchDocumentsByKeyword(
+            String keyword, List<String> categories, List<String> parentCategories,
+            List<String> docTypes, List<String> productCodes) {
+        if (keyword == null || keyword.isBlank()) {
+            return new ArrayList<>();
+        }
+
+        AzureAiSearchResponse azureResponse = azureAiSearchService.azureAiSearch(keyword);
+        if (azureResponse == null || azureResponse.value() == null || azureResponse.value().isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        Map<String, Integer> fileNameRank = new LinkedHashMap<>();
+        List<String> candidateFileNames = new ArrayList<>();
+        for (AzureAiSearchDocument doc : azureResponse.value()) {
+            String fn = doc.fileName();
+            if (fn == null || fileNameRank.containsKey(fn)) continue;
+            fileNameRank.put(fn, fileNameRank.size());
+            candidateFileNames.add(fn);
+        }
+        if (candidateFileNames.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        boolean hasCats = categories != null && !categories.isEmpty();
+        boolean hasParentCats = parentCategories != null && !parentCategories.isEmpty();
+        boolean hasDocTypes = docTypes != null && !docTypes.isEmpty();
+        boolean hasProductCodes = productCodes != null && !productCodes.isEmpty();
+
+        StringBuilder where = new StringBuilder(" WHERE").append(MASTER_GATE)
+            .append(" AND f.file_name IN (:fileNames)");
+        if (hasDocTypes) {
+            where.append(" AND m.doc_type IN (:docTypes)");
+        }
+        List<String> categoryClauses = new ArrayList<>();
+        if (hasCats) {
+            categoryClauses.add("EXISTS (SELECT 1 FROM contents_category cc"
+                + " WHERE cc.contents_id = m.id AND cc.category_l2_id IN (:cats)"
+                + "   AND cc.nahp_display_flag = true AND cc.is_deleted = false)");
+        }
+        if (hasParentCats) {
+            categoryClauses.add("EXISTS (SELECT 1 FROM contents_category cc1"
+                + " WHERE cc1.contents_id = m.id AND cc1.category_l1_id IN (:parentCats)"
+                + "   AND cc1.category_l2_id IS NULL"
+                + "   AND cc1.nahp_display_flag = true AND cc1.is_deleted = false)");
+        }
+        if (!categoryClauses.isEmpty()) {
+            where.append(" AND (").append(String.join(" OR ", categoryClauses)).append(")");
+        }
+        if (hasProductCodes) {
+            where.append(" AND EXISTS (SELECT 1 FROM contents_category cc3"
+                + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes)"
+                + "   AND cc3.nahp_display_flag = true AND cc3.is_deleted = false)");
+        }
+
+        Query matchQuery = entityManager.createNativeQuery(
+            "SELECT DISTINCT m.id, f.file_name FROM contents_master m"
+            + " JOIN contents_version v ON v.contents_id = m.id"
+            + "   AND v.version_expose = true AND v.is_deleted = false"
+            + " JOIN contents_file f ON f.contents_version_id = v.id"
+            + "   AND f.file_expose = true AND f.is_deleted = false"
+            + where);
+        matchQuery.setParameter("fileNames", candidateFileNames);
+        if (hasDocTypes) matchQuery.setParameter("docTypes", docTypes);
+        if (hasCats) matchQuery.setParameter("cats", categories);
+        if (hasParentCats) matchQuery.setParameter("parentCats", parentCategories);
+        if (hasProductCodes) matchQuery.setParameter("productCodes", productCodes);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = matchQuery.getResultList();
+        if (rows.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        Map<Long, Integer> masterBestRank = new LinkedHashMap<>();
+        for (Object[] r : rows) {
+            Long masterId = ((Number) r[0]).longValue();
+            String fileName = r[1].toString();
+            Integer fnRank = fileNameRank.get(fileName);
+            if (fnRank == null) continue;
+            masterBestRank.merge(masterId, fnRank, Math::min);
+        }
+        if (masterBestRank.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<Long> orderedIds = masterBestRank.entrySet().stream()
+            .sorted(Map.Entry.comparingByValue())
+            .map(Map.Entry::getKey)
+            .toList();
+
+        return loadContents(orderedIds);
+    }
+
+    /** All탭 프리뷰용 — 매칭된 전체 리스트 중 상위 limit건만 반환(total은 매칭 전체 건수). */
+    @Transactional(readOnly = true)
+    public FoDocumentSearchResponse previewByKeyword(String keyword, int limit) {
+        List<DownloadCenterContentResponse> matched =
+            searchDocumentsByKeyword(keyword, null, null, null, null);
+        int safeLimit = limit <= 0 ? 10 : limit;
+        List<DownloadCenterContentResponse> items =
+            matched.size() > safeLimit ? matched.subList(0, safeLimit) : matched;
+        return new FoDocumentSearchResponse(matched.size(), items);
+    }
+
+    /** Documents탭용 — 매칭된 전체 리스트(이미 받아온 것) 안에서 page/size만큼 잘라 반환(쿼리 재호출 없음). */
+    @Transactional(readOnly = true)
+    public DownloadCenterContentPageResponse getContentsByKeyword(
+            String keyword, List<String> categories, List<String> parentCategories,
+            List<String> docTypes, List<String> productCodes, int page, int size) {
+        List<DownloadCenterContentResponse> matched =
+            searchDocumentsByKeyword(keyword, categories, parentCategories, docTypes, productCodes);
+        int safeSize = size <= 0 ? 12 : size;
+        int safePage = Math.max(page, 0);
+        int total = matched.size();
+        int totalPages = (int) Math.ceil((double) total / safeSize);
+        int fromIndex = Math.min(safePage * safeSize, total);
+        int toIndex = Math.min(fromIndex + safeSize, total);
+        List<DownloadCenterContentResponse> content = matched.subList(fromIndex, toIndex);
+        return new DownloadCenterContentPageResponse(content, total, totalPages, safePage, safeSize);
     }
 
     private Map<String, String> loadDocTypeLabels() {
