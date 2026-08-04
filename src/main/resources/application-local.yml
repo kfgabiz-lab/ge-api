@@ -78,9 +78,6 @@ ls:
     outApi:
       googleMapKey : "AIzaSyBkHvBn_MG-VWQd2C8-UA3PJBniWPy5QNk"
       recapchaKey : "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
-      azure-search:
-        api-url: ${AZURE_SEARCH_API_URL:}
-        api-key: ${AZURE_SEARCH_API_KEY:}
       chatbot-search:
         api-url: ${CHATBOT_SEARCH_API_URL:}
         api-key: ${CHATBOT_SEARCH_API_KEY:}

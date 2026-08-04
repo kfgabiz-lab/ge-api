@@ -102,7 +102,7 @@ public class TrainingApplicationService {
             + " " + CURR_TITLE_EXPR + " AS curriculum_title,"
             + " " + SESS_TITLE_EXPR + " AS session_title,"
             + " " + REGULAR_DATE_FROM_EXPR + " AS date_from,"
-            + " " + REGULAR_DATE_TO_EXPR + " AS date_to,"
+            + " COALESCE(" + REGULAR_DATE_TO_EXPR + ", " + REGULAR_DATE_FROM_EXPR + ") AS date_to,"
             + " tr.created_at AS created_at,"
             + " tr.email AS email,"
             + " tr.student_name AS applicant";
@@ -117,17 +117,19 @@ public class TrainingApplicationService {
             + " tr.schedule_end AS date_to,"
             + " tr.created_at AS created_at,"
             + " tr.email AS email,"
-            + " TRIM(CONCAT_WS(' ', tr.first_name, tr.last_name)) AS applicant";
+            + " tr.first_name AS applicant";
 
     private static final Map<String, String> SORT_COLUMN_MAP = Map.ofEntries(
             Map.entry("createdAt", "u.created_at"),
+            Map.entry("scheduleType", "u.schedule_type"),
             Map.entry("trainingType", "u.training_type"),
             Map.entry("trainingCourse", "u.training_course"),
             Map.entry("curriculumTitle", "u.curriculum_title"),
             Map.entry("sessionTitle", "u.session_title"),
             Map.entry("dateFrom", "u.date_from"),
             Map.entry("dateTo", "u.date_to"),
-            Map.entry("email", "u.email"));
+            Map.entry("email", "u.email"),
+            Map.entry("applicant", "u.applicant"));
 
     private static final String DEFAULT_ORDER_BY = " ORDER BY u.created_at DESC";
 
@@ -368,11 +370,12 @@ public class TrainingApplicationService {
                 where.append(" AND ").append(REGULAR_DATE_FROM_EXPR).append(" <= CAST(:regPeriodTo AS date)");
             }
         } else if (SEARCH_PERIOD_END.equals(periodType)) {
+            String regularDateToExpr = "COALESCE(" + REGULAR_DATE_TO_EXPR + ", " + REGULAR_DATE_FROM_EXPR + ")";
             if (startDate != null) {
-                where.append(" AND ").append(REGULAR_DATE_TO_EXPR).append(" >= CAST(:regPeriodFrom AS date)");
+                where.append(" AND ").append(regularDateToExpr).append(" >= CAST(:regPeriodFrom AS date)");
             }
             if (endDate != null) {
-                where.append(" AND ").append(REGULAR_DATE_TO_EXPR).append(" <= CAST(:regPeriodTo AS date)");
+                where.append(" AND ").append(regularDateToExpr).append(" <= CAST(:regPeriodTo AS date)");
             }
         } else {
             if (startDate != null) {
