@@ -178,6 +178,7 @@ public class PageDataService {
       }
       bindSearchParams(countQuery, searchParams);
       bindTodayIfPresent(countQuery, countSql, siteId);
+      bindNowIfPresent(countQuery, countSql, siteId);
       totalElements = ((Number) countQuery.getSingleResult()).longValue();
 
       if (totalElements == 0) {
@@ -222,6 +223,7 @@ public class PageDataService {
     }
     bindSearchParams(dataQuery, searchParams);
     bindTodayIfPresent(dataQuery, dataSql, siteId);
+    bindNowIfPresent(dataQuery, dataSql, siteId);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -413,6 +415,7 @@ public class PageDataService {
     }
     bindSearchParams(dataQuery, statusParams);
     bindTodayIfPresent(dataQuery, dataSql, siteId);
+    bindNowIfPresent(dataQuery, dataSql, siteId);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -1348,6 +1351,7 @@ public class PageDataService {
     }
     bindSearchParams(query, searchParams);
     bindTodayIfPresent(query, sql, siteId);
+    bindNowIfPresent(query, sql, siteId);
 
     @SuppressWarnings("unchecked")
     List<Object> rows = query.getResultList();
@@ -1386,6 +1390,7 @@ public class PageDataService {
     }
     bindSearchParams(dataQuery, searchParams);
     bindTodayIfPresent(dataQuery, dataSql, siteId);
+    bindNowIfPresent(dataQuery, dataSql, siteId);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -1709,6 +1714,11 @@ public class PageDataService {
     }
   }
 
+  private String toNowPaddedExpr(String rawJsonPathExpr) {
+    String digits = "regexp_replace(" + rawJsonPathExpr + ", '[^0-9]', '', 'g')";
+    return "(CASE WHEN char_length(" + digits + ") = 8 THEN " + digits + " || '000000' ELSE " + digits + " END)";
+  }
+
   private boolean matchesCondition(Map<String, Object> dataJson, String condition, Long siteId) {
     String today = LocalDate.now(resolveZone(siteId)).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
     for (CondToken t : parseConditionExpr(condition)) {
@@ -1968,6 +1978,7 @@ public class PageDataService {
         if (tokens.isEmpty()) return;
 
         String today = ":today";
+        String now = ":nowValue";
         List<String> topParts = new ArrayList<>();
         List<String> nestedParts = new ArrayList<>();
         int idx = 0;
@@ -1977,6 +1988,9 @@ public class PageDataService {
           if (t.isToday()) {
             topParts.add("substring(regexp_replace(data_json->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
             nestedParts.add("substring(regexp_replace(kv.value->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
+          } else if (t.isNow()) {
+            topParts.add(toNowPaddedExpr("data_json->>'" + t.key() + "'") + " " + sqlOp + " " + now);
+            nestedParts.add(toNowPaddedExpr("kv.value->>'" + t.key() + "'") + " " + sqlOp + " " + now);
           } else {
             topParts.add("data_json->>'" + t.key() + "' " + sqlOp + " :" + pName);
             nestedParts.add("kv.value->>'" + t.key() + "' " + sqlOp + " :" + pName);
@@ -2290,6 +2304,7 @@ public class PageDataService {
         if (tokens.isEmpty()) return;
 
         String today = ":today";
+        String now = ":nowValue";
         List<String> topParts = new ArrayList<>();
         List<String> nestedParts = new ArrayList<>();
         int idx = 0;
@@ -2299,6 +2314,9 @@ public class PageDataService {
           if (t.isToday()) {
             topParts.add("substring(regexp_replace(data_json->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
             nestedParts.add("substring(regexp_replace(kv.value->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
+          } else if (t.isNow()) {
+            topParts.add(toNowPaddedExpr("data_json->>'" + t.key() + "'") + " " + sqlOp + " " + now);
+            nestedParts.add(toNowPaddedExpr("kv.value->>'" + t.key() + "'") + " " + sqlOp + " " + now);
           } else {
             topParts.add("data_json->>'" + t.key() + "' " + sqlOp + " :" + pName);
             nestedParts.add("kv.value->>'" + t.key() + "' " + sqlOp + " :" + pName);
@@ -2546,6 +2564,7 @@ public class PageDataService {
     }
     bindSearchParams(query, statusParams);
     bindTodayIfPresent(query, sql, siteId);
+    bindNowIfPresent(query, sql, siteId);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
@@ -2558,7 +2577,7 @@ public class PageDataService {
     return new AdjacentResponse.AdjacentItem(rowId, title);
   }
 
-  private record CondToken(String key, String op, String value, boolean isToday) {}
+  private record CondToken(String key, String op, String value, boolean isToday, boolean isNow) {}
 
   private static final Pattern COND_TOKEN_PATTERN =
       Pattern.compile("^([a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)?)\\s*(!=|>=|<=|=|<|>)\\s*(.+)$");
@@ -2571,7 +2590,8 @@ public class PageDataService {
       if (!m.matches()) continue;
       String val = m.group(3).trim();
       boolean isToday = "today()".equals(val);
-      tokens.add(new CondToken(m.group(1), m.group(2), isToday ? null : stripQuotes(val), isToday));
+      boolean isNow = "now()".equals(val);
+      tokens.add(new CondToken(m.group(1), m.group(2), (isToday || isNow) ? null : stripQuotes(val), isToday, isNow));
     }
     return tokens;
   }
@@ -2635,7 +2655,7 @@ public class PageDataService {
         List<CondToken> tokens = parseConditionExpr(ternary[0]);
         int idx = 0;
         for (CondToken t : tokens) {
-          if (!t.isToday()) query.setParameter("p_cond_" + fk + "_" + idx, t.value());
+          if (!t.isToday() && !t.isNow()) query.setParameter("p_cond_" + fk + "_" + idx, t.value());
           idx++;
         }
         return;
