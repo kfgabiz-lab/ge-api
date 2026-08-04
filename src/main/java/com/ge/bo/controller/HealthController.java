@@ -5,7 +5,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
@@ -19,8 +18,7 @@ public class HealthController {
   public ResponseEntity<Map<String, Object>> healthCheck() {
 
     return ResponseEntity.ok(Map.of(
-            "status", "OK",
-            "message", "bo America 백오피스 API 서버가 정상 동작 중입니다.",
-            "timestamp", LocalDateTime.now().toString()));
+            "status", "OK"
+    ));
   }
 }
