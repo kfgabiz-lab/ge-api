@@ -616,16 +616,16 @@ public class ChatbotSearchService {
     ) {
         String query = request.query() == null ? "" : request.query().trim();
 
-        if (QUERY_1.equals(query)) {
+        if (QUERY_1.equalsIgnoreCase(query)) {
             return hardcodedResponse("POWER", KEYWORD_1, RELATED_KEYWORDS_1, RESPONSE_1);
         }
-        if (QUERY_2.equals(query)) {
+        if (QUERY_2.equalsIgnoreCase(query)) {
             return hardcodedResponse("POWER", KEYWORD_2, RELATED_KEYWORDS_2, RESPONSE_2);
         }
-        if (QUERY_3.equals(query)) {
+        if (QUERY_3.equalsIgnoreCase(query)) {
             return hardcodedResponse("POWER", KEYWORD_3, RELATED_KEYWORDS_3, RESPONSE_3);
         }
-        if (QUERY_4.equals(query)) {
+        if (QUERY_4.equalsIgnoreCase(query)) {
             return hardcodedResponse("AUTOMATION", KEYWORD_4, RELATED_KEYWORDS_4, RESPONSE_4);
         }
 

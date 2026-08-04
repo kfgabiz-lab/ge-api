@@ -722,7 +722,9 @@ public class PageDataService {
     }
 
     @Transactional(readOnly = true)
-    public List<FoProductCategoryCountResponse> getProductCategoryCounts() {
+    public List<FoProductCategoryCountResponse> getProductCategoryCounts(String q) {
+        boolean hasKeyword = q != null && !q.isBlank();
+
         String sql = "SELECT (j.data_json->'product'->>'parentId')::bigint AS category_l2_id,"
             + "       count(DISTINCT p.id)::int AS cnt"
             + " FROM page_data p"
@@ -730,10 +732,17 @@ public class PageDataService {
             + "   AND j.data_json->'product'->>'depth' = '3'"
             + "   AND (j.data_json->'product'->>'id')::bigint = p.id"
             + " WHERE p.data_slug = 'product-data'"
-            + "   AND p.data_json->'product'->>'is_visible' = '001'"
-            + " GROUP BY (j.data_json->'product'->>'parentId')::bigint";
+            + "   AND p.data_json->'product'->>'is_visible' = '001'";
+        if (hasKeyword) {
+            sql += "  AND ( p.data_json->'product'->>'product_name'        ILIKE :kw ESCAPE '\\'"
+                + "     OR p.data_json->'product'->>'product_description' ILIKE :kw ESCAPE '\\' )";
+        }
+        sql += " GROUP BY (j.data_json->'product'->>'parentId')::bigint";
 
         Query query = entityManager.createNativeQuery(sql);
+        if (hasKeyword) {
+            query.setParameter("kw", SearchSqlSupport.toLikePattern(q.trim()));
+        }
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
         List<FoProductCategoryCountResponse> result = new ArrayList<>();
