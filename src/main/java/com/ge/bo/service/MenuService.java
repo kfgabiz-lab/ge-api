@@ -175,6 +175,8 @@ public class MenuService {
             .description(descriptionKo.isEmpty() ? null : descriptionKo)
             .descriptionMsgKey(hasDescMsgKey ? request.descriptionMsgKey() : null)
             .url(cleanUrl)
+            .metaTitle(normalizeMeta(request.metaTitle()))
+            .metaDescription(normalizeMeta(request.metaDescription()))
             .icon(request.icon())
             .parent(parent)
             .menuType(request.menuType())
@@ -232,6 +234,8 @@ public class MenuService {
     menu.setDescription(descriptionKo.isEmpty() ? null : descriptionKo);
     menu.setDescriptionMsgKey(hasDescMsgKey ? request.descriptionMsgKey() : null);
     menu.setUrl(cleanUrl);
+    menu.setMetaTitle(normalizeMeta(request.metaTitle()));
+    menu.setMetaDescription(normalizeMeta(request.metaDescription()));
     menu.setIcon(request.icon());
     menu.setSortOrder(request.sortOrder() != null ? request.sortOrder() : menu.getSortOrder());
     menu.setVisible(request.visible() != null ? request.visible() : menu.getVisible());
@@ -435,5 +439,14 @@ public class MenuService {
       cleaned = cleaned.replaceAll("/+$", "");
     }
     return cleaned.isEmpty() ? null : cleaned;
+  }
+
+    /** Meta Title/Description 정제: 빈 문자열은 NULL로 저장 */
+  private String normalizeMeta(String value) {
+    if (value == null) {
+      return null;
+    }
+    String trimmed = value.trim();
+    return trimmed.isEmpty() ? null : trimmed;
   }
 }
