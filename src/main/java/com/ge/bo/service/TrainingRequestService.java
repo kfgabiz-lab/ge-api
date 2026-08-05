@@ -17,6 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * FO Training Request(비정기 교육 신청, Step1~4) 접수 서비스
@@ -114,16 +117,15 @@ public class TrainingRequestService {
         log.info("Training Request 접수 저장 완료 - id={}, trainingFormat={}, productCount={}",
                 saved.getId(), saved.getTrainingFormat(), request.selectedProducts().size());
 
-        // 신청자 + 담당자에게 발송(내용은 id/trainingTrack만 담는 임시 템플릿 — 추후 교체 예정)
-        // 발송 이력 저장(성공/실패 모두)은 MailService 가 공통으로 처리
-        mailService.sendMail(
-                buildRecipients(request.email(), resolveManagerEmail()),
-                "Training Request Test",
-                "<p>id: %d</p><p>trainingTrack: %s</p>".formatted(saved.getId(), request.trainingTrack()),
-                EMAIL_SEND_TYPE_IRREGULAR_TRAINING,
-                toTrainingCourseCode(request.trainingTrack()),
-                null
-        );
+        // 신청자 + 담당자 각자에게 개별 발송(한 메일에 여러 수신자를 넣지 않는다)
+        // 내용은 id/trainingTrack만 담는 임시 템플릿 — 추후 교체 예정
+        // 발송 이력 저장(성공/실패 모두)은 MailService 가 각 발송 건마다 공통으로 처리
+        String trainingCourseCode = toTrainingCourseCode(request.trainingTrack());
+        String subject = "Training Request Test";
+        String content = "<p>id: %d</p><p>trainingTrack: %s</p>".formatted(saved.getId(), request.trainingTrack());
+        for (String recipient : buildRecipients(request.email(), resolveManagerEmail())) {
+            mailService.sendMail(recipient, subject, content, EMAIL_SEND_TYPE_IRREGULAR_TRAINING, trainingCourseCode, null);
+        }
 
         return new TrainingRequestSubmitResponse(saved.getId());
     }
@@ -136,9 +138,20 @@ public class TrainingRequestService {
                 .orElse(null);
     }
 
-    /** 신청자 이메일 + 담당자 이메일(콤마 다중 가능, 없으면 생략)을 콤마로 결합 */
-    private String buildRecipients(String applicantEmail, String managerEmail) {
-        return StringUtils.isBlank(managerEmail) ? applicantEmail : applicantEmail + "," + managerEmail;
+    /**
+     * 신청자 이메일 + 담당자 이메일(콤마로 여러 명 저장 가능)을 개별 수신자 목록으로 분리.
+     * 한 메일에 여러 명을 담지 않고 각자에게 따로 발송하기 위함(수신자별 To 노출 방지).
+     */
+    private List<String> buildRecipients(String applicantEmail, String managerEmail) {
+        List<String> recipients = new ArrayList<>();
+        recipients.add(applicantEmail);
+        if (StringUtils.isNotBlank(managerEmail)) {
+            Arrays.stream(managerEmail.split(","))
+                    .map(String::trim)
+                    .filter(StringUtils::isNotBlank)
+                    .forEach(recipients::add);
+        }
+        return recipients;
     }
 
     /** trainingTrack(engineering/service/sales) → 공통코드 TRAININGCOURSE(01/02/03) 매핑 — 이메일 이력 상세분류용 */

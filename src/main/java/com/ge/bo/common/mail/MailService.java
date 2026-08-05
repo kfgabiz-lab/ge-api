@@ -7,7 +7,6 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -15,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -39,7 +37,7 @@ public class MailService {
      * 메일 발송 + 발송 이력 저장(성공/실패 모두 기록) — 공통 진입점. 새 이력행을 생성한다(최초 발송용).
      * emailSendType: 공통코드 EMAILSENDTYPE (01=뉴스레터, 02=정기 Training, 03=비정기 Training)
      * emailSendDetailType: 공통코드 TRAININGCOURSE (01=Engineering/02=Service/03=Sales) — Training 계열만 사용, 뉴스레터는 null
-     * @param to 수신자 이메일 — 콤마(,)로 여러 명 지정 가능 (예: "a@test.com,b@test.com")
+     * @param to 수신자 이메일 1명 — 여러 명에게 보내야 하면 호출부에서 각자에게 한 번씩 개별 호출한다(발송 이력도 건별로 남아야 하므로)
      */
     @Transactional
     public String sendMail(String to, String subject, String content, String emailSendType,
@@ -67,8 +65,7 @@ public class MailService {
 
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
             helper.setFrom("elesmtp@ls-electric.com");
-            // 콤마로 구분된 여러 수신자 지원 — setTo(String)은 주소 1개만 허용해 콤마 포함 시 예외가 나므로 배열로 분리해서 넘긴다
-            helper.setTo(splitRecipients(to));
+            helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(content, true); // false = plain text
             log.info("메일 세팅 완료");
@@ -81,14 +78,6 @@ public class MailService {
             log.info(e.getMessage());
             return EMAIL_SEND_FAIL;
         }
-    }
-
-    /** "a@test.com, b@test.com" → ["a@test.com", "b@test.com"] (공백 제거, 빈 값 제외) */
-    private String[] splitRecipients(String to) {
-        return Arrays.stream(to.split(","))
-                .map(String::trim)
-                .filter(StringUtils::isNotBlank)
-                .toArray(String[]::new);
     }
 
     //이메일 발송 내역 저장 — NewsletterInsightsService 에 있던 로직을 공통화하여 이관
