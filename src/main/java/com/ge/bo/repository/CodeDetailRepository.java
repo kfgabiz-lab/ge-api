@@ -25,4 +25,10 @@ public interface CodeDetailRepository extends JpaRepository<CodeDetail, Long> {
    * (Contact Us 문의 접수의 inquiry_type/country 공통코드 실시간 검증용)
    */
   boolean existsByGroup_GroupCodeAndCodeAndActiveTrue(String groupCode, String code);
+
+  /**
+   * groupCode + code 조합의 활성(is_active=true) 코드 상세 단건 조회
+   * (EMAIL_RECIPIENT 그룹의 담당자 이메일(name 필드) 조회 등에 사용)
+   */
+  Optional<CodeDetail> findByGroup_GroupCodeAndCodeAndActiveTrue(String groupCode, String code);
 }
