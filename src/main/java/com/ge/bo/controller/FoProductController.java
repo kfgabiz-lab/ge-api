@@ -72,7 +72,8 @@ public class FoProductController {
 
     @GetMapping("/category-counts")
     public List<FoProductCategoryCountResponse> categoryCounts(
-            @RequestParam(value = "q", required = false) String q) {
-        return pageDataService.getProductCategoryCounts(q);
+            @RequestParam(value = "q", required = false) String q,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return pageDataService.getProductCategoryCounts(q, siteId);
     }
 }

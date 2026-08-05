@@ -120,7 +120,7 @@ public class MenuService {
 
         /* 수집한 en 맵으로 트리 전체 치환 (children 재귀 치환은 DTO에서 처리) */
     return rootMenus.stream()
-                .map(m -> FoGnbMenuResponse.from(m, enMap))
+                .map(m -> FoGnbMenuResponse.from(m, enMap, siteId))
                 .toList();
   }
 

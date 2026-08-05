@@ -47,10 +47,11 @@ public record FoGnbMenuResponse(
      * - name/description을 enMap 값으로 치환, msgKey 없거나 맵에 없으면 원래 한국어값 유지(폴백)
      * - children도 동일 맵으로 재귀 치환 (계층 트리 전체 en 적용)
      */
-    public static FoGnbMenuResponse from(Menu menu, Map<String, String> enMap) {
+    public static FoGnbMenuResponse from(Menu menu, Map<String, String> enMap, Long siteId) {
         List<FoGnbMenuResponse> childResponses = menu.getChildren().stream()
                 .filter(c -> Boolean.TRUE.equals(c.getVisible()))
-                .map(c -> from(c, enMap))
+                .filter(c -> c.getSiteId() == null || c.getSiteId().equals(siteId))
+                .map(c -> from(c, enMap, siteId))
                 .toList();
 
         String name = resolveText(menu.getNameMsgKey(), menu.getName(), enMap);

@@ -5,6 +5,7 @@ import com.ge.bo.dto.PageFileDataIdRequest;
 import com.ge.bo.dto.PageFileResponse;
 import com.ge.bo.entity.PageFile;
 import com.ge.bo.exception.ErrorCode;
+import com.ge.bo.repository.PageDataRepository;
 import com.ge.bo.repository.PageFileRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +38,7 @@ import java.util.UUID;
 public class PageFileService {
 
   private final PageFileRepository pageFileRepository;
+  private final PageDataRepository pageDataRepository;
   private final FileStorageService fileStorageService;
 
   @Value("${ls.file-storage}")
@@ -159,6 +161,34 @@ public class PageFileService {
           throw ErrorCode.FILE_NOT_FOUND.toException();
         }
       }
+  }
+
+    /**
+     * FO(비로그인 공개) 파일 조회 — 관리자용 download()와 달리 요청 사이트와 파일 소유 사이트가
+     * 다르면 미존재로 처리(존재 자체를 숨김). data_id 미연결(임시 업로드) 또는 site_id 미설정(공통)
+     * 파일은 사이트 구분이 없어 그대로 허용한다.
+     */
+  @Transactional(readOnly = true)
+  public DownloadResult downloadPublic(Long id, Long siteId) {
+    validateSiteAccess(id, siteId);
+    return download(id);
+  }
+
+  private void validateSiteAccess(Long id, Long siteId) {
+    if (siteId == null) {
+      return;
+    }
+    PageFile pageFile = pageFileRepository.findById(id)
+            .orElseThrow(ErrorCode.FILE_NOT_FOUND::toException);
+    if (pageFile.getDataId() == null) {
+      return;
+    }
+    Long fileSiteId = pageDataRepository.findById(pageFile.getDataId())
+            .map(pd -> pd.getSiteId())
+            .orElse(null);
+    if (fileSiteId != null && !fileSiteId.equals(siteId)) {
+      throw ErrorCode.FILE_NOT_FOUND.toException();
+    }
   }
 
 

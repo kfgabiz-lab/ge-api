@@ -662,19 +662,23 @@ public class PageDataService {
                 + " WHEN " + titleExpr + " ILIKE :kw ESCAPE '\\' THEN 40"
                 + " ELSE 10 END) DESC,";
         }
+        String j3SiteCond = siteId != null ? " AND (j3.site_id = :siteId OR j3.site_id IS NULL)" : "";
+        String lv2SiteCond = siteId != null ? " AND (lv2.site_id = :siteId OR lv2.site_id IS NULL)" : "";
+        String lv1SiteCond = siteId != null ? " AND (lv1.site_id = :siteId OR lv1.site_id IS NULL)" : "";
         String categoryJoin = " LEFT JOIN LATERAL ("
             + "  SELECT (j3.data_json->'product'->>'parentId')::bigint AS lv2_id"
             + "  FROM page_data j3"
             + "  WHERE j3.data_slug = 'category-data'"
             + "   AND j3.data_json->'product'->>'depth' = '3'"
             + "   AND (j3.data_json->'product'->>'id')::bigint = pd.id"
+            + j3SiteCond
             + "  ORDER BY"
             + "   CASE WHEN j3.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j3.data_json->>'sortOrder')::int END ASC NULLS LAST,"
             + "   j3.id ASC"
             + "  LIMIT 1"
             + " ) pc ON true"
-            + " LEFT JOIN page_data lv2 ON lv2.id = pc.lv2_id AND lv2.data_slug = 'category-data'"
-            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data'";
+            + " LEFT JOIN page_data lv2 ON lv2.id = pc.lv2_id AND lv2.data_slug = 'category-data'" + lv2SiteCond
+            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data'" + lv1SiteCond;
         String listSql = "SELECT pd.id,"
             + "  pd.data_json->'product'->>'product_name'        AS product_name,"
             + "  pd.data_json->'product'->>'product_description' AS product_description,"
@@ -722,17 +726,21 @@ public class PageDataService {
     }
 
     @Transactional(readOnly = true)
-    public List<FoProductCategoryCountResponse> getProductCategoryCounts(String q) {
+    public List<FoProductCategoryCountResponse> getProductCategoryCounts(String q, Long siteId) {
         boolean hasKeyword = q != null && !q.isBlank();
 
+        String productSiteCond = siteId != null ? " AND (p.site_id = :siteId OR p.site_id IS NULL)" : "";
+        String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
         String sql = "SELECT (j.data_json->'product'->>'parentId')::bigint AS category_l2_id,"
             + "       count(DISTINCT p.id)::int AS cnt"
             + " FROM page_data p"
             + " JOIN page_data j ON j.data_slug = 'category-data'"
             + "   AND j.data_json->'product'->>'depth' = '3'"
             + "   AND (j.data_json->'product'->>'id')::bigint = p.id"
+            + junctionSiteCond
             + " WHERE p.data_slug = 'product-data'"
-            + "   AND p.data_json->'product'->>'is_visible' = '001'";
+            + "   AND p.data_json->'product'->>'is_visible' = '001'"
+            + productSiteCond;
         if (hasKeyword) {
             sql += "  AND ( p.data_json->'product'->>'product_name'        ILIKE :kw ESCAPE '\\'"
                 + "     OR p.data_json->'product'->>'product_description' ILIKE :kw ESCAPE '\\' )";
@@ -742,6 +750,9 @@ public class PageDataService {
         Query query = entityManager.createNativeQuery(sql);
         if (hasKeyword) {
             query.setParameter("kw", SearchSqlSupport.toLikePattern(q.trim()));
+        }
+        if (siteId != null) {
+            query.setParameter("siteId", siteId);
         }
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
