@@ -1,5 +1,6 @@
 package com.ge.bo.service;
 
+import com.ge.bo.common.search.BannedKeywordFilter;
 import com.ge.bo.entity.SearchKeywordLog;
 import com.ge.bo.repository.SearchKeywordLogRepository;
 import jakarta.persistence.EntityManager;
@@ -53,6 +54,12 @@ public class SearchKeywordLogService {
         }
         // 정규화: trim → 소문자 → 연속 공백 단일 공백
         String keywordNorm = trimmed.toLowerCase().replaceAll("\\s+", " ");
+
+        // 다운로드센터 검색어만 금지어(포함 매칭) 필터링 — 통합검색은 대상 아님
+        if (SearchKeywordLog.SOURCE_DOWNLOAD_CENTER.equals(source)
+                && BannedKeywordFilter.containsBannedWord(keywordNorm)) {
+            return;
+        }
 
         searchKeywordLogRepository.save(SearchKeywordLog.builder()
                 .source(source)

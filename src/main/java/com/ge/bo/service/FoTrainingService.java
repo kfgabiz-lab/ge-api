@@ -1,6 +1,7 @@
 package com.ge.bo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ge.bo.common.search.SearchSqlSupport;
 import com.ge.bo.dto.PageDataListResponse;
 import com.ge.bo.dto.PageDataResponse;
 import com.ge.bo.exception.BusinessException;
@@ -43,6 +44,11 @@ public class FoTrainingService {
     private static final String VISIBLE_CODE = "001";
     /** trainingCourse 허용 화이트리스트 */
     private static final Set<String> TRAINING_COURSE_WHITELIST = Set.of("01", "02", "03");
+    private static final String POWER_CODE = "P";
+    private static final String AUTOMATION_CODE = "A";
+    private static final Set<String> PRODUCT_CATEGORY_WHITELIST = Set.of(POWER_CODE, AUTOMATION_CODE);
+    private static final String POWER_LIST_KEY = "power_list";
+    private static final String AUTOMATION_LIST_KEY = "automation_list";
 
     /**
      * 카테고리별 커리큘럼 목록 조회
@@ -57,7 +63,8 @@ public class FoTrainingService {
      */
     @Transactional(readOnly = true)
     public PageDataListResponse findCurriculumByCategory(
-            String categoryIdsRaw, String trainingCourse, int page, int size, Long siteId) {
+            String categoryIdsRaw, String productCategory, String trainingCourse, String q,
+            int page, int size, Long siteId) {
 
         // categoryIds 파싱/검증 — 콤마구분 문자열 → List<Long> (비숫자 섞이면 400, 유효 id 0개면 400)
         List<Long> categoryIds = parseCategoryIds(categoryIdsRaw);
@@ -69,64 +76,55 @@ public class FoTrainingService {
             throw BusinessException.badRequest("유효하지 않은 trainingCourse 값입니다.");
         }
 
+        String category = (productCategory != null && !productCategory.isBlank())
+                ? productCategory.trim() : null;
+        if (category == null) {
+            throw BusinessException.badRequest("productCategory 는 필수입니다.");
+        }
+        if (!PRODUCT_CATEGORY_WHITELIST.contains(category)) {
+            throw BusinessException.badRequest("유효하지 않은 productCategory 값입니다.");
+        }
+        String kw = (q != null && !q.isBlank())
+                ? SearchSqlSupport.toLikePattern(q.trim()) : null;
+
         // ── HOP-1: currDtlMgmt-data 에서 카테고리 매칭 curriculum_id 수집 ──────────
-        List<Long> curriculumIds = collectCurriculumIds(categoryIds, siteId);
+        List<Long> curriculumIds = collectCurriculumIds(categoryIds, category, siteId);
         if (curriculumIds.isEmpty()) {
             // 매칭되는 커리큘럼이 없으면 즉시 빈 결과 반환 (page/size 는 요청값 유지)
             return emptyResult(page, size);
         }
 
         // ── HOP-2: currMgmt-data 최종 조회 + 페이징 ────────────────────────────
-        // COUNT
-        StringBuilder countSql = new StringBuilder(
-                "SELECT COUNT(*) FROM page_data"
-                        + " WHERE data_slug = :slug AND id IN (:curriculumIds)"
-                        + " AND data_json->'curriculum'->>'is_visible' = '" + VISIBLE_CODE + "'");
+        StringBuilder cond = new StringBuilder(
+                " WHERE data_slug = :slug AND id IN (:curriculumIds)"
+                        + " AND data_json->'curriculum'->>'is_visible' = '" + VISIBLE_CODE + "'"
+                        + " AND data_json->'curriculum'->>'product_category' = :productCategory");
         if (course != null) {
-            countSql.append(" AND data_json->'curriculum'->>'training_course' = :trainingCourse");
+            cond.append(" AND data_json->'curriculum'->>'training_course' = :trainingCourse");
+        }
+        if (kw != null) {
+            cond.append(" AND ( data_json->'curriculum'->>'title'       ILIKE :kw ESCAPE '\\'")
+                    .append("    OR data_json->'curriculum'->>'description' ILIKE :kw ESCAPE '\\' )");
         }
         if (siteId != null) {
-            countSql.append(" AND (site_id = :siteId OR site_id IS NULL)");
+            cond.append(" AND (site_id = :siteId OR site_id IS NULL)");
         }
-        Query countQuery = entityManager.createNativeQuery(countSql.toString());
-        countQuery.setParameter("slug", CURR_SLUG);
-        countQuery.setParameter("curriculumIds", curriculumIds);
-        if (course != null) {
-            countQuery.setParameter("trainingCourse", course);
-        }
-        if (siteId != null) {
-            countQuery.setParameter("siteId", siteId);
-        }
+
+        Query countQuery = entityManager.createNativeQuery("SELECT COUNT(*) FROM page_data" + cond);
+        bindCurriculumParams(countQuery, curriculumIds, category, course, kw, siteId);
         long totalElements = ((Number) countQuery.getSingleResult()).longValue();
 
         List<PageDataResponse> content;
         if (totalElements == 0) {
             content = Collections.emptyList();
         } else {
-            // DATA
-            StringBuilder dataSql = new StringBuilder(
-                    "SELECT id, template_slug, data_json::text, group_id,"
-                            + " created_by, created_at, updated_by, updated_at"
-                            + " FROM page_data"
-                            + " WHERE data_slug = :slug AND id IN (:curriculumIds)"
-                            + " AND data_json->'curriculum'->>'is_visible' = '" + VISIBLE_CODE + "'");
-            if (course != null) {
-                dataSql.append(" AND data_json->'curriculum'->>'training_course' = :trainingCourse");
-            }
-            if (siteId != null) {
-                dataSql.append(" AND (site_id = :siteId OR site_id IS NULL)");
-            }
-            dataSql.append(" ORDER BY created_at DESC LIMIT :size OFFSET :offset");
+            String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
+                    + " created_by, created_at, updated_by, updated_at"
+                    + " FROM page_data" + cond
+                    + " ORDER BY created_at DESC LIMIT :size OFFSET :offset";
 
-            Query dataQuery = entityManager.createNativeQuery(dataSql.toString());
-            dataQuery.setParameter("slug", CURR_SLUG);
-            dataQuery.setParameter("curriculumIds", curriculumIds);
-            if (course != null) {
-                dataQuery.setParameter("trainingCourse", course);
-            }
-            if (siteId != null) {
-                dataQuery.setParameter("siteId", siteId);
-            }
+            Query dataQuery = entityManager.createNativeQuery(dataSql);
+            bindCurriculumParams(dataQuery, curriculumIds, category, course, kw, siteId);
             dataQuery.setParameter("size", size);
             dataQuery.setParameter("offset", (long) page * size);
 
@@ -148,6 +146,22 @@ public class FoTrainingService {
                 .first(page == 0)
                 .last(page >= totalPages - 1)
                 .build();
+    }
+
+    private void bindCurriculumParams(Query query, List<Long> curriculumIds, String productCategory,
+                                      String course, String kw, Long siteId) {
+        query.setParameter("slug", CURR_SLUG);
+        query.setParameter("curriculumIds", curriculumIds);
+        query.setParameter("productCategory", productCategory);
+        if (course != null) {
+            query.setParameter("trainingCourse", course);
+        }
+        if (kw != null) {
+            query.setParameter("kw", kw);
+        }
+        if (siteId != null) {
+            query.setParameter("siteId", siteId);
+        }
     }
 
     /**
@@ -179,23 +193,18 @@ public class FoTrainingService {
 
     /**
      * HOP-1) currDtlMgmt-data 에서 카테고리(power_list/automation_list)에 매칭되는 curriculum_id 수집
-     * - 주어진 categoryIds 목록 중 하나라도 power_list/automation_list 에 포함되면 매칭
-     *   (상위 묶음에 속한 리프 id 여러 개를 한꺼번에 OR 매칭)
      * - jsonb_array_elements_text 로 배열 원소를 펼쳐 bigint 비교 (Hibernate '?' 파서 충돌 없는 방식)
      * - id 목록 바인딩은 HOP-2(id IN (:curriculumIds))와 동일한 List<Long> + IN 관례 사용
      * - curriculum_id 는 정규식(^[0-9]+$) 통과분만 Long 파싱
      */
-    private List<Long> collectCurriculumIds(List<Long> categoryIds, Long siteId) {
+    private List<Long> collectCurriculumIds(List<Long> categoryIds, String productCategory, Long siteId) {
+        String listKey = POWER_CODE.equals(productCategory) ? POWER_LIST_KEY : AUTOMATION_LIST_KEY;
         StringBuilder sql = new StringBuilder(
                 "SELECT DISTINCT (data_json->'curriculum_detail1'->>'curriculum_id')"
                         + " FROM page_data"
                         + " WHERE data_slug = :slug"
-                        + " AND ("
-                        + "   EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'power_list') v"
-                        + "           WHERE v ~ '^[0-9]+$' AND v::bigint IN (:catIds))"
-                        + "   OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'automation_list') v"
-                        + "           WHERE v ~ '^[0-9]+$' AND v::bigint IN (:catIds))"
-                        + " )"
+                        + " AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'" + listKey + "') v"
+                        + "             WHERE v ~ '^[0-9]+$' AND v::bigint IN (:catIds))"
                         + " AND (data_json->'curriculum_detail1'->>'curriculum_id') ~ '^[0-9]+$'");
         if (siteId != null) {
             sql.append(" AND (site_id = :siteId OR site_id IS NULL)");
