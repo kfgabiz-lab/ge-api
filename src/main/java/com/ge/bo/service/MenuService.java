@@ -1,6 +1,7 @@
 package com.ge.bo.service;
 
 import com.ge.bo.dto.FoGnbMenuResponse;
+import com.ge.bo.dto.FoMenuMetaResponse;
 import com.ge.bo.dto.MenuRequest;
 import com.ge.bo.dto.MenuResponse;
 import com.ge.bo.dto.MenuSortBatchItem;
@@ -122,6 +123,14 @@ public class MenuService {
     return rootMenus.stream()
                 .map(m -> FoGnbMenuResponse.from(m, enMap, siteId))
                 .toList();
+  }
+
+    /** FO 정적 메뉴 페이지 SEO 메타 조회 (URL 기준 단건) */
+  @Transactional(readOnly = true)
+    public FoMenuMetaResponse getFoMenuMeta(String url, Long siteId) {
+    return menuRepository.findFoMenuByUrl(url, siteId)
+                .map(FoMenuMetaResponse::from)
+                .orElse(FoMenuMetaResponse.EMPTY);
   }
 
     /** 메뉴 트리를 재귀 순회하며 name/description msgKey를 수집 (visible=true 자식만) */
