@@ -52,6 +52,14 @@ public class Menu {
   @Column(length = 200)
     private String url;
 
+    /** SEO Meta Title (FO 2Depth 이상 메뉴 전용, 50~60자 권장) */
+  @Column(name = "meta_title", length = 60)
+    private String metaTitle;
+
+    /** SEO Meta Description (FO 2Depth 이상 메뉴 전용, 150~160자 권장) */
+  @Column(name = "meta_description", length = 160)
+    private String metaDescription;
+
     /** 아이콘명 (lucide-react) — 빈 문자열이면 아이콘 없음 */
   @Column(nullable = false, length = 30)
     @Builder.Default

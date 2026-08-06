@@ -142,11 +142,13 @@ public class FoProductGroupService {
             return Collections.emptyMap();
         }
         String idList = productIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+        String productSiteCond = siteId != null ? " AND (site_id = :siteId OR site_id IS NULL)" : "";
         String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
         String productSql = "SELECT data_json::text FROM page_data"
                 + " WHERE data_slug = :slug"
                 + " AND (data_json->>'id')::bigint IN (" + idList + ")"
                 + " AND data_json->'product'->>'order_status' <> '99'"
+                + productSiteCond
                 + " AND EXISTS ("
                 + " SELECT 1 FROM page_data j"
                 + " WHERE j.data_slug = 'category-data'"

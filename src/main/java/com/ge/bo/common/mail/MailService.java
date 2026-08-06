@@ -37,6 +37,7 @@ public class MailService {
      * 메일 발송 + 발송 이력 저장(성공/실패 모두 기록) — 공통 진입점. 새 이력행을 생성한다(최초 발송용).
      * emailSendType: 공통코드 EMAILSENDTYPE (01=뉴스레터, 02=정기 Training, 03=비정기 Training)
      * emailSendDetailType: 공통코드 TRAININGCOURSE (01=Engineering/02=Service/03=Sales) — Training 계열만 사용, 뉴스레터는 null
+     * @param to 수신자 이메일 1명 — 여러 명에게 보내야 하면 호출부에서 각자에게 한 번씩 개별 호출한다(발송 이력도 건별로 남아야 하므로)
      */
     @Transactional
     public String sendMail(String to, String subject, String content, String emailSendType,

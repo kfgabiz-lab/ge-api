@@ -3,6 +3,7 @@ package com.ge.bo.service;
 import com.ge.bo.common.mail.MailService;
 import com.ge.bo.dto.TrainingRegistrationRequest;
 import com.ge.bo.dto.TrainingRegistrationResponse;
+import com.ge.bo.entity.CodeDetail;
 import com.ge.bo.entity.TrainingRegistration;
 import com.ge.bo.exception.BusinessException;
 import com.ge.bo.repository.CodeDetailRepository;
@@ -17,14 +18,18 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /**
  * FO 트레이닝 세션 등록(리드 캡처) 접수 서비스
  * - 처리 순서: reCAPTCHA 검증 → typeOfBusiness 공통코드(BUSINESSTYPE) 검증(값 있을 때만) → insert
  * - ContactUsInquiryService 의 레이어 구조를 그대로 본떠 작성(공통코드 검증도 동일 메서드 재사용).
  * - 세션/코스 id 의 부모-자식 일치 검증은 하지 않는다(과설계 방지, 사용자 확정).
- * - 메일 발송은 발송 확인 목적의 임시 구현(고정 테스트 수신자, curriculumId/sessionId만 포함) — 템플릿 확정 시 교체 예정.
+ * - 메일 발송은 신청자 + 교육과정별 담당자(EMAIL_RECIPIENT 공통코드)에게 발송하나, 내용은 curriculumId/sessionId만 담는
+ *   임시 템플릿 — 템플릿 확정 시 교체 예정.
  */
 @Slf4j
 @Service
@@ -40,11 +45,17 @@ public class TrainingRegistrationService {
     /** 커리큘럼(부모) slug — training_course(공통코드 TRAININGCOURSE) 조회용 */
     private static final String CURRICULUM_SLUG = "currMgmt-data";
 
-    /** 발송 확인용 임시 고정 수신자 — 템플릿 확정 전까지 실제 등록자 이메일로는 보내지 않는다 */
-    private static final String TEST_RECIPIENT_EMAIL = "kfgabiz@nate.com";
-
     /** 공통코드 EMAILSENDTYPE — 정기 Training(세션 상세 Registration Form) */
     private static final String EMAIL_SEND_TYPE_REGULAR_TRAINING = "02";
+
+    /** 담당자 이메일 공통코드 그룹 (name 필드에 이메일 저장, 콤마로 복수 가능) */
+    private static final String GROUP_EMAIL_RECIPIENT = "EMAIL_RECIPIENT";
+
+    /** TRAININGCOURSE 코드(01/02/03) → EMAIL_RECIPIENT 담당자 코드 매핑 */
+    private static final Map<String, String> TRAINING_COURSE_TO_RECIPIENT_CODE = Map.of(
+            "01", "ENGINEERINGTRAINING",
+            "02", "SERVICETRAINING",
+            "03", "SALESTRAINING");
 
     private final TrainingRegistrationRepository trainingRegistrationRepository;
     private final CodeDetailRepository codeDetailRepository;
@@ -105,23 +116,52 @@ public class TrainingRegistrationService {
         log.info("Training 세션 등록 접수 저장 완료 - id={}, curriculumId={}, sessionId={}",
                 saved.getId(), saved.getCurriculumId(), saved.getSessionId());
 
-        // 발송 확인용 임시 발송 — curriculumId/sessionId만 담는다(템플릿 확정 전까지)
-        // 발송 이력 저장(성공/실패 모두)은 MailService 가 공통으로 처리
-        mailService.sendMail(
-                TEST_RECIPIENT_EMAIL,
-                "Training Registration Test",
-                "<p>curriculumId: %d</p><p>sessionId: %d</p>".formatted(
-                        request.curriculumId(), request.sessionId()),
-                EMAIL_SEND_TYPE_REGULAR_TRAINING,
-                findTrainingCourseCode(request.curriculumId()),
-                null
-        );
+        // 신청자 + 교육과정별 담당자 각자에게 개별 발송(한 메일에 여러 수신자를 넣지 않는다)
+        // 내용은 curriculumId/sessionId만 담는 임시 템플릿 — 추후 교체 예정
+        // 발송 이력 저장(성공/실패 모두)은 MailService 가 각 발송 건마다 공통으로 처리
+        String trainingCourseCode = findTrainingCourseCode(request.curriculumId());
+        String subject = "Training Registration Test";
+        String content = "<p>curriculumId: %d</p><p>sessionId: %d</p>".formatted(
+                request.curriculumId(), request.sessionId());
+        for (String recipient : buildRecipients(request.email(), resolveManagerEmail(trainingCourseCode))) {
+            mailService.sendMail(recipient, subject, content, EMAIL_SEND_TYPE_REGULAR_TRAINING, trainingCourseCode, null);
+        }
 
         return TrainingRegistrationResponse.success(saved.getId());
     }
 
     /**
-     * 커리큘럼(currMgmt-data)의 training_course 코드(공통코드 TRAININGCOURSE) 조회 — 이메일 이력 상세분류용.
+     * TRAININGCOURSE 코드에 해당하는 담당자 이메일(EMAIL_RECIPIENT.name) 조회 — 콤마로 여러 명 저장돼 있어도 그대로 반환.
+     * 코드가 없거나(curriculum 조회 실패) 담당자 코드가 미설정이면 null(신청자에게만 발송).
+     */
+    private String resolveManagerEmail(String trainingCourseCode) {
+        String recipientCode = TRAINING_COURSE_TO_RECIPIENT_CODE.get(trainingCourseCode);
+        if (recipientCode == null) {
+            return null;
+        }
+        return codeDetailRepository.findByGroup_GroupCodeAndCodeAndActiveTrue(GROUP_EMAIL_RECIPIENT, recipientCode)
+                .map(CodeDetail::getName)
+                .orElse(null);
+    }
+
+    /**
+     * 신청자 이메일 + 담당자 이메일(콤마로 여러 명 저장 가능)을 개별 수신자 목록으로 분리.
+     * 한 메일에 여러 명을 담지 않고 각자에게 따로 발송하기 위함(수신자별 To 노출 방지).
+     */
+    private List<String> buildRecipients(String applicantEmail, String managerEmail) {
+        List<String> recipients = new ArrayList<>();
+        recipients.add(applicantEmail);
+        if (StringUtils.isNotBlank(managerEmail)) {
+            Arrays.stream(managerEmail.split(","))
+                    .map(String::trim)
+                    .filter(StringUtils::isNotBlank)
+                    .forEach(recipients::add);
+        }
+        return recipients;
+    }
+
+    /**
+     * 커리큘럼(currMgmt-data)의 training_course 코드(공통코드 TRAININGCOURSE) 조회 — 이메일 이력 상세분류/담당자 조회용.
      * 조회 실패해도 등록 저장 자체는 실패하면 안 되므로 예외를 던지지 않고 null 반환한다.
      */
     private String findTrainingCourseCode(Long curriculumId) {

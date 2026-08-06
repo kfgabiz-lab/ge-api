@@ -50,12 +50,14 @@ public class FoSearchKeywordController {
      * GET /api/v1/fo/search-keywords/popular?source=DOWNLOAD_CENTER
      */
     @GetMapping("/popular")
-    public ResponseEntity<List<String>> popular(@RequestParam String source) {
+    public ResponseEntity<List<String>> popular(
+            @RequestParam String source,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
         if (!SearchKeywordLog.SOURCE_DOWNLOAD_CENTER.equals(source)
                 && !SearchKeywordLog.SOURCE_UNIFIED_SEARCH.equals(source)) {
             throw BusinessException.badRequest("유효하지 않은 검색어 출처입니다.");
         }
-        return ResponseEntity.ok(searchKeywordLogService.findPopularKeywords(source));
+        return ResponseEntity.ok(searchKeywordLogService.findPopularKeywords(source, siteId));
     }
 
     /**

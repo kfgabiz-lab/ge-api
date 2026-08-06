@@ -71,7 +71,7 @@ public class SearchKeywordLogService {
      * 데이터가 없으면 빈 리스트 반환 — 정적 폴백 처리는 FE 책임
      */
     @Transactional(readOnly = true)
-    public List<String> findPopularKeywords(String source) {
+    public List<String> findPopularKeywords(String source, Long siteId) {
         String sql = "SELECT keyword, cnt FROM ("
                 + "  SELECT keyword, keyword_norm,"
                 + "         count(*) OVER (PARTITION BY keyword_norm) AS cnt,"
@@ -80,6 +80,7 @@ public class SearchKeywordLogService {
                 + "  WHERE source = :source"
                 // 기간/건수는 상수라 바인딩 없이 SQL에 직접 전개 (findProductInsights의 LIMIT 3 컨벤션)
                 + "   AND created_at >= now() - INTERVAL '" + POPULAR_PERIOD_DAYS + " days'"
+                + (siteId != null ? "   AND (site_id = :siteId OR site_id IS NULL)" : "")
                 + ") t"
                 + " WHERE rn = 1"
                 + " ORDER BY cnt DESC, keyword_norm ASC"
@@ -87,6 +88,9 @@ public class SearchKeywordLogService {
 
         Query query = entityManager.createNativeQuery(sql);
         query.setParameter("source", source);
+        if (siteId != null) {
+            query.setParameter("siteId", siteId);
+        }
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();

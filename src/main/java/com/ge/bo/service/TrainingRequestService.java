@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.common.mail.MailService;
 import com.ge.bo.dto.TrainingRequestSubmitRequest;
 import com.ge.bo.dto.TrainingRequestSubmitResponse;
+import com.ge.bo.entity.CodeDetail;
 import com.ge.bo.entity.TrainingRequest;
 import com.ge.bo.exception.BusinessException;
+import com.ge.bo.repository.CodeDetailRepository;
 import com.ge.bo.repository.TrainingRequestRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,12 +17,17 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * FO Training Request(비정기 교육 신청, Step1~4) 접수 서비스
  * - 처리 순서: reCAPTCHA 검증 → 날짜 파싱 → selectedProducts JSON 직렬화 → insert
  * - TrainingRegistrationService 의 레이어 구조를 그대로 본떠 작성(reCAPTCHA 공용 서비스 재사용).
  * - 신청자가 입력한 값을 그대로 보존하는 이력성 저장이라 코드값 변환/공통코드 검증은 하지 않는다.
+ * - 메일 발송은 신청자 + 담당자(EMAIL_RECIPIENT.TRAININGREQUEST)에게 발송하나, 내용은 id/trainingTrack만 담는
+ *   임시 템플릿 — 템플릿 확정 시 교체 예정.
  */
 @Slf4j
 @Service
@@ -30,10 +37,17 @@ public class TrainingRequestService {
     /** 공통코드 EMAILSENDTYPE — 비정기 Training(Training Request) */
     private static final String EMAIL_SEND_TYPE_IRREGULAR_TRAINING = "03";
 
+    /** 담당자 이메일 공통코드 그룹 (name 필드에 이메일 저장, 콤마로 복수 가능) */
+    private static final String GROUP_EMAIL_RECIPIENT = "EMAIL_RECIPIENT";
+
+    /** EMAIL_RECIPIENT 담당자 코드 — 비정기 Training Request는 트랙 구분 없이 단일 코드 사용 */
+    private static final String EMAIL_RECIPIENT_CODE_TRAINING_REQUEST = "TRAININGREQUEST";
+
     private final TrainingRequestRepository trainingRequestRepository;
     private final RecaptchaService recaptchaService;
     private final ObjectMapper objectMapper;
     private final MailService mailService;
+    private final CodeDetailRepository codeDetailRepository;
 
     /**
      * 교육 신청 접수 처리 — reCAPTCHA 검증 → 저장 → 결과 반환
@@ -103,18 +117,41 @@ public class TrainingRequestService {
         log.info("Training Request 접수 저장 완료 - id={}, trainingFormat={}, productCount={}",
                 saved.getId(), saved.getTrainingFormat(), request.selectedProducts().size());
 
-        // 발송 확인용 임시 발송 — id/trainingTrack만 담는다(템플릿 확정 전까지)
-        // 발송 이력 저장(성공/실패 모두)은 MailService 가 공통으로 처리
-        mailService.sendMail(
-                request.email(),
-                "Training Request Test",
-                "<p>id: %d</p><p>trainingTrack: %s</p>".formatted(saved.getId(), request.trainingTrack()),
-                EMAIL_SEND_TYPE_IRREGULAR_TRAINING,
-                toTrainingCourseCode(request.trainingTrack()),
-                null
-        );
+        // 신청자 + 담당자 각자에게 개별 발송(한 메일에 여러 수신자를 넣지 않는다)
+        // 내용은 id/trainingTrack만 담는 임시 템플릿 — 추후 교체 예정
+        // 발송 이력 저장(성공/실패 모두)은 MailService 가 각 발송 건마다 공통으로 처리
+        String trainingCourseCode = toTrainingCourseCode(request.trainingTrack());
+        String subject = "Training Request Test";
+        String content = "<p>id: %d</p><p>trainingTrack: %s</p>".formatted(saved.getId(), request.trainingTrack());
+        for (String recipient : buildRecipients(request.email(), resolveManagerEmail())) {
+            mailService.sendMail(recipient, subject, content, EMAIL_SEND_TYPE_IRREGULAR_TRAINING, trainingCourseCode, null);
+        }
 
         return new TrainingRequestSubmitResponse(saved.getId());
+    }
+
+    /** 담당자 이메일(EMAIL_RECIPIENT.TRAININGREQUEST.name) 조회 — 콤마로 여러 명 저장돼 있어도 그대로 반환. 미설정 시 null. */
+    private String resolveManagerEmail() {
+        return codeDetailRepository
+                .findByGroup_GroupCodeAndCodeAndActiveTrue(GROUP_EMAIL_RECIPIENT, EMAIL_RECIPIENT_CODE_TRAINING_REQUEST)
+                .map(CodeDetail::getName)
+                .orElse(null);
+    }
+
+    /**
+     * 신청자 이메일 + 담당자 이메일(콤마로 여러 명 저장 가능)을 개별 수신자 목록으로 분리.
+     * 한 메일에 여러 명을 담지 않고 각자에게 따로 발송하기 위함(수신자별 To 노출 방지).
+     */
+    private List<String> buildRecipients(String applicantEmail, String managerEmail) {
+        List<String> recipients = new ArrayList<>();
+        recipients.add(applicantEmail);
+        if (StringUtils.isNotBlank(managerEmail)) {
+            Arrays.stream(managerEmail.split(","))
+                    .map(String::trim)
+                    .filter(StringUtils::isNotBlank)
+                    .forEach(recipients::add);
+        }
+        return recipients;
     }
 
     /** trainingTrack(engineering/service/sales) → 공통코드 TRAININGCOURSE(01/02/03) 매핑 — 이메일 이력 상세분류용 */

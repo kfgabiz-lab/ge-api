@@ -8,6 +8,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -38,8 +39,10 @@ public class FoPageFileController {
    * @return 파일 Resource (스트리밍)
    */
   @GetMapping("/{id}")
-  public ResponseEntity<org.springframework.core.io.Resource> view(@PathVariable Long id) {
-    PageFileService.DownloadResult result = pageFileService.download(id);
+  public ResponseEntity<org.springframework.core.io.Resource> view(
+          @PathVariable Long id,
+          @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    PageFileService.DownloadResult result = pageFileService.downloadPublic(id, siteId);
 
     // 한글 파일명을 안전하게 인코딩 — inline으로 설정해 다운로드 강제하지 않음
     ContentDisposition contentDisposition = ContentDisposition.inline()

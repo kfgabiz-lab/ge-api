@@ -120,7 +120,7 @@ public class MenuService {
 
         /* 수집한 en 맵으로 트리 전체 치환 (children 재귀 치환은 DTO에서 처리) */
     return rootMenus.stream()
-                .map(m -> FoGnbMenuResponse.from(m, enMap))
+                .map(m -> FoGnbMenuResponse.from(m, enMap, siteId))
                 .toList();
   }
 
@@ -175,6 +175,8 @@ public class MenuService {
             .description(descriptionKo.isEmpty() ? null : descriptionKo)
             .descriptionMsgKey(hasDescMsgKey ? request.descriptionMsgKey() : null)
             .url(cleanUrl)
+            .metaTitle(normalizeMeta(request.metaTitle()))
+            .metaDescription(normalizeMeta(request.metaDescription()))
             .icon(request.icon())
             .parent(parent)
             .menuType(request.menuType())
@@ -232,6 +234,8 @@ public class MenuService {
     menu.setDescription(descriptionKo.isEmpty() ? null : descriptionKo);
     menu.setDescriptionMsgKey(hasDescMsgKey ? request.descriptionMsgKey() : null);
     menu.setUrl(cleanUrl);
+    menu.setMetaTitle(normalizeMeta(request.metaTitle()));
+    menu.setMetaDescription(normalizeMeta(request.metaDescription()));
     menu.setIcon(request.icon());
     menu.setSortOrder(request.sortOrder() != null ? request.sortOrder() : menu.getSortOrder());
     menu.setVisible(request.visible() != null ? request.visible() : menu.getVisible());
@@ -435,5 +439,14 @@ public class MenuService {
       cleaned = cleaned.replaceAll("/+$", "");
     }
     return cleaned.isEmpty() ? null : cleaned;
+  }
+
+    /** Meta Title/Description 정제: 빈 문자열은 NULL로 저장 */
+  private String normalizeMeta(String value) {
+    if (value == null) {
+      return null;
+    }
+    String trimmed = value.trim();
+    return trimmed.isEmpty() ? null : trimmed;
   }
 }
