@@ -67,7 +67,7 @@ public class PageDataService {
   @PersistenceContext
     private EntityManager entityManager;
 
-  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude");
+  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude", "fetchRelationIds");
 
   private static final String PRODUCT_DATA_SLUG_COND = "#slug == 'product-data'";
 
@@ -128,11 +128,13 @@ public class PageDataService {
     public PageDataListResponse search(String slug, Map<String, String> allParams, int page, int size, Long siteId, boolean unpaged) {
     Map<String, String> relFilterParams = new LinkedHashMap<>();
     Map<String, String> joinFilterParams = new LinkedHashMap<>();
+    Map<String, String> innerRelParams = new LinkedHashMap<>();
     Map<String, String> searchParams = new LinkedHashMap<>();
     allParams.forEach((key, value) -> {
       if (RESERVED_PARAMS.contains(key) || value == null || value.isBlank()) return;
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
       else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
+      else if (key.startsWith("innerRel_")) innerRelParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -168,6 +170,15 @@ public class PageDataService {
       }
     }
 
+    if (!innerRelParams.isEmpty()) {
+      Set<Long> innerRelIds = resolveInnerRelationIds(innerRelParams);
+      if (innerRelIds != null) {
+        if (innerRelIds.isEmpty()) return buildEmptyResponse(page, size);
+        String idList = innerRelIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        whereClause.append(" AND id IN (").append(idList).append(")");
+      }
+    }
+
     long totalElements = -1;
     if (!unpaged) {
       String countSql = "SELECT COUNT(*) FROM page_data " + whereClause;
@@ -236,7 +247,7 @@ public class PageDataService {
 
     applyExclude(content, allParams.get("exclude"));
 
-    content = applyFetch(slug, content, siteId);
+    content = applyFetch(slug, content, siteId, parseFetchRelationIds(allParams));
 
     if (unpaged) {
       int actualCount = content.size();
@@ -267,11 +278,13 @@ public class PageDataService {
     public PageDataListResponse searchDatetimeRange(String slug, Map<String, String> allParams, int page, int size, Long siteId, boolean unpaged) {
     Map<String, String> relFilterParams = new LinkedHashMap<>();
     Map<String, String> joinFilterParams = new LinkedHashMap<>();
+    Map<String, String> innerRelParams = new LinkedHashMap<>();
     Map<String, String> searchParams = new LinkedHashMap<>();
     allParams.forEach((key, value) -> {
       if (RESERVED_PARAMS.contains(key) || value == null || value.isBlank()) return;
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
       else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
+      else if (key.startsWith("innerRel_")) innerRelParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -295,6 +308,15 @@ public class PageDataService {
       if (joinIds != null) {
         if (joinIds.isEmpty()) return buildEmptyResponse(page, size);
         String idList = joinIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        whereClause.append(" AND id IN (").append(idList).append(")");
+      }
+    }
+
+    if (!innerRelParams.isEmpty()) {
+      Set<Long> innerRelIds = resolveInnerRelationIds(innerRelParams);
+      if (innerRelIds != null) {
+        if (innerRelIds.isEmpty()) return buildEmptyResponse(page, size);
+        String idList = innerRelIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
         whereClause.append(" AND id IN (").append(idList).append(")");
       }
     }
@@ -366,7 +388,7 @@ public class PageDataService {
                 .toList();
 
     applyExclude(content, allParams.get("exclude"));
-    content = applyFetch(slug, content, siteId);
+    content = applyFetch(slug, content, siteId, parseFetchRelationIds(allParams));
 
     if (unpaged) {
       int actualCount = content.size();
@@ -1071,7 +1093,7 @@ public class PageDataService {
     PageData pageData = pageDataRepository.findByIdAndDataSlug(id, slug)
                 .orElseThrow(ErrorCode.PAGE_DATA_NOT_FOUND::toException);
     PageDataResponse response = PageDataResponse.from(pageData);
-    List<PageDataResponse> enriched = applyFetch(slug, List.of(response), null);
+    List<PageDataResponse> enriched = applyFetch(slug, List.of(response), null, null);
     PageDataResponse enrichedResponse = enriched.get(0);
     return enrichedResponse.withUserNames(
         resolveUserName(pageData.getCreatedBy()),
@@ -1312,11 +1334,13 @@ public class PageDataService {
     public Set<Long> resolveExportFilterIds(String slug, Map<String, String> allParams, Long siteId) {
     Map<String, String> relFilterParams = new LinkedHashMap<>();
     Map<String, String> joinFilterParams = new LinkedHashMap<>();
+    Map<String, String> innerRelParams = new LinkedHashMap<>();
     Map<String, String> searchParams = new LinkedHashMap<>();
     allParams.forEach((key, value) -> {
       if (RESERVED_PARAMS.contains(key) || value == null || value.isBlank()) return;
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
       else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
+      else if (key.startsWith("innerRel_")) innerRelParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -1348,6 +1372,15 @@ public class PageDataService {
       if (joinIds != null) {
         if (joinIds.isEmpty()) return Set.of();
         String idList = joinIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        whereClause.append(" AND id IN (").append(idList).append(")");
+      }
+    }
+
+    if (!innerRelParams.isEmpty()) {
+      Set<Long> innerRelIds = resolveInnerRelationIds(innerRelParams);
+      if (innerRelIds != null) {
+        if (innerRelIds.isEmpty()) return Set.of();
+        String idList = innerRelIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
         whereClause.append(" AND id IN (").append(idList).append(")");
       }
     }
@@ -2983,6 +3016,93 @@ public class PageDataService {
         return resultIds;
     }
 
+    private Set<Long> resolveInnerRelationIds(Map<String, String> innerRelParams) {
+        List<String> relIdStrs = new ArrayList<>();
+        innerRelParams.forEach((key, value) -> {
+            if (key.startsWith("innerRel_") && value != null && !value.isBlank()) {
+                relIdStrs.add(value.trim());
+            }
+        });
+
+        Set<Long> resultIds = null;
+
+        for (String relIdStr : relIdStrs) {
+            Long relId;
+            try { relId = Long.parseLong(relIdStr); }
+            catch (NumberFormatException e) { continue; }
+
+            SlugRelation rel = slugRelationRepository.findById(relId).orElse(null);
+            if (rel == null) continue;
+            if (!StringUtils.hasText(rel.getMasterKey())) continue;
+            boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
+
+            StringBuilder slaveSql = new StringBuilder(
+                "SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+            Map<String, String> condParams = new LinkedHashMap<>();
+            if (StringUtils.hasText(rel.getSlaveFilter())) {
+                appendSlaveFilter(slaveSql, rel.getSlaveFilter(), condParams);
+            }
+
+            Query slaveQuery = entityManager.createNativeQuery(slaveSql.toString());
+            slaveQuery.setParameter("slaveSlug", rel.getSlaveSlug());
+            condParams.forEach(slaveQuery::setParameter);
+
+            List<Object> slaveRows = slaveQuery.getResultList();
+            Set<String> linkValues = new HashSet<>();
+            for (Object row : slaveRows) {
+                try {
+                    Map<String, Object> dataJson = objectMapper.readValue(
+                        row.toString(), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+                    String linkVal = extractField(dataJson, rel.getSlaveKey());
+                    if (linkVal != null && !linkVal.isBlank()) linkValues.add(linkVal.trim());
+                } catch (Exception e) {
+                    log.warn("INNER RELATION 연동 slug 레코드 파싱 실패: {}", e.getMessage());
+                }
+            }
+
+            if (linkValues.isEmpty()) {
+                resultIds = new HashSet<>();
+                break;
+            }
+
+            Set<Long> ids = new HashSet<>();
+            StringBuilder masterSql = new StringBuilder("SELECT id FROM page_data WHERE data_slug = :masterSlug");
+            boolean runMasterQuery = true;
+
+            if (isArrayContains) {
+                if (!rel.getMasterKey().matches("[a-zA-Z0-9_.]+")) continue;
+                String container = buildJsonbContainerPath(rel.getMasterKey());
+                String containsCond = linkValues.stream()
+                    .filter(v -> v.matches("-?\\d+"))
+                    .map(v -> container + " @> '[" + v + "]'::jsonb")
+                    .collect(java.util.stream.Collectors.joining(" OR "));
+                if (containsCond.isBlank()) runMasterQuery = false;
+                else masterSql.append(" AND (").append(containsCond).append(")");
+            } else {
+                String linkValueList = linkValues.stream()
+                    .map(v -> "'" + v.replace("'", "''") + "'")
+                    .collect(java.util.stream.Collectors.joining(","));
+                appendSlaveKeyInCondition(masterSql, rel.getMasterKey(), linkValueList);
+            }
+
+            if (runMasterQuery) {
+                Query masterQuery = entityManager.createNativeQuery(masterSql.toString());
+                masterQuery.setParameter("masterSlug", rel.getMasterSlug());
+
+                List<Object> masterRows = masterQuery.getResultList();
+                for (Object row : masterRows) {
+                    try { ids.add(((Number) row).longValue()); }
+                    catch (Exception e) {  }
+                }
+            }
+
+            if (resultIds == null) resultIds = new HashSet<>(ids);
+            else resultIds.retainAll(ids);
+        }
+
+        return resultIds;
+    }
+
     private Set<Long> collectCategoryAndDescendants(String slaveSlug, long catId, String slaveKey) {
         String[] keySegs = slaveKey.split("\\.");
         String notLinkRecord = "AND " + buildJsonPath(keySegs) + " IS NULL";
@@ -3031,8 +3151,24 @@ public class PageDataService {
         }
     }
 
-    private List<PageDataResponse> applyFetch(String slug, List<PageDataResponse> content, Long siteId) {
-        List<SlugRelation> fetchRelations = slugRelationRepository.findByMasterSlugAndRelationDir(slug, "FETCH");
+    private Set<Long> parseFetchRelationIds(Map<String, String> allParams) {
+        String raw = allParams.get("fetchRelationIds");
+        if (raw == null || raw.isBlank()) return null;
+        Set<Long> ids = new HashSet<>();
+        for (String part : raw.split(",")) {
+            String trimmed = part.trim();
+            if (trimmed.isEmpty()) continue;
+            try { ids.add(Long.parseLong(trimmed)); }
+            catch (NumberFormatException e) {  }
+        }
+        return ids;
+    }
+
+    private List<PageDataResponse> applyFetch(String slug, List<PageDataResponse> content, Long siteId, Set<Long> restrictToRelationIds) {
+        List<SlugRelation> allFetchRelations = slugRelationRepository.findByMasterSlugAndRelationDir(slug, "FETCH");
+        List<SlugRelation> fetchRelations = restrictToRelationIds != null
+            ? allFetchRelations.stream().filter(r -> restrictToRelationIds.contains(r.getId())).toList()
+            : allFetchRelations;
         if (fetchRelations.isEmpty()) return content;
 
         Map<Long, Map<String, Object>> tableFetchCache = new HashMap<>();
