@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 메뉴 Repository
@@ -34,6 +35,12 @@ public interface MenuRepository extends JpaRepository<Menu, Long> {
         + " AND (m.siteId IS NULL OR m.siteId = :siteId)"
         + " ORDER BY m.sortOrder ASC")
     List<Menu> findFoGnbRootMenus(@Param("siteId") Long siteId);
+
+    /** FO 공개 SEO 메타 조회용: URL로 단건 조회 */
+  @Query("SELECT m FROM Menu m WHERE m.menuType = 'FO' AND m.url = :url"
+        + " AND m.visible = true"
+        + " AND (m.siteId IS NULL OR m.siteId = :siteId)")
+    Optional<Menu> findFoMenuByUrl(@Param("url") String url, @Param("siteId") Long siteId);
 
     /** 이름 중복 확인 — 생성 시 (같은 부모 + 타입) */
   boolean existsByNameAndParentAndMenuType(String name, Menu parent, String menuType);
