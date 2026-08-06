@@ -104,7 +104,7 @@ public class GlobalExceptionHandler {
       HandlerMethodValidationException ex,
       HttpServletRequest request) {
     Map<String, String> fieldErrors = new HashMap<>();
-    ex.getAllValidationResults().forEach(result -> {
+    ex.getParameterValidationResults().forEach(result -> {
       String field = result.getMethodParameter().getParameterName();
       String msg = result.getResolvableErrors().isEmpty()
           ? "유효하지 않은 값입니다."

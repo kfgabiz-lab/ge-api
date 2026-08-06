@@ -50,7 +50,7 @@ public class CurrDtlExportController {
 
         // 쿼리 조회 후 header, key, dateFormat list 생성
         List<String> headerList =
-                List.of("Curriculum Title","Training Start Date","Training End Date","Training Date", "Start Time", "End Time", "Training Title", "Description", "Trainer", "Training Fee");
+                List.of("Course Title","Training Start Date","Training End Date","Training Date", "Start Time", "End Time", "Training Title", "Description", "Trainer", "Training Fee");
         List<String> keyList =
                 List.of("curr_title","training_date_from","training_date_to", "training_date", "time_from", "time_to", "title", "description", "trainer","training_fee");
         List<String> dateFormatList = List.of("","","", "", "", "", "", "", "","");
@@ -89,14 +89,14 @@ public class CurrDtlExportController {
 
         // 쿼리 조회 후 header, key, dateFormat list 생성
         List<String> headerList =
-                List.of("Training", "Curriculum Title", "Training Type", "Power Products", "Automation Products", "Title", "Training Start Date", "Training End Date", "Training Duration", "Training Capacity", "Training Address", "Tel", "Email");
+                List.of("Training", "Course Title", "Training Type", "Power Products", "Automation Products", "Title", "Training Start Date", "Training End Date", "Training Duration", "Training Capacity", "Training Address", "Tel", "Email");
         List<String> keyList =
                 List.of("training_course", "curr_title", "training_type", "power_list", "automation_list", "title", "training_date_from","training_date_to", "duration", "capacity", "address", "phone", "email");
         List<String> dateFormatList = List.of("", "", "", "", "", "", "", "", "", "", "", "", "");
 
         // 파일명: trainingSchedules_{yyyyMMdd}.xlsx or .csv
         String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        String fileName = "CurriculumDetail_" + today + ".csv";
+        String fileName = "Session_" + today + ".csv";
 //        String fileName = "CurriculumDetail_" + today + ".xlsx";
 
         // 엑셀/CSV 바이트 생성
