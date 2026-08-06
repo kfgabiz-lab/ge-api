@@ -54,6 +54,39 @@ public class DownloadCenterService {
       + "       AND cd.is_active = true"
       + "       AND cd.group_id = (SELECT id FROM code_group WHERE group_code = '" + DOC_TYPE_GROUP_CODE + "')";
 
+    /** LV3 제품코드(예: L01-15-01)로 정확히 매핑된 콘텐츠뿐 아니라, LV3가 배정되지 않아 LV2/LV1까지만
+     *  매핑된 콘텐츠도 요청 제품의 상위 카테고리 기준으로 함께 노출한다 (contents_id=5060 등, 2026-08-05). */
+    private static final String PRODUCT_CODE_EXISTS_CLAUSE =
+        " EXISTS (SELECT 1 FROM contents_category cc3 WHERE cc3.contents_id = m.id"
+      + "   AND cc3.nahp_display_flag = true AND cc3.is_deleted = false"
+      + "   AND ("
+      + "     cc3.category_l3_id IN (:productCodes)"
+      + "     OR (cc3.category_l3_id IS NULL AND cc3.category_l2_id IN (:productL2Codes))"
+      + "     OR (cc3.category_l3_id IS NULL AND cc3.category_l2_id IS NULL AND cc3.category_l1_id IN (:productL1Codes))"
+      + "   ))";
+
+    /** LV3 제품코드 목록에서 LV2 상위 코드(첫 두 세그먼트, 예: L01-15-01 → L01-15)를 도출한다. */
+    private static List<String> deriveProductL2Codes(List<String> productCodes) {
+        return productCodes.stream().map(DownloadCenterService::toL2Code).distinct().toList();
+    }
+
+    /** LV3 제품코드 목록에서 LV1 상위 코드(첫 세그먼트, 예: L01-15-01 → L01)를 도출한다. */
+    private static List<String> deriveProductL1Codes(List<String> productCodes) {
+        return productCodes.stream().map(DownloadCenterService::toL1Code).distinct().toList();
+    }
+
+    private static String toL1Code(String l3Code) {
+        int firstDash = l3Code.indexOf('-');
+        return firstDash < 0 ? l3Code : l3Code.substring(0, firstDash);
+    }
+
+    private static String toL2Code(String l3Code) {
+        int firstDash = l3Code.indexOf('-');
+        if (firstDash < 0) return l3Code;
+        int secondDash = l3Code.indexOf('-', firstDash + 1);
+        return secondDash < 0 ? l3Code : l3Code.substring(0, secondDash);
+    }
+
 
     @Transactional(readOnly = true)
     public DownloadCenterContentPageResponse getContents(
@@ -91,9 +124,7 @@ public class DownloadCenterService {
             where.append(" AND (").append(String.join(" OR ", categoryClauses)).append(")");
         }
         if (hasProductCodes) {
-            where.append(" AND EXISTS (SELECT 1 FROM contents_category cc3"
-                + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes)"
-                + "   AND cc3.nahp_display_flag = true AND cc3.is_deleted = false)");
+            where.append(" AND").append(PRODUCT_CODE_EXISTS_CLAUSE);
         }
 
         Query countQuery = entityManager.createNativeQuery(
@@ -102,7 +133,11 @@ public class DownloadCenterService {
         if (hasDocTypes) countQuery.setParameter("docTypes", docTypes);
         if (hasCats) countQuery.setParameter("cats", categories);
         if (hasParentCats) countQuery.setParameter("parentCats", parentCategories);
-        if (hasProductCodes) countQuery.setParameter("productCodes", productCodes);
+        if (hasProductCodes) {
+            countQuery.setParameter("productCodes", productCodes);
+            countQuery.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
+            countQuery.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
+        }
         long total = ((Number) countQuery.getSingleResult()).longValue();
 
         Query idQuery = entityManager.createNativeQuery(
@@ -114,7 +149,11 @@ public class DownloadCenterService {
         if (hasDocTypes) idQuery.setParameter("docTypes", docTypes);
         if (hasCats) idQuery.setParameter("cats", categories);
         if (hasParentCats) idQuery.setParameter("parentCats", parentCategories);
-        if (hasProductCodes) idQuery.setParameter("productCodes", productCodes);
+        if (hasProductCodes) {
+            idQuery.setParameter("productCodes", productCodes);
+            idQuery.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
+            idQuery.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
+        }
         idQuery.setParameter("size", safeSize);
         idQuery.setParameter("offset", safePage * safeSize);
 
@@ -189,9 +228,10 @@ public class DownloadCenterService {
     }
 
     /**
-     * 챗봇 keyword(+연관검색어, 콤마구분)로 Azure AI Search 후보를 조회한 뒤,
-     * 실제 우리 DB(contents_file.file_name)에 존재하는 문서만 골라 반환한다.
-     * Azure 결과의 관련도 순서를 그대로 유지한다. 페이징 없이 매칭된 전체 리스트를 반환하며,
+     * 챗봇 keyword(+연관검색어, 콤마구분)로 (1) Azure AI Search 후보(file_name) 매칭과
+     * (2) contents_master 제목(주 키워드) 직접 매칭을 각각 수행해 하나의 리스트로 합친다.
+     * Azure 매칭 결과는 관련도 순위를 그대로 유지하고, 제목 직접매칭으로만 새로 추가된 문서는 그 뒤에 이어 붙인다
+     * (두 방식 모두에서 매칭된 문서는 Azure 순위를 그대로 씀). 페이징 없이 매칭된 전체 리스트를 반환하며,
      * All탭 프리뷰/Documents탭은 이 리스트를 필요한 만큼만 잘라서 쓴다.
      */
     @Transactional(readOnly = true)
@@ -201,22 +241,20 @@ public class DownloadCenterService {
         if (keyword == null || keyword.isBlank()) {
             return new ArrayList<>();
         }
+        /* 콤마로 이어진 "키워드,연관검색어..."에서 주 키워드(첫 토큰)만 contents_master 제목 조회에 사용 */
+        String primaryKeyword = keyword.split(",", 2)[0].trim();
 
         AzureAiSearchResponse azureResponse = azureAiSearchService.azureAiSearch(keyword);
-        if (azureResponse == null || azureResponse.value() == null || azureResponse.value().isEmpty()) {
-            return new ArrayList<>();
-        }
 
         Map<String, Integer> fileNameRank = new LinkedHashMap<>();
         List<String> candidateFileNames = new ArrayList<>();
-        for (AzureAiSearchDocument doc : azureResponse.value()) {
-            String fn = doc.fileName();
-            if (fn == null || fileNameRank.containsKey(fn)) continue;
-            fileNameRank.put(fn, fileNameRank.size());
-            candidateFileNames.add(fn);
-        }
-        if (candidateFileNames.isEmpty()) {
-            return new ArrayList<>();
+        if (azureResponse != null && azureResponse.value() != null) {
+            for (AzureAiSearchDocument doc : azureResponse.value()) {
+                String fn = doc.fileName();
+                if (fn == null || fileNameRank.containsKey(fn)) continue;
+                fileNameRank.put(fn, fileNameRank.size());
+                candidateFileNames.add(fn);
+            }
         }
 
         boolean hasCats = categories != null && !categories.isEmpty();
@@ -224,11 +262,6 @@ public class DownloadCenterService {
         boolean hasDocTypes = docTypes != null && !docTypes.isEmpty();
         boolean hasProductCodes = productCodes != null && !productCodes.isEmpty();
 
-        StringBuilder where = new StringBuilder(" WHERE").append(MASTER_GATE)
-            .append(" AND f.file_name IN (:fileNames)");
-        if (hasDocTypes) {
-            where.append(" AND m.doc_type IN (:docTypes)");
-        }
         List<String> categoryClauses = new ArrayList<>();
         if (hasCats) {
             categoryClauses.add("EXISTS (SELECT 1 FROM contents_category cc"
@@ -241,42 +274,88 @@ public class DownloadCenterService {
                 + "   AND cc1.category_l2_id IS NULL"
                 + "   AND cc1.nahp_display_flag = true AND cc1.is_deleted = false)");
         }
-        if (!categoryClauses.isEmpty()) {
-            where.append(" AND (").append(String.join(" OR ", categoryClauses)).append(")");
-        }
-        if (hasProductCodes) {
-            where.append(" AND EXISTS (SELECT 1 FROM contents_category cc3"
-                + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes)"
-                + "   AND cc3.nahp_display_flag = true AND cc3.is_deleted = false)");
-        }
-
-        Query matchQuery = entityManager.createNativeQuery(
-            "SELECT DISTINCT m.id, f.file_name FROM contents_master m"
-            + " JOIN contents_version v ON v.contents_id = m.id"
-            + "   AND v.version_expose = true AND v.is_deleted = false"
-            + " JOIN contents_file f ON f.contents_version_id = v.id"
-            + "   AND f.file_expose = true AND f.is_deleted = false"
-            + where);
-        matchQuery.setParameter("fileNames", candidateFileNames);
-        if (hasDocTypes) matchQuery.setParameter("docTypes", docTypes);
-        if (hasCats) matchQuery.setParameter("cats", categories);
-        if (hasParentCats) matchQuery.setParameter("parentCats", parentCategories);
-        if (hasProductCodes) matchQuery.setParameter("productCodes", productCodes);
-
-        @SuppressWarnings("unchecked")
-        List<Object[]> rows = matchQuery.getResultList();
-        if (rows.isEmpty()) {
-            return new ArrayList<>();
-        }
 
         Map<Long, Integer> masterBestRank = new LinkedHashMap<>();
-        for (Object[] r : rows) {
-            Long masterId = ((Number) r[0]).longValue();
-            String fileName = r[1].toString();
-            Integer fnRank = fileNameRank.get(fileName);
-            if (fnRank == null) continue;
-            masterBestRank.merge(masterId, fnRank, Math::min);
+
+        /* ── 1) Azure 후보(file_name) 매칭 ── */
+        if (!candidateFileNames.isEmpty()) {
+            StringBuilder where = new StringBuilder(" WHERE").append(MASTER_GATE)
+                .append(" AND f.file_name IN (:fileNames)");
+            if (hasDocTypes) {
+                where.append(" AND m.doc_type IN (:docTypes)");
+            }
+            if (!categoryClauses.isEmpty()) {
+                where.append(" AND (").append(String.join(" OR ", categoryClauses)).append(")");
+            }
+            if (hasProductCodes) {
+                where.append(" AND").append(PRODUCT_CODE_EXISTS_CLAUSE);
+            }
+
+            Query matchQuery = entityManager.createNativeQuery(
+                "SELECT DISTINCT m.id, f.file_name FROM contents_master m"
+                + " JOIN contents_version v ON v.contents_id = m.id"
+                + "   AND v.version_expose = true AND v.is_deleted = false"
+                + " JOIN contents_file f ON f.contents_version_id = v.id"
+                + "   AND f.file_expose = true AND f.is_deleted = false"
+                + where);
+            matchQuery.setParameter("fileNames", candidateFileNames);
+            if (hasDocTypes) matchQuery.setParameter("docTypes", docTypes);
+            if (hasCats) matchQuery.setParameter("cats", categories);
+            if (hasParentCats) matchQuery.setParameter("parentCats", parentCategories);
+            if (hasProductCodes) {
+                matchQuery.setParameter("productCodes", productCodes);
+                matchQuery.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
+                matchQuery.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
+            }
+
+            @SuppressWarnings("unchecked")
+            List<Object[]> rows = matchQuery.getResultList();
+            for (Object[] r : rows) {
+                Long masterId = ((Number) r[0]).longValue();
+                String fileName = r[1].toString();
+                Integer fnRank = fileNameRank.get(fileName);
+                if (fnRank == null) continue;
+                masterBestRank.merge(masterId, fnRank, Math::min);
+            }
         }
+
+        /* ── 2) contents_master 제목(주 키워드) 직접 매칭 — Azure와 별개로 추가, Azure 순위 뒤로 이어 붙임 ── */
+        if (!primaryKeyword.isEmpty()) {
+            StringBuilder titleWhere = new StringBuilder(" WHERE").append(MASTER_GATE)
+                .append(" AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'");
+            if (hasDocTypes) {
+                titleWhere.append(" AND m.doc_type IN (:docTypes)");
+            }
+            if (!categoryClauses.isEmpty()) {
+                titleWhere.append(" AND (").append(String.join(" OR ", categoryClauses)).append(")");
+            }
+            if (hasProductCodes) {
+                titleWhere.append(" AND").append(PRODUCT_CODE_EXISTS_CLAUSE);
+            }
+
+            Query titleQuery = entityManager.createNativeQuery(
+                "SELECT DISTINCT m.id FROM contents_master m" + titleWhere);
+            titleQuery.setParameter("q", SearchSqlSupport.toLikePattern(primaryKeyword));
+            if (hasDocTypes) titleQuery.setParameter("docTypes", docTypes);
+            if (hasCats) titleQuery.setParameter("cats", categories);
+            if (hasParentCats) titleQuery.setParameter("parentCats", parentCategories);
+            if (hasProductCodes) {
+                titleQuery.setParameter("productCodes", productCodes);
+                titleQuery.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
+                titleQuery.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
+            }
+
+            @SuppressWarnings("unchecked")
+            List<Object> titleRows = titleQuery.getResultList();
+            int nextRank = fileNameRank.size();
+            for (Object o : titleRows) {
+                Long masterId = ((Number) o).longValue();
+                if (!masterBestRank.containsKey(masterId)) {
+                    masterBestRank.put(masterId, nextRank++);
+                }
+            }
+        }
+
         if (masterBestRank.isEmpty()) {
             return new ArrayList<>();
         }
@@ -289,32 +368,16 @@ public class DownloadCenterService {
         return loadContents(orderedIds);
     }
 
-    /** All탭 프리뷰용 — 매칭된 전체 리스트 중 상위 limit건만 반환(total은 매칭 전체 건수). */
+    /**
+     * FO 통합검색용 — 챗봇 keyword로 매칭된 전체 문서 리스트를 페이징/필터 없이 한 번에 반환한다.
+     * All탭(4건)/Documents탭(10건씩 클라이언트 페이지네이션)의 슬라이싱과 카테고리/문서유형 필터는
+     * FE가 이 전체 리스트를 받아 클라이언트에서 처리한다(재호출 없음).
+     */
     @Transactional(readOnly = true)
-    public FoDocumentSearchResponse previewByKeyword(String keyword, int limit) {
+    public FoDocumentSearchResponse getContentsByKeyword(String keyword) {
         List<DownloadCenterContentResponse> matched =
             searchDocumentsByKeyword(keyword, null, null, null, null);
-        int safeLimit = limit <= 0 ? 10 : limit;
-        List<DownloadCenterContentResponse> items =
-            matched.size() > safeLimit ? matched.subList(0, safeLimit) : matched;
-        return new FoDocumentSearchResponse(matched.size(), items);
-    }
-
-    /** Documents탭용 — 매칭된 전체 리스트(이미 받아온 것) 안에서 page/size만큼 잘라 반환(쿼리 재호출 없음). */
-    @Transactional(readOnly = true)
-    public DownloadCenterContentPageResponse getContentsByKeyword(
-            String keyword, List<String> categories, List<String> parentCategories,
-            List<String> docTypes, List<String> productCodes, int page, int size) {
-        List<DownloadCenterContentResponse> matched =
-            searchDocumentsByKeyword(keyword, categories, parentCategories, docTypes, productCodes);
-        int safeSize = size <= 0 ? 12 : size;
-        int safePage = Math.max(page, 0);
-        int total = matched.size();
-        int totalPages = (int) Math.ceil((double) total / safeSize);
-        int fromIndex = Math.min(safePage * safeSize, total);
-        int toIndex = Math.min(fromIndex + safeSize, total);
-        List<DownloadCenterContentResponse> content = matched.subList(fromIndex, toIndex);
-        return new DownloadCenterContentPageResponse(content, total, totalPages, safePage, safeSize);
+        return new FoDocumentSearchResponse(matched.size(), matched);
     }
 
     private Map<String, String> loadDocTypeLabels() {
@@ -442,11 +505,7 @@ public class DownloadCenterService {
     public List<DownloadCenterDocTypeCountResponse> getDocTypeCounts(List<String> productCodes) {
         boolean hasProductCodes = productCodes != null && !productCodes.isEmpty();
 
-        String productCodeClause = hasProductCodes
-            ? " AND EXISTS (SELECT 1 FROM contents_category cc3"
-              + " WHERE cc3.contents_id = m.id AND cc3.category_l3_id IN (:productCodes)"
-              + "   AND cc3.nahp_display_flag = true AND cc3.is_deleted = false)"
-            : "";
+        String productCodeClause = hasProductCodes ? " AND" + PRODUCT_CODE_EXISTS_CLAUSE : "";
 
         String sql = "SELECT m.doc_type, count(*)::int"
             + " FROM contents_master m"
@@ -455,7 +514,11 @@ public class DownloadCenterService {
             + " GROUP BY m.doc_type";
 
         Query query = entityManager.createNativeQuery(sql);
-        if (hasProductCodes) query.setParameter("productCodes", productCodes);
+        if (hasProductCodes) {
+            query.setParameter("productCodes", productCodes);
+            query.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
+            query.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
+        }
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
 

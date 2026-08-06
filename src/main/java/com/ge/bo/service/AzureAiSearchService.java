@@ -15,9 +15,6 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class AzureAiSearchService {
 
-    /** 페이징 없이 한 번에 가져올 후보 상위 건수 — 이후 contents_file 매칭 단계에서 실존 문서만 추려낸다. */
-    private static final int CANDIDATE_TOP_N = 50;
-
     private final ExternalApiClient externalApiClient;
 
     @Value("${ls.lse.out-api.azure-search.api-url}")
@@ -30,16 +27,18 @@ public class AzureAiSearchService {
     public AzureAiSearchResponse azureAiSearch(
             String keyword
     ) {
+        /* 콤마로 이어진 "키워드,연관검색어1,연관검색어2..."에서 주 키워드(첫 토큰)만 Azure에 전달 */
+        String primaryKeyword = keyword == null ? "" : keyword.split(",", 2)[0].trim();
 
         AzureAiSearchRequest body = new AzureAiSearchRequest(
-                keyword,
+                primaryKeyword,
                 "",
                 "content",
                 "<em>",
                 "</em>",
                 "search.score() desc",
-                CANDIDATE_TOP_N,
-                0,
+                null,
+                null,
                 true
         );
 
