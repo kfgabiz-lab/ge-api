@@ -2,7 +2,6 @@ package com.ge.bo.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,18 +22,16 @@ public class RoleService {
   private final AdminRepository adminRepository;
 
   /**
-   * 역할 목록 조회 — 시스템관리자이면 전체, 아니면 is_system=false 역할만 반환
+   * 역할 목록 조회 (전체) — RoleController 클래스 레벨 @PreAuthorize로 시스템관리자만 도달
    *
    * @return 역할 응답 DTO 목록
    */
   @Transactional(readOnly = true)
   public List<RoleDto.Response> getAllRoles() {
-    boolean isSystemAdmin = isCurrentUserSystemAdmin();
     return roleRepository.findAll(org.springframework.data.domain.Sort.by(
             org.springframework.data.domain.Sort.Order.desc("createdAt"),
             org.springframework.data.domain.Sort.Order.desc("id")))
         .stream()
-        .filter(r -> isSystemAdmin || !r.isSystem())
         .map(this::toResponse)
         .collect(Collectors.toList());
   }
@@ -84,7 +81,7 @@ public class RoleService {
         .displayName(request.getDisplayName())
         .description(request.getDescription())
         .color(request.getColor() != null ? request.getColor() : "#6b7280")
-        .isSystem(request.isSystem())
+        .isSystem(false)
         .build();
 
     return toResponse(roleRepository.save(role));
@@ -132,25 +129,6 @@ public class RoleService {
     }
 
     roleRepository.deleteById(id);
-  }
-
-  /** 현재 로그인한 사용자가 시스템관리자(role.is_system=true)인지 판별 */
-  private boolean isCurrentUserSystemAdmin() {
-    try {
-      String authority = SecurityContextHolder.getContext().getAuthentication()
-          .getAuthorities().stream()
-          .findFirst()
-          .map(a -> {
-            String auth = a.getAuthority();
-            return auth.startsWith("ROLE_") ? auth.substring(5) : auth;
-          })
-          .orElse("");
-      return roleRepository.findByCode(authority)
-          .map(Role::isSystem)
-          .orElse(false);
-    } catch (Exception e) {
-      return false;
-    }
   }
 
   private RoleDto.Response toResponse(Role role) {

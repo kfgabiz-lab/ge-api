@@ -10,6 +10,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
@@ -17,11 +18,12 @@ import java.time.OffsetDateTime;
 /**
  * 접속이력 조회 REST API
  * - 조회 전용 (이력성 테이블이므로 수정/삭제 없음)
- * - 인증된 사용자면 role 무관 접근 가능 (SecurityConfig의 anyRequest().authenticated()에 의존)
+ * - 시스템관리자(role.is_system=true)만 접근 가능
  */
 @RestController
 @RequestMapping("/api/v1/login-logs")
 @RequiredArgsConstructor
+@PreAuthorize("@securityService.isSystemAdmin(authentication)")
 public class LoginLogController {
 
     private final LoginLogService loginLogService;

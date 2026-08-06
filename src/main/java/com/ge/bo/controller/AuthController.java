@@ -2,6 +2,7 @@ package com.ge.bo.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -35,7 +36,7 @@ public class AuthController {
    * totp.enabled=false → accessToken 직접 반환 + refreshToken 쿠키 발급
    */
   @PostMapping("/login")
-  public LoginResponse login(@RequestBody LoginRequest request,
+  public LoginResponse login(@Valid @RequestBody LoginRequest request,
                              HttpServletResponse response,
                              HttpServletRequest httpRequest) {
     String clientIp = extractClientIp(httpRequest);

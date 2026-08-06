@@ -86,7 +86,9 @@ public class LoginLogService {
                     .loginEmail(loginEmail != null ? loginEmail : "")
                     .status(status)
                     .failReason(failReason)
-                    .clientIp(clientIp)
+                    // clientIp가 50자를 초과할 경우 잘라냄
+                    .clientIp(clientIp != null && clientIp.length() > 50
+                            ? clientIp.substring(0, 50) : clientIp)
                     // userAgent가 500자를 초과할 경우 잘라냄
                     .userAgent(userAgent != null && userAgent.length() > 500
                             ? userAgent.substring(0, 500) : userAgent)

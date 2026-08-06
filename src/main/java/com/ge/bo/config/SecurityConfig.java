@@ -76,19 +76,8 @@ public class SecurityConfig {
                                       {
                                         "code": "SESSION_EXPIRED",
                                         "message": "다른 기기에서 로그인되어 세션이 종료되었습니다."
+                                      }
                                       """);
-                          })
-                  )
-                  .exceptionHandling(exception -> exception
-                          .authenticationEntryPoint((request, response, authException) -> {
-                              response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                              response.setContentType("application/json;charset=UTF-8");
-                              response.getWriter().write("""
-                                        {
-                                          "code": "UNAUTHORIZED",
-                                          "message": "로그인이 필요합니다."
-                                        }
-                                        """);
                           })
                   )
                   // URL 접근 권한 설정
@@ -104,9 +93,14 @@ public class SecurityConfig {
                           .requestMatchers("/api/v1/contents-batch/certi/run").permitAll()
                           // 다국어 리소스 — 비로그인 조회 허용
                           .requestMatchers(HttpMethod.GET, "/api/v1/message-resources").permitAll()
-                          // 관리자 API — 인증 필요 (@PreAuthorize로 SUPER_ADMIN 제한)
+                          // 관리자 API — 인증 필요. 실제 인가는 AdminController 클래스 레벨
+                          // @PreAuthorize("@securityService.isSystemAdmin(authentication)")가 담당한다.
+                          // 판정 기준은 역할명(SUPER_ADMIN 등)이 아니라 role.is_system=true(현재 SYSTEM_ADMIN)다.
+                          // 단, GET /admins/{id}/sites만 본인 조회(isSelf) 예외를 메서드 레벨로 허용.
                           .requestMatchers("/api/v1/admins/**").authenticated()
-                          // 역할 API — 인증 필요 (@PreAuthorize로 SUPER_ADMIN 제한)
+                          // 역할 API — 인증 필요. 실제 인가는 RoleController 클래스 레벨
+                          // @PreAuthorize("@securityService.isSystemAdmin(authentication)")가 담당하며,
+                          // 마찬가지로 역할명이 아닌 role.is_system=true 기준이다.
                           .requestMatchers("/api/v1/roles/**").authenticated()
                           .anyRequest().authenticated() // 그 외 모든 요청은 인증 필요
                   )
@@ -141,9 +135,14 @@ public class SecurityConfig {
                           .requestMatchers("/api/v1/contents-batch/certi/run").permitAll()
                           // 다국어 리소스 — 비로그인 조회 허용
                           .requestMatchers(HttpMethod.GET, "/api/v1/message-resources").permitAll()
-                          // 관리자 API — 인증 필요 (@PreAuthorize로 SUPER_ADMIN 제한)
+                          // 관리자 API — 인증 필요. 실제 인가는 AdminController 클래스 레벨
+                          // @PreAuthorize("@securityService.isSystemAdmin(authentication)")가 담당한다.
+                          // 판정 기준은 역할명(SUPER_ADMIN 등)이 아니라 role.is_system=true(현재 SYSTEM_ADMIN)다.
+                          // 단, GET /admins/{id}/sites만 본인 조회(isSelf) 예외를 메서드 레벨로 허용.
                           .requestMatchers("/api/v1/admins/**").authenticated()
-                          // 역할 API — 인증 필요 (@PreAuthorize로 SUPER_ADMIN 제한)
+                          // 역할 API — 인증 필요. 실제 인가는 RoleController 클래스 레벨
+                          // @PreAuthorize("@securityService.isSystemAdmin(authentication)")가 담당하며,
+                          // 마찬가지로 역할명이 아닌 role.is_system=true 기준이다.
                           .requestMatchers("/api/v1/roles/**").authenticated()
                           .anyRequest().authenticated() // 그 외 모든 요청은 인증 필요
                   )

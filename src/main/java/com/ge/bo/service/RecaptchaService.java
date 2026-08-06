@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 
 import java.util.Map;
 
@@ -19,8 +21,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class RecaptchaService {
 
-    private static final String VERIFY_URL =
-        "https://www.google.com/recaptcha/api/siteverify?secret=%s&response=%s";
+    private static final String VERIFY_URL = "https://www.google.com/recaptcha/api/siteverify";
 
     @Value("${ls.lse.outApi.recapchaKey}")
     private String secretKey;
@@ -39,8 +40,10 @@ public class RecaptchaService {
                 "reCAPTCHA 인증을 완료해주세요.");
         }
 
-        String url = String.format(VERIFY_URL, secretKey, token);
-        ApiCallRequest request = ApiCallRequest.post(url).build();
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("secret", secretKey);
+        form.add("response", token);
+        ApiCallRequest request = ApiCallRequest.post(VERIFY_URL).body(form).build();
 
         @SuppressWarnings("unchecked")
         ApiCallResult<Map> result = externalApiClient.call(request, Map.class);

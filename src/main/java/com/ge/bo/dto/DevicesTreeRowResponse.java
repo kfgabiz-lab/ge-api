@@ -33,5 +33,6 @@ public record DevicesTreeRowResponse(
         String productTitle,
         String productDescription,
         String productImage,
-        String productOrderStatus
+        String productOrderStatus,
+        String productOrderMethod
 ) {}

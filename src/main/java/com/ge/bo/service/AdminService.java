@@ -76,7 +76,7 @@ public class AdminService {
    */
   @Transactional
   public AdminDto.Response createAdmin(AdminDto.CreateRequest request) {
-    if (!roleRepository.existsByCode(request.getRole())) {
+    if (!roleRepository.existsByCode(request.getRole()) || isSystemRole(request.getRole())) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_ROLE", "유효하지 않은 역할 코드입니다.");
     }
     if (adminRepository.existsByEmail(request.getEmail())) {
@@ -117,7 +117,8 @@ public class AdminService {
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "해당 관리자를 찾을 수 없습니다."));
 
-    if (request.getRole() != null && !roleRepository.existsByCode(request.getRole())) {
+    if (request.getRole() != null
+        && (!roleRepository.existsByCode(request.getRole()) || isSystemRole(request.getRole()))) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_ROLE", "유효하지 않은 역할 코드입니다.");
     }
 
@@ -143,7 +144,7 @@ public class AdminService {
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "해당 관리자를 찾을 수 없습니다."));
 
-    String tempPassword = "test12345"; // As per user request
+    String tempPassword = UUID.randomUUID().toString().substring(0, 12);
     adminUser.setPasswordHash(passwordEncoder.encode(tempPassword));
 
     AdminDto.Response response = convertToResponse(adminRepository.save(adminUser));

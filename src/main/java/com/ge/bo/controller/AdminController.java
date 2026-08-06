@@ -3,6 +3,7 @@ package com.ge.bo.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import com.ge.bo.dto.AdminDto;
@@ -18,6 +19,7 @@ import com.ge.bo.annotation.ApiLinkedEntity;
 @RequestMapping("/api/v1/admins")
 @RequiredArgsConstructor
 @ApiLinkedEntity("AdminUser")
+@PreAuthorize("@securityService.isSystemAdmin(authentication)")
 public class AdminController {
 
   private final AdminService adminService;
@@ -114,6 +116,7 @@ public class AdminController {
    * @return 매핑된 홈페이지 응답 DTO 목록
    */
   @GetMapping("/{id}/sites")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSelf(authentication, #id)")
   public ResponseEntity<List<SiteDto.Response>> getAdminSites(@PathVariable Long id) {
     return ResponseEntity.ok(siteService.getSitesByAdminUser(id));
   }

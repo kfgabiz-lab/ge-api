@@ -17,6 +17,7 @@ import com.ge.bo.annotation.ApiLinkedEntity;
 @RequestMapping("/api/v1/roles")
 @RequiredArgsConstructor
 @ApiLinkedEntity("Role")
+@PreAuthorize("@securityService.isSystemAdmin(authentication)")
 public class RoleController {
 
   private final RoleService roleService;

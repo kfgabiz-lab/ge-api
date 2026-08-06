@@ -1,1 +1,1 @@
- ALTER TABLE menu ADD COLUMN meta_title VARCHAR(60); ALTER TABLE menu ADD COLUMN meta_description VARCHAR(160);
+ ALTER TABLE menu ADD COLUMN meta_title VARCHAR(60); ALTER TABLE menu ADD COLUMN meta

@@ -145,7 +145,7 @@ public class AuthService {
     // 계정 비활성화 확인
     if (!admin.isActive()) {
       loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent);
-      throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
+      throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "ID or password가 일치하지 않습니다.");
     }
 
     // 비밀번호 검증
@@ -154,11 +154,11 @@ public class AuthService {
         int attempts = loginAdminService.incrementFailure(admin.getId(), maxFailedAttempts);
         if (attempts >= maxFailedAttempts) {
           loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "ACCOUNT_DISABLED", clientIp, userAgent);
-          throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_DISABLED", "계정이 비활성화되었습니다.");
+          throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "ID or password가 일치하지 않습니다.");
         }
         loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent);
         throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
-                "비밀번호 " + attempts + "회 실패 하셨습니다. " + maxFailedAttempts + "회 실패 시 계정 비활성화됩니다.");
+                "ID or password가 일치하지 않습니다.");
       }
       loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent);
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
