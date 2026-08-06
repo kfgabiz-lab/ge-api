@@ -44,17 +44,11 @@ public class FoTrainingService {
     private static final String VISIBLE_CODE = "001";
     /** trainingCourse 허용 화이트리스트 */
     private static final Set<String> TRAINING_COURSE_WHITELIST = Set.of("01", "02", "03");
-    private static final String POWER_CODE = "P";
-    private static final String AUTOMATION_CODE = "A";
-    private static final Set<String> PRODUCT_CATEGORY_WHITELIST = Set.of(POWER_CODE, AUTOMATION_CODE);
     private static final String POWER_LIST_KEY = "power_list";
     private static final String AUTOMATION_LIST_KEY = "automation_list";
 
     /**
      * 카테고리별 커리큘럼 목록 조회
-     * @param categoryIdsRaw 콤마구분 category-data id 목록 (필수, 예: "1731,1732,1745")
-     *                       - 상위 묶음(depth1/depth2)에 속한 리프(depth3, 제품연결) id 여러 개를 한꺼번에 매칭하기 위함
-     *                       - 비숫자 값이 섞이면 400, 유효 id 가 하나도 없으면 400
      * @param trainingCourse 교육과정 코드(01/02/03, 선택) — blank 면 조건 생략, 화이트리스트 미포함이면 400
      * @param page          0-based 페이지 번호
      * @param size          페이지 크기
@@ -63,7 +57,7 @@ public class FoTrainingService {
      */
     @Transactional(readOnly = true)
     public PageDataListResponse findCurriculumByCategory(
-            String categoryIdsRaw, String productCategory, String trainingCourse, String q,
+            String categoryIdsRaw, String trainingCourse, String q,
             int page, int size, Long siteId) {
 
         // categoryIds 파싱/검증 — 콤마구분 문자열 → List<Long> (비숫자 섞이면 400, 유효 id 0개면 400)
@@ -76,19 +70,11 @@ public class FoTrainingService {
             throw BusinessException.badRequest("유효하지 않은 trainingCourse 값입니다.");
         }
 
-        String category = (productCategory != null && !productCategory.isBlank())
-                ? productCategory.trim() : null;
-        if (category == null) {
-            throw BusinessException.badRequest("productCategory 는 필수입니다.");
-        }
-        if (!PRODUCT_CATEGORY_WHITELIST.contains(category)) {
-            throw BusinessException.badRequest("유효하지 않은 productCategory 값입니다.");
-        }
         String kw = (q != null && !q.isBlank())
                 ? SearchSqlSupport.toLikePattern(q.trim()) : null;
 
         // ── HOP-1: currDtlMgmt-data 에서 카테고리 매칭 curriculum_id 수집 ──────────
-        List<Long> curriculumIds = collectCurriculumIds(categoryIds, category, siteId);
+        List<Long> curriculumIds = collectCurriculumIds(categoryIds, siteId);
         if (curriculumIds.isEmpty()) {
             // 매칭되는 커리큘럼이 없으면 즉시 빈 결과 반환 (page/size 는 요청값 유지)
             return emptyResult(page, size);
@@ -97,8 +83,7 @@ public class FoTrainingService {
         // ── HOP-2: currMgmt-data 최종 조회 + 페이징 ────────────────────────────
         StringBuilder cond = new StringBuilder(
                 " WHERE data_slug = :slug AND id IN (:curriculumIds)"
-                        + " AND data_json->'curriculum'->>'is_visible' = '" + VISIBLE_CODE + "'"
-                        + " AND data_json->'curriculum'->>'product_category' = :productCategory");
+                        + " AND data_json->'curriculum'->>'is_visible' = '" + VISIBLE_CODE + "'");
         if (course != null) {
             cond.append(" AND data_json->'curriculum'->>'training_course' = :trainingCourse");
         }
@@ -111,7 +96,7 @@ public class FoTrainingService {
         }
 
         Query countQuery = entityManager.createNativeQuery("SELECT COUNT(*) FROM page_data" + cond);
-        bindCurriculumParams(countQuery, curriculumIds, category, course, kw, siteId);
+        bindCurriculumParams(countQuery, curriculumIds, course, kw, siteId);
         long totalElements = ((Number) countQuery.getSingleResult()).longValue();
 
         List<PageDataResponse> content;
@@ -124,7 +109,7 @@ public class FoTrainingService {
                     + " ORDER BY created_at DESC LIMIT :size OFFSET :offset";
 
             Query dataQuery = entityManager.createNativeQuery(dataSql);
-            bindCurriculumParams(dataQuery, curriculumIds, category, course, kw, siteId);
+            bindCurriculumParams(dataQuery, curriculumIds, course, kw, siteId);
             dataQuery.setParameter("size", size);
             dataQuery.setParameter("offset", (long) page * size);
 
@@ -148,11 +133,10 @@ public class FoTrainingService {
                 .build();
     }
 
-    private void bindCurriculumParams(Query query, List<Long> curriculumIds, String productCategory,
+    private void bindCurriculumParams(Query query, List<Long> curriculumIds,
                                       String course, String kw, Long siteId) {
         query.setParameter("slug", CURR_SLUG);
         query.setParameter("curriculumIds", curriculumIds);
-        query.setParameter("productCategory", productCategory);
         if (course != null) {
             query.setParameter("trainingCourse", course);
         }
@@ -197,14 +181,17 @@ public class FoTrainingService {
      * - id 목록 바인딩은 HOP-2(id IN (:curriculumIds))와 동일한 List<Long> + IN 관례 사용
      * - curriculum_id 는 정규식(^[0-9]+$) 통과분만 Long 파싱
      */
-    private List<Long> collectCurriculumIds(List<Long> categoryIds, String productCategory, Long siteId) {
-        String listKey = POWER_CODE.equals(productCategory) ? POWER_LIST_KEY : AUTOMATION_LIST_KEY;
+    private List<Long> collectCurriculumIds(List<Long> categoryIds, Long siteId) {
         StringBuilder sql = new StringBuilder(
                 "SELECT DISTINCT (data_json->'curriculum_detail1'->>'curriculum_id')"
                         + " FROM page_data"
                         + " WHERE data_slug = :slug"
-                        + " AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'" + listKey + "') v"
-                        + "             WHERE v ~ '^[0-9]+$' AND v::bigint IN (:catIds))"
+                        + " AND ("
+                        + "   EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'" + POWER_LIST_KEY + "') v"
+                        + "           WHERE v ~ '^[0-9]+$' AND v::bigint IN (:catIds))"
+                        + "   OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'" + AUTOMATION_LIST_KEY + "') v"
+                        + "           WHERE v ~ '^[0-9]+$' AND v::bigint IN (:catIds))"
+                        + " )"
                         + " AND (data_json->'curriculum_detail1'->>'curriculum_id') ~ '^[0-9]+$'");
         if (siteId != null) {
             sql.append(" AND (site_id = :siteId OR site_id IS NULL)");

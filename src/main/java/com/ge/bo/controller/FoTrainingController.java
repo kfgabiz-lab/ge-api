@@ -52,14 +52,13 @@ public class FoTrainingController {
     @GetMapping("/curriculum-by-category")
     public ResponseEntity<PageDataListResponse> getCurriculumByCategory(
             @RequestParam String categoryIds,
-            @RequestParam String productCategory,
             @RequestParam(required = false) String trainingCourse,
             @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
         return ResponseEntity.ok(foTrainingService.findCurriculumByCategory(
-                categoryIds, productCategory, trainingCourse, q, page, size, siteId));
+                categoryIds, trainingCourse, q, page, size, siteId));
     }
 
     /**
