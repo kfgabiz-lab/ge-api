@@ -5,7 +5,7 @@ spring:
     driver-class-name: org.postgresql.Driver
     url: jdbc:postgresql://10.153.11.120:5432/postgres
     username: lsedbadmin
-    password: lsis@2026!@#
+    password: ${DB_PASSWORD:}
   jpa:
     show-sql: false
     hibernate:
@@ -14,7 +14,7 @@ spring:
     host: 10.153.2.44
     port: 25
     username: A003elesmtp
-    password: Wels!12345
+    password: ${MAIL_PASSWORD:}
     properties:
       mail:
         debug: true
@@ -84,13 +84,13 @@ ls:
   redis-enabled: true
   lse:
     inApi:
-      connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@
-      connectPortalIv: IV($&*)2516($&*)
+      connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
+      connectPortalIv: ${CONNECT_PORTAL_IV:}
       ctpFileDownApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/download
       ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : abc
-      recapchaKey : "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
+      recapchaKey: ${RECAPTCHA_SECRET:6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe}
       ctp:
         # Connect Portal(Salesforce) Sandbox — IF_SRR_NAHP_CTP_0001(문의접수) / _0002(문의결과조회)
         tokenUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/oauth2/token
@@ -112,4 +112,4 @@ ls:
       blob-storage:
         endpoint-url: "https://blobctpeus2.blob.core.windows.net"
         container-name: "download-test"
-        sas-token: "sp=racwl&st=2026-07-02T05:54:10Z&se=2026-12-31T14:09:10Z&sv=2026-02-06&sr=c&sig=My8AJ4y8sV8uvLsU48lYIXM88xayA0MWRjAuxGmhStk%3D"
+        sas-token: ${AZURE_BLOB_SAS_TOKEN:}

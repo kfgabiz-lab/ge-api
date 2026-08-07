@@ -3,6 +3,7 @@ package com.ge.bo.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.common.excel.ExcelService;
+import com.ge.bo.common.util.ClientIpUtils;
 import com.ge.bo.dto.TrainingApplicationResponse;
 import com.ge.bo.repository.AdminRepository;
 import jakarta.persistence.EntityManager;
@@ -256,11 +257,7 @@ public class TrainingApplicationService {
             String createdBy = adminRepository.findByEmail(email)
                     .map(u -> String.valueOf(u.getId()))
                     .orElse(null);
-            String forwardedFor = request.getHeader("X-Forwarded-For");
-            String ipAddress = StringUtils.isNotBlank(forwardedFor)
-                    ? forwardedFor.split(",")[0].trim()
-                    : request.getRemoteAddr();
-            downloadLogService.saveAsync("training-applications", reason, "csv", createdBy, ipAddress);
+            downloadLogService.saveAsync("training-applications", reason, "csv", createdBy, ClientIpUtils.resolve(request));
         }
 
         return ResponseEntity.ok().headers(responseHeaders).body(fileBytes);

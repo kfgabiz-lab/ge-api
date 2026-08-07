@@ -28,6 +28,7 @@ import com.ge.bo.repository.AdminRepository;
 import com.ge.bo.repository.PageDataRepository;
 import com.ge.bo.repository.SlugRelationRepository;
 import com.ge.bo.repository.ValidationRuleRepository;
+import com.ge.bo.security.JwtTokenProvider;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.Query;
@@ -63,11 +64,24 @@ public class PageDataService {
   private final ValidationRuleRepository validationRuleRepository;
   private final SiteTimeZoneResolver siteTimeZoneResolver;
   private final IntegrationContentsSyncService integrationContentsSyncService;
+  private final JwtTokenProvider jwtTokenProvider;
 
   @PersistenceContext
     private EntityManager entityManager;
 
-  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude", "fetchRelationIds");
+  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude", "fetchRelationIds", "previewToken");
+
+  /**
+   * FO 공개 API(FoPageDataController)에서 게시상태를 클라이언트 파라미터가 아니라 서버가 직접 강제하는 slug.
+   * findProductInsights()/queryCategoryInsights()가 이미 쓰던 것과 동일한 방식(JSON 섹션 안의 is_visible/publish_dttm을
+   * 서버측 SQL에 하드코딩)을 press/blog/articles/events에도 동일하게 적용한다.
+   */
+  private static final Set<String> FO_PUBLISH_GATED_SLUGS =
+      Set.of("press-data", "blog-data", "articles-data", "events-data");
+
+  private static final String FO_PUBLISH_GATE_SQL =
+        " AND data_json->(replace(data_slug,'-data','')) ->> 'is_visible' = '001'"
+      + " AND substring(regexp_replace(data_json->(replace(data_slug,'-data',''))->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today";
 
   private static final String PRODUCT_DATA_SLUG_COND = "#slug == 'product-data'";
 
@@ -119,13 +133,19 @@ public class PageDataService {
       + "   CASE WHEN j.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j.data_json->>'sortOrder')::int END ASC NULLS LAST"
       + ")";
 
+  /** 관리자용(BO) 조회 — 게시상태 서버 강제 없음(초안/미게시 포함 전체 조회가 정상 동작이므로) */
   @Transactional(readOnly = true)
     public PageDataListResponse search(String slug, Map<String, String> allParams, int page, int size, Long siteId) {
-    return search(slug, allParams, page, size, siteId, false);
+    return searchInternal(slug, allParams, page, size, siteId, false, false);
   }
 
+  /** FO 공개용 조회 — FoPageDataController 전용 경로. 게시상태를 서버가 강제한다(enforcePublishGate=true) */
   @Transactional(readOnly = true)
     public PageDataListResponse search(String slug, Map<String, String> allParams, int page, int size, Long siteId, boolean unpaged) {
+    return searchInternal(slug, allParams, page, size, siteId, unpaged, true);
+  }
+
+  private PageDataListResponse searchInternal(String slug, Map<String, String> allParams, int page, int size, Long siteId, boolean unpaged, boolean enforcePublishGate) {
     Map<String, String> relFilterParams = new LinkedHashMap<>();
     Map<String, String> joinFilterParams = new LinkedHashMap<>();
     Map<String, String> innerRelParams = new LinkedHashMap<>();
@@ -143,6 +163,9 @@ public class PageDataService {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
     appendWhereConditions(whereClause, searchParams);
+    if (enforcePublishGate && FO_PUBLISH_GATED_SLUGS.contains(slug)) {
+      whereClause.append(FO_PUBLISH_GATE_SQL);
+    }
 
     if ("currDtlMgmt-data".equals(slug) && relFilterParams.containsKey("rel_4")) {
       String categoryIdStr = relFilterParams.get("rel_4");
@@ -424,6 +447,9 @@ public class PageDataService {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
     appendWhereConditions(whereClause, statusParams);
+    if (FO_PUBLISH_GATED_SLUGS.contains(slug) && !isValidPreviewToken(allParams.get("previewToken"), slug, id)) {
+      whereClause.append(FO_PUBLISH_GATE_SQL);
+    }
 
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
                 + " created_by, created_at, updated_by, updated_at, \"count\" "
@@ -476,6 +502,9 @@ public class PageDataService {
       baseWhere.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
     appendWhereConditions(baseWhere, statusParams);
+    if (FO_PUBLISH_GATED_SLUGS.contains(slug)) {
+      baseWhere.append(FO_PUBLISH_GATE_SQL);
+    }
 
     String curVal = "(SELECT " + sortExpr + " FROM page_data WHERE data_slug = :slug AND id = :id)";
 
@@ -1757,6 +1786,11 @@ public class PageDataService {
     if (sql.contains(":today")) {
       query.setParameter("today", resolveTodayParam(siteId));
     }
+  }
+
+  /** BO 관리자가 미게시 콘텐츠를 미리보기 링크로 열람할 때만 게시 게이트를 우회시켜준다(slug+recordId 바인딩된 5분 토큰). */
+  private boolean isValidPreviewToken(String previewToken, String slug, Long id) {
+    return previewToken != null && jwtTokenProvider.validatePreviewToken(previewToken, slug, String.valueOf(id));
   }
 
   private String resolveNowParam(Long siteId) {

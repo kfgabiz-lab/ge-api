@@ -93,7 +93,7 @@ public class TrainingRegistration {
     @Column(name = "privacy_consent_flag", nullable = false)
     private Boolean privacyConsentFlag;
 
-    /** 요청자 IP (감사/스팸 추적용, X-Forwarded-For 우선) */
+    /** 요청자 IP (감사/스팸 추적용, getRemoteAddr() 기준) */
     @Column(name = "created_ip", length = 50)
     private String createdIp;
 

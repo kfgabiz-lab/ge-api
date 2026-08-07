@@ -7,6 +7,7 @@ import com.ge.bo.dto.TableInfoResponse;
 import com.ge.bo.service.DatabaseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -14,11 +15,12 @@ import java.util.List;
 /**
  * 데이터베이스 메타데이터 조회 API
  * - 단순 조회 전용 (읽기 전용)
- * - 인증된 관리자만 접근 가능 (SecurityConfig의 anyRequest().authenticated() 적용)
+ * - 스키마/엔티티 구조가 노출되므로 시스템관리자(role.is_system=true)만 접근 가능
  */
 @RestController
 @RequestMapping("/api/v1/database")
 @RequiredArgsConstructor
+@PreAuthorize("@securityService.isSystemAdmin(authentication)")
 public class DatabaseController {
 
   private final DatabaseService databaseService;

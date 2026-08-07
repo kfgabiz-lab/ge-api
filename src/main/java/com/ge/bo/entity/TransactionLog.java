@@ -45,12 +45,16 @@ public class TransactionLog {
   @Column(length = 100)
   private String loginUser;
 
-  /** 클라이언트 IP (X-Forwarded-For 우선) */
+  /** 클라이언트 IP (getRemoteAddr() 기준) */
   @Column(length = 50)
   private String clientIp;
 
   /** 요청 처리 시간(ms) */
   private Long durationMs;
+
+  /** 요청 사이트 ID (X-Site-Id 헤더 기준, 헤더 없으면 null) */
+  @Column(name = "site_id")
+  private Long siteId;
 
   /** 발생일시 */
   @Column(nullable = false, updatable = false)
@@ -59,7 +63,7 @@ public class TransactionLog {
   @Builder
   public TransactionLog(String actionType, String method, String requestUrl,
       String requestBody, Integer httpStatus, String loginUser,
-      String clientIp, Long durationMs) {
+      String clientIp, Long durationMs, Long siteId) {
     this.actionType = actionType;
     this.method = method;
     this.requestUrl = requestUrl;
@@ -68,6 +72,7 @@ public class TransactionLog {
     this.loginUser = loginUser;
     this.clientIp = clientIp;
     this.durationMs = durationMs;
+    this.siteId = siteId;
     this.createdAt = OffsetDateTime.now();
   }
 }

@@ -22,8 +22,34 @@ public class LoginAdminService {
                 .orElseThrow(() -> new IllegalStateException("Admin not found: " + adminId));
         int attempts = admin.getFailedLoginAttempts() + 1;
         admin.setFailedLoginAttempts(attempts);
+        if (attempts >= maxAttempts) {
+            admin.setActive(false);
+        }
         adminRepository.save(admin);
         return attempts;
+    }
+
+    /**
+     * TOTP 코드 오입력 시 TOTP 실패 횟수 +1
+     * 호출부(TotpService)는 검증 실패 시 예외를 던져 트랜잭션이 롤백되므로 REQUIRES_NEW로 분리 커밋
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int incrementTotpFailure(Long adminId) {
+        AdminUser admin = adminRepository.findById(adminId)
+                .orElseThrow(() -> new IllegalStateException("Admin not found: " + adminId));
+        int attempts = (admin.getTotpFailedAttempts() == null ? 0 : admin.getTotpFailedAttempts()) + 1;
+        admin.setTotpFailedAttempts(attempts);
+        adminRepository.save(admin);
+        return attempts;
+    }
+
+    /** 새 2FA 시도 시작(비밀번호 인증 성공) 시 TOTP 실패 횟수 초기화 */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void resetTotpFailure(Long adminId) {
+        adminRepository.findById(adminId).ifPresent(admin -> {
+            admin.setTotpFailedAttempts(0);
+            adminRepository.save(admin);
+        });
     }
 
     /** 신규 SSO 유저 저장 */

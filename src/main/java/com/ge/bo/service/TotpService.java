@@ -32,9 +32,13 @@ public class TotpService {
 
   private static final long ACCESS_TOKEN_EXPIRES_IN = 3600L;
 
+  /** TOTP 코드 오입력 허용 횟수 — 초과 시 해당 2FA 시도는 무효화(재로그인 필요) */
+  private static final int MAX_TOTP_ATTEMPTS = 3;
+
   private final AdminRepository adminRepository;
   private final RoleRepository roleRepository;
   private final JwtTokenProvider jwtTokenProvider;
+  private final LoginAdminService loginAdminService;
 
   @Value("${ls.totp.isUser}")
   private String totpIssuer;
@@ -107,11 +111,12 @@ public class TotpService {
     }
 
     // 6자리 코드 검증
-    verifyTotpCode(admin.getTotpSecret(), request.getTotpCode());
+    verifyTotpCode(admin, request.getTotpCode());
 
     admin.setTotpEnabled(true);
     admin.setLastLoginAt(LocalDateTime.now());
     admin.setFailedLoginAttempts(0);
+    admin.setTotpFailedAttempts(0);
     admin.setLockedUntil(null);
 
     return TotpDto.VerifyResponse.builder()
@@ -138,11 +143,12 @@ public class TotpService {
     }
 
     // 6자리 코드 검증
-    verifyTotpCode(admin.getTotpSecret(), request.getTotpCode());
+    verifyTotpCode(admin, request.getTotpCode());
 
     admin.setTotpEnabled(true);
     admin.setLastLoginAt(LocalDateTime.now());
     admin.setFailedLoginAttempts(0);
+    admin.setTotpFailedAttempts(0);
     admin.setLockedUntil(null);
 
     String accessToken = jwtTokenProvider.generateAccessToken(email, admin.getRole());
@@ -185,10 +191,11 @@ public class TotpService {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "TOTP_CODE_REQUIRED",
               "OTP 코드를 입력해주세요.");
     }
-    verifyTotpCode(admin.getTotpSecret(), request.getTotpCode());
+    verifyTotpCode(admin, request.getTotpCode());
 
     admin.setLastLoginAt(LocalDateTime.now());
     admin.setFailedLoginAttempts(0);
+    admin.setTotpFailedAttempts(0);
     admin.setLockedUntil(null);
 
     return TotpDto.VerifyResponse.builder()
@@ -217,10 +224,11 @@ public class TotpService {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "TOTP_CODE_REQUIRED",
               "OTP 코드를 입력해주세요.");
     }
-    verifyTotpCode(admin.getTotpSecret(), request.getTotpCode());
+    verifyTotpCode(admin, request.getTotpCode());
 
     admin.setLastLoginAt(LocalDateTime.now());
     admin.setFailedLoginAttempts(0);
+    admin.setTotpFailedAttempts(0);
     admin.setLockedUntil(null);
 
     String accessToken = jwtTokenProvider.generateAccessToken(email, admin.getRole());
@@ -249,13 +257,19 @@ public class TotpService {
             "사용자를 찾을 수 없습니다."));
   }
 
-  /** TOTP 6자리 코드 검증 */
-  private void verifyTotpCode(String secret, String code) {
+  /** TOTP 6자리 코드 검증 (시도 횟수 제한 포함) */
+  private void verifyTotpCode(AdminUser admin, String code) {
+    if (admin.getTotpFailedAttempts() != null && admin.getTotpFailedAttempts() >= MAX_TOTP_ATTEMPTS) {
+      throw new BusinessException(HttpStatus.UNAUTHORIZED, "TOTP_MAX_ATTEMPTS",
+          "인증 시도 횟수를 초과했습니다. 다시 로그인해주세요.");
+    }
+
     DefaultCodeVerifier verifier = new DefaultCodeVerifier(
         new DefaultCodeGenerator(), new SystemTimeProvider());
     verifier.setAllowedTimePeriodDiscrepancy(2);
 
-    if (!verifier.isValidCode(secret, code)) {
+    if (!verifier.isValidCode(admin.getTotpSecret(), code)) {
+      loginAdminService.incrementTotpFailure(admin.getId());
       throw new BusinessException(HttpStatus.BAD_REQUEST, "TOTP_CODE_INVALID",
           "인증 코드가 올바르지 않습니다. 앱의 최신 코드를 입력해주세요.");
     }

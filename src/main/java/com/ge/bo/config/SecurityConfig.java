@@ -12,6 +12,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.security.core.session.SessionRegistry;
 import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -30,6 +31,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import com.ge.bo.security.JwtAuthenticationFilter;
+import com.ge.bo.security.LoginRateLimitFilter;
 
 import java.util.Arrays;
 import java.util.List;
@@ -45,6 +47,8 @@ import org.springframework.http.HttpMethod;
 public class SecurityConfig {
 
     private final JwtTokenProvider jwtTokenProvider;
+
+    private final LoginRateLimitFilter loginRateLimitFilter;
 
   @Value("${cors.allowed-origins}")
     private String allowedOrigins;
@@ -111,7 +115,9 @@ public class SecurityConfig {
                               response.setContentType("application/json;charset=UTF-8");
                               response.getWriter().write("{\"code\":\"UNAUTHORIZED\",\"message\":\"인증이 필요합니다.\"}");
                           })
-                  );
+                  )
+                  // 로그인 IP 단위 Rate Limiting — 인증 처리 이전 단계에서 즉시 차단
+                  .addFilterBefore(loginRateLimitFilter, UsernamePasswordAuthenticationFilter.class);
       }else{
           http
                   // CSRF 비활성화 (REST API Stateless 방식)
@@ -125,7 +131,6 @@ public class SecurityConfig {
                           .requestMatchers("/api/v1/auth/**").permitAll() // 로그인, TOTP 2FA 엔드포인트 — 인증 없이 허용
                           .requestMatchers("/api/v1/health").permitAll() // 헬스 체크 허용
                           .requestMatchers("/api/v1/redisTest/**").permitAll() // redis 체크 허용
-                          .requestMatchers("/api/v1/cryptoTest/**").permitAll() // 암복호화 테스트 허용
                           .requestMatchers("/api/v1/public/**").permitAll() // 공개 API — 인증 없이 허용
                           .requestMatchers("/api/v1/fo/**").permitAll() // FO API — 비로그인 전체 허용
                           // 콘텐츠배치 EAI 트리거 — IF 적재 완료 후 EAI가 직접 호출
@@ -155,10 +160,22 @@ public class SecurityConfig {
                           })
                   )
                   // JWT 필터를 UsernamePasswordAuthenticationFilter 앞에 추가
-                  .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider), UsernamePasswordAuthenticationFilter.class);
+                  .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider), UsernamePasswordAuthenticationFilter.class)
+                  // 로그인 IP 단위 Rate Limiting — JWT 필터보다 앞에서 즉시 차단
+                  .addFilterBefore(loginRateLimitFilter, JwtAuthenticationFilter.class);
       }
 
     return http.build();
+  }
+
+  // @Component Filter 빈이 서블릿 컨테이너에 자동 등록되어 SecurityFilterChain 밖에서 한 번 더 실행되는 것을 막는다.
+  // (실제 적용은 위 filterChain()의 addFilterBefore 등록분만 사용)
+  @Bean
+  public FilterRegistrationBean<LoginRateLimitFilter> loginRateLimitFilterRegistration(
+      LoginRateLimitFilter filter) {
+    FilterRegistrationBean<LoginRateLimitFilter> registration = new FilterRegistrationBean<>(filter);
+    registration.setEnabled(false);
+    return registration;
   }
 
   @Bean

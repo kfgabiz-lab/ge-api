@@ -128,28 +128,11 @@ public class AdminService {
     adminUser.setRemark(request.getRemark());
     adminUser.setRole(request.getRole());
     adminUser.setActive(request.isActive());
+    if (request.isActive()) {
+      adminUser.setFailedLoginAttempts(0);
+    }
 
     return convertToResponse(adminRepository.save(adminUser));
-  }
-
-  /**
-   * 관리자 비밀번호 초기화 (임시 비밀번호 발급)
-   *
-   * @param id 관리자 PK
-   * @return 임시 비밀번호가 포함된 관리자 응답 DTO
-   */
-  @Transactional
-  public AdminDto.Response resetPassword(Long id) {
-    AdminUser adminUser = adminRepository.findById(id)
-        .orElseThrow(() -> new BusinessException(
-            HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "해당 관리자를 찾을 수 없습니다."));
-
-    String tempPassword = UUID.randomUUID().toString().substring(0, 12);
-    adminUser.setPasswordHash(passwordEncoder.encode(tempPassword));
-
-    AdminDto.Response response = convertToResponse(adminRepository.save(adminUser));
-    response.setTempPassword(tempPassword);
-    return response;
   }
 
   /**
@@ -166,6 +149,9 @@ public class AdminService {
             HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "해당 관리자를 찾을 수 없습니다."));
 
     adminUser.setActive(isActive);
+    if (isActive) {
+      adminUser.setFailedLoginAttempts(0);
+    }
     return convertToResponse(adminRepository.save(adminUser));
   }
 

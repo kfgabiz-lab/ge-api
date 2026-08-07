@@ -53,7 +53,7 @@ public class TrainingRequestService {
      * 교육 신청 접수 처리 — reCAPTCHA 검증 → 저장 → 결과 반환
      *
      * @param request  폼 요청 (Bean Validation 통과 후 진입)
-     * @param clientIp 요청자 IP (컨트롤러에서 X-Forwarded-For 우선 추출)
+     * @param clientIp 요청자 IP (컨트롤러에서 getRemoteAddr() 기준 추출)
      * @return 저장된 신청 id
      */
     @Transactional

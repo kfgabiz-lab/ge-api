@@ -1,5 +1,7 @@
 package com.ge.bo.filter;
 
+import com.ge.bo.common.context.SiteContext;
+import com.ge.bo.common.util.ClientIpUtils;
 import com.ge.bo.security.JwtTokenProvider;
 import com.ge.bo.service.TransactionLogService;
 import io.micrometer.common.util.StringUtils;
@@ -77,11 +79,15 @@ public class TransactionLogFilter extends OncePerRequestFilter {
       long durationMs = System.currentTimeMillis() - startTime;
       String requestBody = extractRequestBody(wrappedRequest);
       String requestUrl = buildFullUrl(request);
-      String clientIp = extractClientIp(request);
+      String clientIp = ClientIpUtils.resolve(request);
+
+      // SiteContext는 SiteContextFilter(HIGHEST_PRECEDENCE)가 바깥에서 감싸므로 이 시점에도 살아있다.
+      // @Async 스레드에는 ThreadLocal이 전파되지 않으므로 요청 스레드인 여기서 꺼내 파라미터로 전달한다.
+      Long siteId = SiteContext.getSiteId().orElse(null);
 
       transactionLogService.saveAsync(
           method, requestUrl, requestBody,
-          response.getStatus(), clientIp, durationMs, loginUser);
+          response.getStatus(), clientIp, durationMs, loginUser, siteId);
     }
   }
 
@@ -121,18 +127,5 @@ public class TransactionLogFilter extends OncePerRequestFilter {
       // 토큰 파싱 실패 시 null 반환 (로그 저장은 계속)
     }
     return null;
-  }
-
-  /**
-   * 실제 클라이언트 IP 추출
-   * 리버스 프록시 환경에서는 X-Forwarded-For 헤더에 실제 IP가 담김
-   */
-  private String extractClientIp(HttpServletRequest request) {
-    String forwarded = request.getHeader("X-Forwarded-For");
-    if (StringUtils.isNotBlank(forwarded)) {
-      // 여러 IP가 콤마로 연결된 경우 첫 번째가 실제 클라이언트 IP
-      return forwarded.split(",")[0].trim();
-    }
-    return request.getRemoteAddr();
   }
 }

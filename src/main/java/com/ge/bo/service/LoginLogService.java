@@ -67,8 +67,8 @@ public class LoginLogService {
      * 접속이력 비동기 저장
      *
      * 사용법:
-     *   loginLogService.saveAsync(admin.getId(), admin.getEmail(), "SUCCESS", null, clientIp, userAgent);
-     *   loginLogService.saveAsync(null, request.getEmail(), "FAIL", "USER_NOT_FOUND", clientIp, userAgent);
+     *   loginLogService.saveAsync(admin.getId(), admin.getEmail(), "SUCCESS", null, clientIp, userAgent, siteId);
+     *   loginLogService.saveAsync(null, request.getEmail(), "FAIL", "USER_NOT_FOUND", clientIp, userAgent, siteId);
      *
      * @param adminUserId 관리자 ID (이메일 미존재 시 null)
      * @param loginEmail  로그인 시도 이메일
@@ -76,16 +76,19 @@ public class LoginLogService {
      * @param failReason  실패 사유 코드 (성공 시 null)
      * @param clientIp    클라이언트 IP
      * @param userAgent   브라우저 User-Agent
+     * @param siteId      요청 사이트 ID (요청 스레드에서 SiteContext.getSiteId()로 미리 추출 —
+     *                    @Async 스레드에는 ThreadLocal이 전파되지 않으므로 반드시 파라미터로 전달)
      */
     @Async
     public void saveAsync(Long adminUserId, String loginEmail, String status,
-                          String failReason, String clientIp, String userAgent) {
+                          String failReason, String clientIp, String userAgent, Long siteId) {
         try {
             LoginLog loginLog = LoginLog.builder()
                     .adminUserId(adminUserId)
                     .loginEmail(loginEmail != null ? loginEmail : "")
                     .status(status)
                     .failReason(failReason)
+                    .siteId(siteId)
                     // clientIp가 50자를 초과할 경우 잘라냄
                     .clientIp(clientIp != null && clientIp.length() > 50
                             ? clientIp.substring(0, 50) : clientIp)

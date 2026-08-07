@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.ge.bo.common.util.ClientIpUtils;
 import com.ge.bo.dto.LoginRequest;
 import com.ge.bo.dto.LoginResponse;
 import com.ge.bo.dto.TotpDto;
@@ -39,7 +40,7 @@ public class AuthController {
   public LoginResponse login(@Valid @RequestBody LoginRequest request,
                              HttpServletResponse response,
                              HttpServletRequest httpRequest) {
-    String clientIp = extractClientIp(httpRequest);
+    String clientIp = ClientIpUtils.resolve(httpRequest);
     String userAgent = httpRequest.getHeader("User-Agent");
 
     LoginResponse result = authService.login(request, clientIp, userAgent, httpRequest);
@@ -54,15 +55,6 @@ public class AuthController {
     }
 
     return result;
-  }
-
-  /** X-Forwarded-For 우선으로 실제 클라이언트 IP 추출 */
-  private String extractClientIp(HttpServletRequest request) {
-    String forwarded = request.getHeader("X-Forwarded-For");
-    if (forwarded != null && !forwarded.isBlank()) {
-      return forwarded.split(",")[0].trim();
-    }
-    return request.getRemoteAddr();
   }
 
   /**

@@ -87,17 +87,6 @@ public class AdminController {
   }
 
   /**
-   * 관리자 비밀번호 초기화
-   *
-   * @param id 관리자 PK
-   * @return 임시 비밀번호가 포함된 관리자 응답 DTO
-   */
-  @PostMapping("/{id}/reset-password")
-  public ResponseEntity<AdminDto.Response> resetPassword(@PathVariable Long id) {
-    return ResponseEntity.ok(adminService.resetPassword(id));
-  }
-
-  /**
    * 관리자 삭제
    *
    * @param id 관리자 PK

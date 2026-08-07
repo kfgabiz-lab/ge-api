@@ -1,11 +1,11 @@
 package com.ge.bo.service;
 
+import com.ge.bo.common.util.ClientIpUtils;
 import com.ge.bo.dto.ErrorLogDetailResponse;
 import com.ge.bo.dto.ErrorLogResponse;
 import com.ge.bo.entity.ErrorLog;
 import com.ge.bo.exception.ErrorCode;
 import com.ge.bo.repository.ErrorLogRepository;
-import io.micrometer.common.util.StringUtils;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -109,10 +109,13 @@ public class ErrorLogService {
      * @param errorCode  에러코드 문자열
      * @param message    에러 메시지
      * @param ex         예외 객체 (500일 때만 스택트레이스 저장, 나머지는 null 전달)
+     * @param siteId     요청 사이트 ID (요청 스레드에서 SiteContext.getSiteId()로 미리 추출 —
+     *                   @Async 스레드에는 ThreadLocal이 전파되지 않으므로 반드시 파라미터로 전달)
      */
   @Async
     public void saveAsync(HttpServletRequest request, int httpStatus,
-                          String errorCode, String message, Exception ex, String loginUser) {
+                          String errorCode, String message, Exception ex, String loginUser,
+                          Long siteId) {
     try {
             // 변수로 분리하여 IDE null 안전성 경고 해소
       ErrorLog errorLog = ErrorLog.builder()
@@ -122,8 +125,9 @@ public class ErrorLogService {
                     .requestUrl(request != null ? getFullUrl(request) : null)
                     .message(message)
                     .stackTrace(httpStatus >= 500 ? getStackTrace(ex) : null) // 500 이상만 스택트레이스 저장
-                    .clientIp(request != null ? getClientIp(request) : null)
+                    .clientIp(request != null ? ClientIpUtils.resolve(request) : null)
                     .loginUser(loginUser) // request 스레드에서 미리 추출한 이메일 사용 (@Async 스레드 SecurityContext 미전파 방지)
+                    .siteId(siteId) // 위와 동일 — request 스레드에서 미리 추출한 SiteContext 값
                     .build();
       errorLogRepository.save(errorLog);
     } catch (Exception e) {
@@ -139,19 +143,6 @@ public class ErrorLogService {
         // URL이 500자를 초과할 경우 잘라냄
     String fullUrl = (query != null) ? url + "?" + query : url;
     return fullUrl.length() > 500 ? fullUrl.substring(0, 500) : fullUrl;
-  }
-
-    /**
-     * 실제 클라이언트 IP 추출
-     * - Render 등 리버스 프록시 환경에서는 X-Forwarded-For 헤더에 실제 IP가 담김
-     */
-  private String getClientIp(HttpServletRequest request) {
-    String forwarded = request.getHeader("X-Forwarded-For");
-    if (StringUtils.isNotBlank(forwarded)) {
-            // 여러 IP가 콤마로 연결된 경우 첫 번째가 실제 클라이언트 IP
-      return forwarded.split(",")[0].trim();
-    }
-    return request.getRemoteAddr();
   }
 
     /** 예외 스택트레이스를 문자열로 변환 */

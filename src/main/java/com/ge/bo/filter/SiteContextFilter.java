@@ -7,6 +7,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -14,13 +16,16 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * 요청 헤더 X-Site-Id로 사이트 timezone을 조회해 SiteContext(ThreadLocal)에 채워주는 공통 필터
+ * 요청 헤더 X-Site-Id로 사이트 timezone / 사이트 ID를 SiteContext(ThreadLocal)에 채워주는 공통 필터
  * - siteId 없음 / 사이트 조회 실패 / timezone 미설정 / 파싱 실패 시 아무것도 set 하지 않는다(기존 동작과 동일하게 폴백은 소비하는 쪽 책임)
  * - TransactionLogFilter와 동일하게 @Component로 등록되는 일반 서블릿 필터 — Spring Security 필터체인과 무관하게
  *   인증 여부와 상관없이 항상 동작한다 (permitAll 엔드포인트 포함)
+ * - HIGHEST_PRECEDENCE: TransactionLogFilter의 finally 블록(로그 저장 시점)에서도 SiteContext가 살아있어야 하므로
+ *   반드시 다른 로깅 필터보다 바깥에서 감싸야 한다
  * - 스레드풀 재사용 시 값이 다른 요청으로 새는 것을 막기 위해 반드시 finally에서 SiteContext.clear() 호출
  */
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
 @RequiredArgsConstructor
 public class SiteContextFilter extends OncePerRequestFilter {
 
@@ -34,6 +39,7 @@ public class SiteContextFilter extends OncePerRequestFilter {
     try {
       Long siteId = parseSiteId(request.getHeader(HEADER_SITE_ID));
       if (siteId != null) {
+        SiteContext.setSiteId(siteId);
         siteTimeZoneResolver.lookup(siteId).ifPresent(SiteContext::set);
       }
       filterChain.doFilter(request, response);

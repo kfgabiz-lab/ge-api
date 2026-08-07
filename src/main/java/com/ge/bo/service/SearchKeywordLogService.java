@@ -41,7 +41,7 @@ public class SearchKeywordLogService {
      * @param source  DOWNLOAD_CENTER / UNIFIED_SEARCH
      * @param keyword 사용자가 입력한 원본 검색어
      * @param siteId  X-Site-Id 헤더 (없으면 null)
-     * @param ip      요청자 IP (X-Forwarded-For 우선)
+     * @param ip      요청자 IP (getRemoteAddr() 기준)
      */
     @Transactional
     public void logKeyword(String source, String keyword, Long siteId, String ip) {

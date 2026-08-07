@@ -21,6 +21,7 @@ import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.ge.bo.common.context.SiteContext;
 import com.ge.bo.dto.LoginRequest;
 import com.ge.bo.dto.LoginResponse;
 import com.ge.bo.entity.AdminUser;
@@ -45,6 +46,14 @@ public class AuthService {
 
   private static final long REFRESH_TOKEN_DAYS = 7L;
   private static final String PENDING_ROLE = "PENDING_ADMIN";
+
+  /**
+   * 요청 스레드의 X-Site-Id 값 — @Async 접속이력 저장 스레드에는 ThreadLocal이 전파되지 않으므로
+   * 반드시 호출 시점(요청 스레드)에 꺼내서 파라미터로 넘겨야 한다
+   */
+  private Long currentSiteId() {
+    return SiteContext.getSiteId().orElse(null);
+  }
 
   private final SessionAuthenticationStrategy sessionAuthenticationStrategy;
   private final SecurityContextRepository securityContextRepository;
@@ -113,7 +122,7 @@ public class AuthService {
    * totp.enabled=false  → 바로 accessToken 발급 (2FA 스킵)
    *
    * @param request   로그인 요청 DTO (이메일/사원번호, 비밀번호, reCAPTCHA 토큰)
-   * @param clientIp  요청자 IP (AuthController에서 X-Forwarded-For 우선 추출)
+   * @param clientIp  요청자 IP (AuthController에서 getRemoteAddr() 기준 추출)
    * @param userAgent 브라우저 User-Agent
    * @return LoginResponse
    */
@@ -121,22 +130,22 @@ public class AuthService {
   public LoginResponse login(LoginRequest request, String clientIp, String userAgent, HttpServletRequest req) {
     if (request.getEmail() == null || request.getEmail().isBlank()
             || request.getPassword() == null || request.getPassword().isBlank()) {
-      loginLogService.saveAsync(null, request.getEmail(), "FAIL", "INVALID_CREDENTIALS", clientIp, userAgent);
+      loginLogService.saveAsync(null, request.getEmail(), "FAIL", "INVALID_CREDENTIALS", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
               "ID or password가 일치하지 않습니다.");
     }
+
+    // reCAPTCHA 토큰 검증 (로컬 로그인/SSO 로그인 공통 — 분기 이전에 반드시 통과)
+    recaptchaService.verify(request.getRecaptchaToken());
 
     if (isApiLogin) {
       return ssoLogin(request, clientIp, userAgent, req);
     }
 
-    // reCAPTCHA 토큰 검증
-    recaptchaService.verify(request.getRecaptchaToken());
-
     // 이메일 없음 체크 — orElseThrow 대신 분기로 변환하여 로그 저장 후 throw
     Optional<AdminUser> adminOpt = adminRepository.findByEmail(request.getEmail());
     if (adminOpt.isEmpty()) {
-      loginLogService.saveAsync(null, request.getEmail(), "FAIL", "USER_NOT_FOUND", clientIp, userAgent);
+      loginLogService.saveAsync(null, request.getEmail(), "FAIL", "USER_NOT_FOUND", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
               "ID or password가 일치하지 않습니다.");
     }
@@ -144,7 +153,7 @@ public class AuthService {
 
     // 계정 비활성화 확인
     if (!admin.isActive()) {
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent);
+      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "ID or password가 일치하지 않습니다.");
     }
 
@@ -153,14 +162,14 @@ public class AuthService {
       if (lockEnabled) {
         int attempts = loginAdminService.incrementFailure(admin.getId(), maxFailedAttempts);
         if (attempts >= maxFailedAttempts) {
-          loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "ACCOUNT_DISABLED", clientIp, userAgent);
+          loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "ACCOUNT_DISABLED", clientIp, userAgent, currentSiteId());
           throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "ID or password가 일치하지 않습니다.");
         }
-        loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent);
+        loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
         throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
                 "ID or password가 일치하지 않습니다.");
       }
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent);
+      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
               "ID or password가 일치하지 않습니다.");
     }
@@ -170,12 +179,12 @@ public class AuthService {
 
     // 승인 대기 확인 (SUCCESS 로그보다 먼저 체크하여 PENDING은 FAIL로 기록)
     if (PENDING_ROLE.equals(admin.getRole())) {
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent);
+      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
     }
 
     // 로그인 성공 이력 저장
-    loginLogService.saveAsync(admin.getId(), admin.getEmail(), "SUCCESS", null, clientIp, userAgent);
+    loginLogService.saveAsync(admin.getId(), admin.getEmail(), "SUCCESS", null, clientIp, userAgent, currentSiteId());
 
     // 2차인증 비활성화 시 바로 accessToken 발급
     if (!totpEnabled) {
@@ -282,7 +291,7 @@ public class AuthService {
     if (existing.isPresent()) {
       AdminUser a = existing.get();
       if (!a.isActive()) {
-        loginLogService.saveAsync(a.getId(), a.getEmail(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent);
+        loginLogService.saveAsync(a.getId(), a.getEmail(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent, currentSiteId());
         throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
       }
     }
@@ -292,7 +301,7 @@ public class AuthService {
     try {
       sso = lseSsoService.login(request.getEmail(), request.getPassword(), ssoSysName);
     } catch (Exception e) {
-      loginLogService.saveAsync(null, request.getEmail(), "FAIL", "SSO_SERVER_ERROR", clientIp, userAgent);
+      loginLogService.saveAsync(null, request.getEmail(), "FAIL", "SSO_SERVER_ERROR", clientIp, userAgent, currentSiteId());
       throw BusinessException.unauthorized("SSO 서버 연결에 실패했습니다.");
     }
 
@@ -303,21 +312,21 @@ public class AuthService {
           AdminUser a = existing.get();
           int attempts = loginAdminService.incrementFailure(a.getId(), maxFailedAttempts);
           if (attempts >= maxFailedAttempts) {
-            loginLogService.saveAsync(a.getId(), a.getEmail(), "FAIL", "ACCOUNT_DISABLED", clientIp, userAgent);
+            loginLogService.saveAsync(a.getId(), a.getEmail(), "FAIL", "ACCOUNT_DISABLED", clientIp, userAgent, currentSiteId());
             throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_DISABLED", "계정이 비활성화되었습니다.");
           }
-          loginLogService.saveAsync(a.getId(), a.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent);
+          loginLogService.saveAsync(a.getId(), a.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
           throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
               "비밀번호 " + attempts + "회 실패 하셨습니다. " + maxFailedAttempts + "회 실패 시 계정 비활성화됩니다.");
         }
-        loginLogService.saveAsync(null, request.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent);
+        loginLogService.saveAsync(null, request.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
         throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
             "ID or password가 일치하지 않습니다.");
       }
       // FAIL (퇴사자/비회원 등) — 기존 계정 있으면 is_active false 처리
       existing.ifPresent(a -> loginAdminService.deactivateUser(a.getId()));
       Long userId = existing.map(AdminUser::getId).orElse(null);
-      loginLogService.saveAsync(userId, request.getEmail(), "FAIL", "ACCESS_DENIED", clientIp, userAgent);
+      loginLogService.saveAsync(userId, request.getEmail(), "FAIL", "ACCESS_DENIED", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
     }
 
@@ -325,7 +334,7 @@ public class AuthService {
     if (existing.isEmpty()) {
       AdminUser newUser = buildNewSsoUser(request.getEmail(), sso);
       loginAdminService.saveNewSsoUser(newUser);
-      loginLogService.saveAsync(null, request.getEmail(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent);
+      loginLogService.saveAsync(null, request.getEmail(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
     }
 
@@ -336,7 +345,7 @@ public class AuthService {
     if (sso.deptCode() != null && !sso.deptCode().equals(admin.getDeptCode())) {
       loginAdminService.updateDeptChange(
           admin.getId(), sso.deptCode(), sso.deptName(), sso.userName());
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "DEPT_CHANGED", clientIp, userAgent);
+      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "DEPT_CHANGED", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
     }
 
@@ -348,12 +357,12 @@ public class AuthService {
 
     // 승인 대기 확인
     if (PENDING_ROLE.equals(admin.getRole())) {
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent);
+      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
     }
 
     // SSO 로그인 성공 이력 저장
-    loginLogService.saveAsync(admin.getId(), admin.getEmail(), "SUCCESS", null, clientIp, userAgent);
+    loginLogService.saveAsync(admin.getId(), admin.getEmail(), "SUCCESS", null, clientIp, userAgent, currentSiteId());
 
     // 기존 TOTP 흐름과 동일
     if (!totpEnabled) {
@@ -410,6 +419,9 @@ public class AuthService {
 
   /* 1차 로그인 임시 로그인(2차 로그인 사용 시) */
   private LoginResponse tempLoginResponse(HttpServletRequest req, AdminUser admin){
+    // 새 2FA 시도 시작 — 이전 시도의 TOTP 실패 카운터 초기화
+    loginAdminService.resetTotpFailure(admin.getId());
+
     String tempToken = null;
     if(redisEnabled){
       startMfa(req, admin.getEmail());

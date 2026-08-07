@@ -5,7 +5,7 @@ spring:
     driver-class-name: org.postgresql.Driver
     url: jdbc:postgresql://localhost:5432/bo
     username: postgres
-    password: "1234"
+    password: ${DB_PASSWORD:1234}
   jpa:
     show-sql: true
     hibernate:
@@ -16,8 +16,8 @@ spring:
   mail:
     host: 10.153.2.44
     port: 25
-    username: test
-    password: test
+    username: ${MAIL_USERNAME:test}
+    password: ${MAIL_PASSWORD:test}
     properties:
       mail:
         smtp:
@@ -71,13 +71,13 @@ ls:
     enabled: false   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
   lse:
     inApi:
-      connectPortalEncKey: LegacyConnectKeyText(!#@)2532!#@
-      connectPortalIv: IV($&*)2516($&*)
+      connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
+      connectPortalIv: ${CONNECT_PORTAL_IV:}
       ctpFileDownApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/download
       ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : "AIzaSyBkHvBn_MG-VWQd2C8-UA3PJBniWPy5QNk"
-      recapchaKey : "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe"
+      recapchaKey: ${RECAPTCHA_SECRET:6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe}
       azure-search:
         api-url: ${AZURE_SEARCH_API_URL:}
         api-key: ${AZURE_SEARCH_API_KEY:}

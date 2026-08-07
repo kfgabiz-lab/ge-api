@@ -45,7 +45,7 @@ public class ErrorLog {
   @Column(columnDefinition = "TEXT")
     private String stackTrace;
 
-    /** 요청자 IP (X-Forwarded-For 우선) */
+    /** 요청자 IP (getRemoteAddr() 기준) */
   @Column(length = 50)
     private String clientIp;
 
@@ -53,13 +53,18 @@ public class ErrorLog {
   @Column(length = 100)
     private String loginUser;
 
+    /** 요청 사이트 ID (X-Site-Id 헤더 기준, 헤더 없으면 null) */
+  @Column(name = "site_id")
+    private Long siteId;
+
     /** 발생일시 */
   @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
   @Builder
     public ErrorLog(String errorCode, Integer httpStatus, String method, String requestUrl,
-                    String message, String stackTrace, String clientIp, String loginUser) {
+                    String message, String stackTrace, String clientIp, String loginUser,
+                    Long siteId) {
     this.errorCode = errorCode;
     this.httpStatus = httpStatus;
     this.method = method;
@@ -68,6 +73,7 @@ public class ErrorLog {
     this.stackTrace = stackTrace;
     this.clientIp = clientIp;
     this.loginUser = loginUser;
+    this.siteId = siteId;
     this.createdAt = OffsetDateTime.now();
   }
 }

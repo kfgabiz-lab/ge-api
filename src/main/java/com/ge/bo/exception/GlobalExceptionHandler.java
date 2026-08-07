@@ -1,5 +1,6 @@
 package com.ge.bo.exception;
 
+import com.ge.bo.common.context.SiteContext;
 import com.ge.bo.service.ErrorLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -46,7 +47,16 @@ public class GlobalExceptionHandler {
   }
 
   /**
+   * request 스레드에서 현재 사이트 ID 추출
+   * @Async 별도 스레드에는 SiteContext(ThreadLocal)가 전파되지 않으므로 호출 전에 미리 추출해서 파라미터로 전달해야 함
+   */
+  private Long currentSiteId() {
+    return SiteContext.getSiteId().orElse(null);
+  }
+
+  /**
    * JSON 파싱 실패 등 HttpMessageNotReadableException 예외 처리 (400 Bad Request)
+   * 예외 원문(패키지/클래스/필드 구조 노출)은 로그에만 남기고 클라이언트 응답에는 포함하지 않는다
    */
   @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
   public ResponseEntity<Map<String, Object>> handleHttpMessageNotReadableException(
@@ -60,11 +70,10 @@ public class GlobalExceptionHandler {
     body.put("status", 400);
     body.put("error", "MALFORMED_JSON");
     body.put("message", message);
-    body.put("detail", ex.getMessage());
     body.put("timestamp", LocalDateTime.now().toString());
 
     // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
-    errorLogService.saveAsync(request, 400, "MALFORMED_JSON", message, null, extractLoginUser());
+    errorLogService.saveAsync(request, 400, "MALFORMED_JSON", message, null, extractLoginUser(), currentSiteId());
 
     return ResponseEntity.badRequest().body(body);
   }
@@ -91,7 +100,7 @@ public class GlobalExceptionHandler {
     body.put("timestamp", LocalDateTime.now().toString());
 
     // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
-    errorLogService.saveAsync(request, 400, "VALIDATION_FAILED", message, null, extractLoginUser());
+    errorLogService.saveAsync(request, 400, "VALIDATION_FAILED", message, null, extractLoginUser(), currentSiteId());
 
     return ResponseEntity.badRequest().body(body);
   }
@@ -122,7 +131,7 @@ public class GlobalExceptionHandler {
     body.put("timestamp", LocalDateTime.now().toString());
 
     // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
-    errorLogService.saveAsync(request, 400, "VALIDATION_FAILED", message, null, extractLoginUser());
+    errorLogService.saveAsync(request, 400, "VALIDATION_FAILED", message, null, extractLoginUser(), currentSiteId());
 
     return ResponseEntity.badRequest().body(body);
   }
@@ -144,7 +153,7 @@ public class GlobalExceptionHandler {
 
     // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
     errorLogService.saveAsync(
-        request, ex.getStatus().value(), ex.getErrorCode(), ex.getMessage(), null, extractLoginUser());
+        request, ex.getStatus().value(), ex.getErrorCode(), ex.getMessage(), null, extractLoginUser(), currentSiteId());
 
     return ResponseEntity.status(ex.getStatus()).body(body);
   }
@@ -170,7 +179,7 @@ public class GlobalExceptionHandler {
     body.put("timestamp", LocalDateTime.now().toString());
 
     // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
-    errorLogService.saveAsync(request, 403, "FORBIDDEN", message, null, extractLoginUser());
+    errorLogService.saveAsync(request, 403, "FORBIDDEN", message, null, extractLoginUser(), currentSiteId());
 
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(body);
   }
@@ -193,7 +202,7 @@ public class GlobalExceptionHandler {
     body.put("timestamp", LocalDateTime.now().toString());
 
     // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
-    errorLogService.saveAsync(request, 409, "DATA_INTEGRITY", message, null, extractLoginUser());
+    errorLogService.saveAsync(request, 409, "DATA_INTEGRITY", message, null, extractLoginUser(), currentSiteId());
 
     return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
   }
@@ -217,7 +226,7 @@ public class GlobalExceptionHandler {
     body.put("timestamp", LocalDateTime.now().toString());
 
     // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
-    errorLogService.saveAsync(request, 400, "INVALID_PARAMETER_TYPE", message, null, extractLoginUser());
+    errorLogService.saveAsync(request, 400, "INVALID_PARAMETER_TYPE", message, null, extractLoginUser(), currentSiteId());
 
     return ResponseEntity.badRequest().body(body);
   }
@@ -254,11 +263,11 @@ public class GlobalExceptionHandler {
       if (statusCode.value() >= 500) {
         log.error("표준 웹 예외 발생 ({}): {}", statusCode.value(), originalDetail, ex);
         // 오류로그 비동기 저장 (5xx — 스택트레이스 포함)
-        errorLogService.saveAsync(request, statusCode.value(), errorCode, message, ex, extractLoginUser());
+        errorLogService.saveAsync(request, statusCode.value(), errorCode, message, ex, extractLoginUser(), currentSiteId());
       } else {
         log.warn("표준 웹 예외 발생 ({}): {}", statusCode.value(), originalDetail);
         // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
-        errorLogService.saveAsync(request, statusCode.value(), errorCode, message, null, extractLoginUser());
+        errorLogService.saveAsync(request, statusCode.value(), errorCode, message, null, extractLoginUser(), currentSiteId());
       }
 
       return ResponseEntity.status(statusCode).body(body);
@@ -275,7 +284,7 @@ public class GlobalExceptionHandler {
     body.put("timestamp", LocalDateTime.now().toString());
 
     // 오류로그 비동기 저장 (500 — 스택트레이스 포함)
-    errorLogService.saveAsync(request, 500, "INTERNAL_SERVER_ERROR", message, ex, extractLoginUser());
+    errorLogService.saveAsync(request, 500, "INTERNAL_SERVER_ERROR", message, ex, extractLoginUser(), currentSiteId());
 
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
   }

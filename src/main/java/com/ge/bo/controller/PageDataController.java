@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.annotation.ApiLinkedEntity;
 import com.ge.bo.common.excel.ExcelService;
+import com.ge.bo.common.util.ClientIpUtils;
 import com.ge.bo.dto.FieldPatchRequest;
 import com.ge.bo.dto.PageDataListResponse;
 import com.ge.bo.dto.PageDataRequest;
@@ -224,11 +225,7 @@ public class PageDataController {
         String createdBy = adminRepository.findByEmail(email)
                 .map(u -> String.valueOf(u.getId()))
                 .orElse(null);
-        String forwardedFor = request.getHeader("X-Forwarded-For");
-        String ipAddress = (forwardedFor != null && !forwardedFor.isBlank())
-                ? forwardedFor.split(",")[0].trim()
-                : request.getRemoteAddr();
-        downloadLogService.saveAsync(slug, reason, isCsv ? "csv" : "xlsx", createdBy, ipAddress);
+        downloadLogService.saveAsync(slug, reason, isCsv ? "csv" : "xlsx", createdBy, ClientIpUtils.resolve(request));
     }
 
     return ResponseEntity.ok()

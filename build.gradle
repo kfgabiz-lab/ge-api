@@ -82,6 +82,9 @@ dependencies {
 
     // JSON 처리
     implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+    // 로그인 엔드포인트 IP 단위 Rate Limiting (토큰버킷) — LoginRateLimitFilter에서 사용
+    implementation 'com.bucket4j:bucket4j_jdk17-core:8.14.0'
 }
 
 tasks.named('test') {

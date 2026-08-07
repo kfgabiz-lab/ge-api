@@ -56,7 +56,7 @@ public class ContactUsInquiryService {
      * 문의 접수 처리 — 공통코드 검증 → CTP(Salesforce) 전송 → 결과 반환
      *
      * @param request  폼 요청 (Bean Validation 통과 후 진입)
-     * @param clientIp 요청자 IP (컨트롤러에서 X-Forwarded-For 우선 추출) — DB 저장 비활성화로 현재 미사용
+     * @param clientIp 요청자 IP (컨트롤러에서 getRemoteAddr() 기준 추출) — DB 저장 비활성화로 현재 미사용
      * @param siteId   X-Site-Id 헤더(devices-tree/productManager-data 조회 시 site 필터링용)
      * @return CTP 전송 결과
      */

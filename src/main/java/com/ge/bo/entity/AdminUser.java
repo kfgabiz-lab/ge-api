@@ -60,6 +60,10 @@ public class AdminUser {
     @Column(nullable = false)
     private int failedLoginAttempts = 0;
 
+  @Builder.Default
+    @Column
+    private Integer totpFailedAttempts = 0;
+
   private LocalDateTime lockedUntil;
 
   /** TOTP 비밀키 (Base32 인코딩, 최초 QR 등록 시 생성) */

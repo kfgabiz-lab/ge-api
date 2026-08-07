@@ -26,7 +26,7 @@ import java.util.regex.Pattern;
  * - @Async: 메인 응답과 분리하여 비동기로 DB에 저장
  *
  * 사용법:
- *   transactionLogService.saveAsync(method, requestUrl, requestBody, httpStatus, clientIp, durationMs);
+ *   transactionLogService.saveAsync(method, requestUrl, requestBody, httpStatus, clientIp, durationMs, loginUser, siteId);
  */
 @Slf4j
 @Service
@@ -114,10 +114,11 @@ public class TransactionLogService {
    * @param clientIp    클라이언트 IP
    * @param durationMs  처리 시간(ms)
    * @param loginUser   로그인 사용자 이메일 (요청 스레드에서 미리 추출 — @Async 스레드 SecurityContext 미전파 방지)
+   * @param siteId      요청 사이트 ID (요청 스레드에서 SiteContext.getSiteId()로 미리 추출 — 위와 동일 사유)
    */
   @Async
   public void saveAsync(String method, String requestUrl, String requestBody,
-      int httpStatus, String clientIp, long durationMs, String loginUser) {
+      int httpStatus, String clientIp, long durationMs, String loginUser, Long siteId) {
     try {
       TransactionLog transactionLog = TransactionLog.builder()
           .actionType(resolveActionType(method))
@@ -128,6 +129,7 @@ public class TransactionLogService {
           .loginUser(loginUser)
           .clientIp(clientIp)
           .durationMs(durationMs)
+          .siteId(siteId)
           .build();
 
       transactionLogRepository.save(transactionLog);

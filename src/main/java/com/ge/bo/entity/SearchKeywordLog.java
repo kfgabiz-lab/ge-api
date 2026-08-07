@@ -48,7 +48,7 @@ public class SearchKeywordLog {
     @Column(name = "site_id")
     private Long siteId;
 
-    /** 요청자 IP (X-Forwarded-For 우선) */
+    /** 요청자 IP (getRemoteAddr() 기준) */
     @Column(name = "created_ip", length = 50)
     private String createdIp;
 

@@ -37,7 +37,7 @@ public class LoginLog {
     @Column(length = 100)
     private String failReason;
 
-    /** 클라이언트 IP (X-Forwarded-For 우선) */
+    /** 클라이언트 IP (getRemoteAddr() 기준) */
     @Column(length = 50)
     private String clientIp;
 
@@ -45,19 +45,24 @@ public class LoginLog {
     @Column(length = 500)
     private String userAgent;
 
+    /** 요청 사이트 ID (X-Site-Id 헤더 기준, 헤더 없으면 null) */
+    @Column(name = "site_id")
+    private Long siteId;
+
     /** 시도 일시 */
     @Column(nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
     @Builder
     public LoginLog(Long adminUserId, String loginEmail, String status,
-                    String failReason, String clientIp, String userAgent) {
+                    String failReason, String clientIp, String userAgent, Long siteId) {
         this.adminUserId = adminUserId;
         this.loginEmail = loginEmail;
         this.status = status;
         this.failReason = failReason;
         this.clientIp = clientIp;
         this.userAgent = userAgent;
+        this.siteId = siteId;
         this.createdAt = OffsetDateTime.now();
     }
 }
