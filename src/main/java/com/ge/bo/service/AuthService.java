@@ -206,7 +206,13 @@ public class AuthService {
       throw BusinessException.unauthorized("유효하지 않은 Refresh Token입니다.");
     }
 
-    String email = jwtTokenProvider.getEmailFromToken(refreshToken);
+    String email;
+    try {
+      email = jwtTokenProvider.getEmailFromRefreshToken(refreshToken);
+    } catch (Exception e) {
+      throw BusinessException.unauthorized("유효하지 않은 Refresh Token입니다.");
+    }
+
     AdminUser admin = adminRepository.findByEmail(email)
         .orElseThrow(() -> BusinessException.unauthorized("사용자를 찾을 수 없습니다."));
 

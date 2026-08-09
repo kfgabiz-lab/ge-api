@@ -1,13 +1,11 @@
 package com.ge.bo.service;
 
-import com.ge.bo.common.util.ClientIpUtils;
 import com.ge.bo.dto.ErrorLogDetailResponse;
 import com.ge.bo.dto.ErrorLogResponse;
 import com.ge.bo.entity.ErrorLog;
 import com.ge.bo.exception.ErrorCode;
 import com.ge.bo.repository.ErrorLogRepository;
 import jakarta.persistence.criteria.Predicate;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -102,9 +100,11 @@ public class ErrorLogService {
      * 오류로그 비동기 저장
      *
      * 사용법:
-     *   errorLogService.saveAsync(request, 500, "INTERNAL_SERVER_ERROR", "서버 오류", exception);
+     *   errorLogService.saveAsync(request.getMethod(), url, clientIp, 500, "INTERNAL_SERVER_ERROR", "서버 오류", exception, loginUser, siteId);
      *
-     * @param request    HttpServletRequest (URL, 메서드, IP 추출용)
+     * @param method     HTTP 메서드 (요청 스레드에서 미리 추출 — 아래 siteId와 동일한 이유)
+     * @param requestUrl 요청 URL(+쿼리스트링) (요청 스레드에서 미리 추출)
+     * @param clientIp   클라이언트 IP (요청 스레드에서 미리 추출)
      * @param httpStatus HTTP 상태코드
      * @param errorCode  에러코드 문자열
      * @param message    에러 메시지
@@ -113,19 +113,18 @@ public class ErrorLogService {
      *                   @Async 스레드에는 ThreadLocal이 전파되지 않으므로 반드시 파라미터로 전달)
      */
   @Async
-    public void saveAsync(HttpServletRequest request, int httpStatus,
+    public void saveAsync(String method, String requestUrl, String clientIp, int httpStatus,
                           String errorCode, String message, Exception ex, String loginUser,
                           Long siteId) {
     try {
-            // 변수로 분리하여 IDE null 안전성 경고 해소
       ErrorLog errorLog = ErrorLog.builder()
                     .httpStatus(httpStatus)
                     .errorCode(errorCode)
-                    .method(request != null ? request.getMethod() : null)
-                    .requestUrl(request != null ? getFullUrl(request) : null)
+                    .method(method)
+                    .requestUrl(requestUrl)
                     .message(message)
                     .stackTrace(httpStatus >= 500 ? getStackTrace(ex) : null) // 500 이상만 스택트레이스 저장
-                    .clientIp(request != null ? ClientIpUtils.resolve(request) : null)
+                    .clientIp(clientIp)
                     .loginUser(loginUser) // request 스레드에서 미리 추출한 이메일 사용 (@Async 스레드 SecurityContext 미전파 방지)
                     .siteId(siteId) // 위와 동일 — request 스레드에서 미리 추출한 SiteContext 값
                     .build();
@@ -134,15 +133,6 @@ public class ErrorLogService {
             // 로그 저장 실패가 메인 기능에 영향을 주지 않도록 예외를 삼킴
       log.warn("오류로그 저장 실패: {}", e.getMessage());
     }
-  }
-
-    /** 요청 전체 URL 조합 (쿼리스트링 포함) */
-  private String getFullUrl(HttpServletRequest request) {
-    String url = request.getRequestURI();
-    String query = request.getQueryString();
-        // URL이 500자를 초과할 경우 잘라냄
-    String fullUrl = (query != null) ? url + "?" + query : url;
-    return fullUrl.length() > 500 ? fullUrl.substring(0, 500) : fullUrl;
   }
 
     /** 예외 스택트레이스를 문자열로 변환 */

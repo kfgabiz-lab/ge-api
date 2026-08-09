@@ -9,6 +9,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -49,6 +50,7 @@ public class PageTemplateController {
 
     /** 파일만 생성 (DB 저장 없음) — 방식 B (생성 방식) */
   @PostMapping("/generate")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
     public ResponseEntity<Map<String, String>> generate(@Valid @RequestBody PageTemplateGenerateRequest request) {
     String pageUrl = pageTemplateService.generateFile(request.getSlug(), request.getTsxCode(),
                 request.getTemplateType(), request.getFileName());
@@ -57,12 +59,14 @@ public class PageTemplateController {
 
     /** 생성 (DB + TSX 파일) */
   @PostMapping
+    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
     public ResponseEntity<PageTemplateResponse> create(@Valid @RequestBody PageTemplateRequest request) {
     return ResponseEntity.status(HttpStatus.CREATED).body(pageTemplateService.create(request));
   }
 
     /** 수정 (DB + TSX 파일 덮어쓰기) */
   @PutMapping("/{id}")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
     public ResponseEntity<PageTemplateResponse> update(
             @PathVariable Long id,
             @Valid @RequestBody PageTemplateRequest request) {
@@ -71,6 +75,7 @@ public class PageTemplateController {
 
     /** 삭제 (DB + TSX 파일 삭제) */
   @DeleteMapping("/{id}")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
     pageTemplateService.delete(id);
     return ResponseEntity.noContent().build();

@@ -1,5 +1,6 @@
 package com.ge.bo.service;
 
+import com.ge.bo.common.crypto.Aes256Utils;
 import com.ge.bo.dto.TransactionLogDetailResponse;
 import com.ge.bo.dto.TransactionLogResponse;
 import com.ge.bo.entity.TransactionLog;
@@ -19,6 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -34,6 +37,7 @@ import java.util.regex.Pattern;
 public class TransactionLogService {
 
   private final TransactionLogRepository transactionLogRepository;
+  private final Aes256Utils aes256Utils;
 
     /* ══════════ 목록 조회 ══════════ */
 
@@ -64,7 +68,7 @@ public class TransactionLogService {
     public TransactionLogDetailResponse getOne(Long id) {
         TransactionLog transactionLog = transactionLogRepository.findById(id)
                 .orElseThrow(ErrorCode.TRANSACTION_LOG_NOT_FOUND::toException);
-        return TransactionLogDetailResponse.from(transactionLog);
+        return TransactionLogDetailResponse.from(transactionLog, decryptSensitiveFields(transactionLog.getRequestBody()));
     }
 
     /* ══════════ 동적 필터 ══════════ */
@@ -99,9 +103,16 @@ public class TransactionLogService {
 
     /* ══════════ 비동기 저장 ══════════ */
 
-  /** 민감 정보 필드 마스킹 패턴 (password, passwordHash, passwd, pwd, secret, credentials) */
+  /** 민감 정보 필드 마스킹 패턴(비가역) — 자격증명류는 복호화해서 볼 필요가 없어 계속 **** 처리 */
   private static final Pattern SENSITIVE_PATTERN = Pattern.compile(
-      "(?i)(\"(?:password|passwordHash|passwd|pwd|secret|credentials)\"\\s*:\\s*\")([^\"]*)(\")",
+      "(?i)(\"(?:password|passwordHash|passwd|pwd|secret|credentials|confirmPassword)\"\\s*:\\s*\")([^\"]*)(\")",
+      Pattern.CASE_INSENSITIVE);
+
+  /** 개인정보 필드 암호화 패턴(가역, AES256) — FO 리드캡처 폼(Contact Us/Training/Newsletter) 실제 필드명 전수 */
+  private static final Pattern PII_ENCRYPT_PATTERN = Pattern.compile(
+      "(?i)(\"(?:email|firstName|lastName|studentName|companyName|company|phone|cellPhone|jobTitle|"
+      + "streetAddress|address2|apartment|city|stateProvince|state|zipCode|zip|contactPerson|contactDetails)\""
+      + "\\s*:\\s*\")([^\"]*)(\")",
       Pattern.CASE_INSENSITIVE);
 
   /**
@@ -124,7 +135,7 @@ public class TransactionLogService {
           .actionType(resolveActionType(method))
           .method(method)
           .requestUrl(requestUrl)
-          .requestBody(maskSensitiveFields(requestBody))
+          .requestBody(encryptSensitiveFields(maskSensitiveFields(requestBody)))
           .httpStatus(httpStatus)
           .loginUser(loginUser)
           .clientIp(clientIp)
@@ -155,6 +166,53 @@ public class TransactionLogService {
       return body;
     }
     return SENSITIVE_PATTERN.matcher(body).replaceAll("$1****$3");
+  }
+
+  /**
+   * 개인정보 필드값을 AES256으로 암호화 (저장 시점).
+   * 암호화 키(CONNECT_PORTAL_ENC_KEY/IV) 미설정 등으로 개별 필드 암호화가 실패해도
+   * 로그 저장 자체가 막히면 안 되므로, 그 필드만 **** 마스킹으로 대체한다.
+   */
+  private String encryptSensitiveFields(String body) {
+    return transformSensitiveFields(body, value -> {
+      try {
+        return aes256Utils.encrypt(value);
+      } catch (Exception e) {
+        log.warn("PII 필드 암호화 실패, 마스킹으로 대체: {}", e.getMessage());
+        return "****";
+      }
+    });
+  }
+
+  /**
+   * 개인정보 필드값을 복호화 (조회 시점).
+   * 이 필드가 암호화 적용 이전(레거시)에 저장된 평문이면 복호화가 실패하므로,
+   * 그 경우 원문을 그대로 반환한다 — 과거 로그도 계속 볼 수 있어야 하기 때문.
+   */
+  private String decryptSensitiveFields(String body) {
+    return transformSensitiveFields(body, value -> {
+      try {
+        return aes256Utils.decrypt(value);
+      } catch (Exception e) {
+        return value;
+      }
+    });
+  }
+
+  private String transformSensitiveFields(String body, Function<String, String> transform) {
+    if (StringUtils.isBlank(body)) {
+      return body;
+    }
+    Matcher matcher = PII_ENCRYPT_PATTERN.matcher(body);
+    StringBuilder result = new StringBuilder();
+    while (matcher.find()) {
+      String value = matcher.group(2);
+      String replacement = value.isEmpty() ? value : transform.apply(value);
+      matcher.appendReplacement(result,
+          Matcher.quoteReplacement(matcher.group(1) + replacement + matcher.group(3)));
+    }
+    matcher.appendTail(result);
+    return result.toString();
   }
 
 }

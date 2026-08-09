@@ -1,5 +1,6 @@
 package com.ge.bo.service;
 
+import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.common.mail.MailService;
 import com.ge.bo.dto.EmailSendHisDetailResponse;
 import com.ge.bo.dto.EmailSendHisResponse;
@@ -32,6 +33,7 @@ public class EmailSendHisService {
     private final EmailSendHisRepository emailSendHisRepository;
     private final MailService mailService;
     private final AuditorAware<String> auditorAware;
+    private final SiteTimeZoneResolver siteTimeZoneResolver;
 
     /* ══════════ 목록 조회 ══════════ */
 
@@ -109,8 +111,8 @@ public class EmailSendHisService {
                 e.getEmailSendDetailType(),
                 e.getRecipientEmail(),
                 e.getSendStatus(),
-                e.getCreatedAt(),
-                resendAt(e));
+                toDisplayZone(e.getCreatedAt()),
+                toDisplayZone(resendAt(e)));
     }
 
     private EmailSendHisDetailResponse toDetailResponse(EmailSendHis e) {
@@ -122,12 +124,23 @@ public class EmailSendHisService {
                 e.getSubject(),
                 e.getContent(),
                 e.getSendStatus(),
-                e.getCreatedAt(),
-                resendAt(e));
+                toDisplayZone(e.getCreatedAt()),
+                toDisplayZone(resendAt(e)));
     }
 
     /** updated_at이 created_at보다 늦으면(=재발송됨) 그 시각을, 아니면 null을 반환 */
     private OffsetDateTime resendAt(EmailSendHis e) {
         return e.getUpdatedAt() != null && e.getUpdatedAt().isAfter(e.getCreatedAt()) ? e.getUpdatedAt() : null;
+    }
+
+    /**
+     * DB에서 읽어온 시각(항상 UTC)을 응답으로 내보내기 직전에 사이트 시간대로 다시 환산한다.
+     * 같은 순간을 가리키는 값이지만, 표시되는 시/분은 사이트 시간대 기준으로 바뀐다.
+     */
+    private OffsetDateTime toDisplayZone(OffsetDateTime value) {
+        if (value == null) {
+            return null;
+        }
+        return value.atZoneSameInstant(siteTimeZoneResolver.resolveFromContext()).toOffsetDateTime();
     }
 }

@@ -19,13 +19,13 @@ public record TransactionLogDetailResponse(
         Long durationMs,
         OffsetDateTime createdAt) {
 
-    public static TransactionLogDetailResponse from(TransactionLog t) {
+    public static TransactionLogDetailResponse from(TransactionLog t, String decryptedRequestBody) {
         return new TransactionLogDetailResponse(
                 t.getId(),
                 t.getActionType(),
                 t.getMethod(),
                 t.getRequestUrl(),
-                t.getRequestBody(),
+                decryptedRequestBody,
                 t.getHttpStatus(),
                 t.getLoginUser(),
                 t.getClientIp(),

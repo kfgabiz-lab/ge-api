@@ -49,6 +49,7 @@ public class JwtTokenProvider {
   public String generateRefreshToken(String email) {
     return Jwts.builder()
                 .subject(email)
+                .claim("type", "REFRESH")
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + jwtRefreshExpirationMs * 1000))
                 .signWith(getSigningKey())
@@ -105,6 +106,14 @@ public class JwtTokenProvider {
     Claims claims = parseToken(token);
     if (!"TOTP_PENDING".equals(claims.get("type", String.class))) {
       throw new io.jsonwebtoken.JwtException("TOTP_PENDING 토큰이 아닙니다.");
+    }
+    return claims.getSubject();
+  }
+
+  public String getEmailFromRefreshToken(String token) {
+    Claims claims = parseToken(token);
+    if (!"REFRESH".equals(claims.get("type", String.class))) {
+      throw new io.jsonwebtoken.JwtException("REFRESH 토큰이 아닙니다.");
     }
     return claims.getSubject();
   }

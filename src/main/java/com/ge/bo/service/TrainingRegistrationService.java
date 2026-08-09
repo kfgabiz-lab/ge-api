@@ -1,6 +1,6 @@
 package com.ge.bo.service;
 
-import com.ge.bo.common.mail.MailService;
+import com.ge.bo.common.mail.MailSendEvent;
 import com.ge.bo.dto.TrainingRegistrationRequest;
 import com.ge.bo.dto.TrainingRegistrationResponse;
 import com.ge.bo.entity.CodeDetail;
@@ -13,6 +13,7 @@ import jakarta.persistence.Query;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -61,7 +62,7 @@ public class TrainingRegistrationService {
     private final CodeDetailRepository codeDetailRepository;
     private final RecaptchaService recaptchaService;
     private final PageDataService pageDataService;
-    private final MailService mailService;
+    private final ApplicationEventPublisher eventPublisher;
     private final EntityManager entityManager;
 
     /**
@@ -119,12 +120,14 @@ public class TrainingRegistrationService {
         // 신청자 + 교육과정별 담당자 각자에게 개별 발송(한 메일에 여러 수신자를 넣지 않는다)
         // 내용은 curriculumId/sessionId만 담는 임시 템플릿 — 추후 교체 예정
         // 발송 이력 저장(성공/실패 모두)은 MailService 가 각 발송 건마다 공통으로 처리
+        // 실제 발송은 트랜잭션 커밋 후 MailSendEventListener 가 비동기로 수행(요청 스레드/DB 커넥션 점유 방지)
         String trainingCourseCode = findTrainingCourseCode(request.curriculumId());
         String subject = "Training Registration Test";
         String content = "<p>curriculumId: %d</p><p>sessionId: %d</p>".formatted(
                 request.curriculumId(), request.sessionId());
         for (String recipient : buildRecipients(request.email(), resolveManagerEmail(trainingCourseCode))) {
-            mailService.sendMail(recipient, subject, content, EMAIL_SEND_TYPE_REGULAR_TRAINING, trainingCourseCode, null);
+            eventPublisher.publishEvent(new MailSendEvent(recipient, subject, content,
+                    EMAIL_SEND_TYPE_REGULAR_TRAINING, trainingCourseCode, null));
         }
 
         return TrainingRegistrationResponse.success(saved.getId());

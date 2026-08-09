@@ -1,7 +1,7 @@
 package com.ge.bo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ge.bo.common.mail.MailService;
+import com.ge.bo.common.mail.MailSendEvent;
 import com.ge.bo.dto.TrainingRequestSubmitRequest;
 import com.ge.bo.dto.TrainingRequestSubmitResponse;
 import com.ge.bo.entity.CodeDetail;
@@ -12,6 +12,7 @@ import com.ge.bo.repository.TrainingRequestRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,7 +47,7 @@ public class TrainingRequestService {
     private final TrainingRequestRepository trainingRequestRepository;
     private final RecaptchaService recaptchaService;
     private final ObjectMapper objectMapper;
-    private final MailService mailService;
+    private final ApplicationEventPublisher eventPublisher;
     private final CodeDetailRepository codeDetailRepository;
 
     /**
@@ -120,11 +121,13 @@ public class TrainingRequestService {
         // 신청자 + 담당자 각자에게 개별 발송(한 메일에 여러 수신자를 넣지 않는다)
         // 내용은 id/trainingTrack만 담는 임시 템플릿 — 추후 교체 예정
         // 발송 이력 저장(성공/실패 모두)은 MailService 가 각 발송 건마다 공통으로 처리
+        // 실제 발송은 트랜잭션 커밋 후 MailSendEventListener 가 비동기로 수행(요청 스레드/DB 커넥션 점유 방지)
         String trainingCourseCode = toTrainingCourseCode(request.trainingTrack());
         String subject = "Training Request Test";
         String content = "<p>id: %d</p><p>trainingTrack: %s</p>".formatted(saved.getId(), request.trainingTrack());
         for (String recipient : buildRecipients(request.email(), resolveManagerEmail())) {
-            mailService.sendMail(recipient, subject, content, EMAIL_SEND_TYPE_IRREGULAR_TRAINING, trainingCourseCode, null);
+            eventPublisher.publishEvent(new MailSendEvent(recipient, subject, content,
+                    EMAIL_SEND_TYPE_IRREGULAR_TRAINING, trainingCourseCode, null));
         }
 
         return new TrainingRequestSubmitResponse(saved.getId());
