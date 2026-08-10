@@ -34,12 +34,12 @@ spring:
       timeout: 3s
   session:
     store-type: none
-    timeout: 1d
-    redis:
-      namespace: nahpdev:session
-      flush-mode: on-save
-      save-mode: on-set-attribute
-      repository-type: indexed
+#    timeout: 1d
+#    redis:
+#      namespace: nahpdev:session
+#      flush-mode: on-save
+#      save-mode: on-set-attribute
+#      repository-type: indexed
   cache:
     type: none
 
