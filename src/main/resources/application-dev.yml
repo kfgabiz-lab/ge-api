@@ -81,7 +81,7 @@ logging:
 ls:
   isApiLogin: true
   file-storage: local   # local, blob
-  redis-enabled: true
+  redis-enabled: false
   lse:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
