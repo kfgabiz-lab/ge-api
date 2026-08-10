@@ -33,15 +33,15 @@ spring:
       connect-timeout: 5s
       timeout: 3s
   session:
-    store-type: none
-#    timeout: 1d
-#    redis:
-#      namespace: nahpdev:session
-#      flush-mode: on-save
-#      save-mode: on-set-attribute
-#      repository-type: indexed
+    store-type: redis
+    timeout: 1d
+    redis:
+      namespace: nahpdev:session
+      flush-mode: on-save
+      save-mode: on-set-attribute
+      repository-type: indexed
   cache:
-    type: none
+    type: redis
 
 server:
   servlet:
@@ -81,7 +81,7 @@ logging:
 ls:
   isApiLogin: true
   file-storage: local   # local, blob
-  redis-enabled: false
+  redis-enabled: true
   lse:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
