@@ -114,10 +114,18 @@ public class SsqContentsBatchService {
         List<SsqFileInfoRow> files = fileRows != null ? fileRows : List.of();
 
         if (docRows == null) {
-            // 문서 IF만 있고 카테고리 IF가 없음 — 카테고리가 파일보다 늦게 오는 건 실시간 델타에서 정상적인
-            // 타이밍이라 격리(E)하지 않고 if_result='N'인 채로 그대로 둔다. 여기서 E로 격리하면
-            // 나중에 문서 IF가 와도 그 파일 정보를 다시 안 읽어 영구 유실되므로, 다음 배치 때 재시도되게 둔다.
-            tally.reportNotes.add("문서 IF 미도착으로 이번 회차 보류(파일 " + files.size() + "건, 다음 배치에서 재시도): doc_id=" + docId);
+            // 문서 IF만 있고 카테고리 IF가 없음 — EAI는 문서가 갱신될 때 문서 IF와 파일 IF를 항상 함께
+            // 재전송하므로(단독으로 파일만 보내는 경우 없음, 2026-08-05 확인), 지금 문서 IF 없이 파일만 있는
+            // 이 행들은 격리해도 나중에 문서 IF가 정상적으로 오면 그때 파일도 새 물리 행으로 함께 재전송되어
+            // 다시 처리된다.
+            for (SsqFileInfoRow file : files) {
+                saveFailRow(batchId, "if_r_ssq_file_info", String.valueOf(docId), "doc_id=" + docId + ", file_id=" + file.fileId(),
+                    "CONVERT", "HEADER_MISSING", "문서 IF(if_r_ssq_document)가 아직 도착하지 않아 파일만으로는 문서를 만들 수 없음",
+                    Map.of("docId", docId, "fileId", String.valueOf(file.fileId())));
+            }
+            reader.markFileResultOnly(docId, "E");
+            tally.failedDocCount++;
+            tally.quarantineCount += files.size();
             return;
         }
 

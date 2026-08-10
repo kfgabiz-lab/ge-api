@@ -39,7 +39,6 @@ public class CertiContentsConverter {
 
     public ConversionResult convert(String certiNo, String bi, List<CertiRow> rows) {
         List<RowFailure> rowFailures = new ArrayList<>();
-        List<String> reportNotes = new ArrayList<>();
         String sourceDocKey = certiNo + "|" + bi;
 
         CertiRow first = rows.get(0);
@@ -158,14 +157,25 @@ public class CertiContentsConverter {
             .versions(List.of(version))
             .build();
 
+        // rowFailures에 직접 추가하는 이유: 결과를 통째로 새로 만들면 위에서 이미 쌓인 개별 실패 사유
+        // (예: LAST_CERTI_FILE 파일명 추출 실패)가 사라지고 이 요약 사유 하나만 남는 문제가 있었다.
+        // 이미 개별 사유가 있으면(예: NULL_KEY로 파일명 추출 실패가 기록됨) 중복되는 요약 사유는 생략한다.
         if (categoriesByPath.isEmpty()) {
-            reportNotes.add("카테고리(NAHP_LEVEL1_ID~NAHP_LEVEL3_ID) 등록이 0건인 인증서: " + sourceDocKey);
+            if (rowFailures.isEmpty()) {
+                rowFailures.add(new RowFailure(SOURCE_TABLE, sourceDocKey, "EMPTY_CATEGORY",
+                    "카테고리(NAHP_LEVEL1_ID~NAHP_LEVEL3_ID) 등록이 0건인 인증서", rawRow(first)));
+            }
+            return new ConversionResult(null, rowFailures, List.of());
         }
         if (files.isEmpty()) {
-            reportNotes.add("첨부 파일이 없는 인증서(LAST_CERTI_FILE 없음): " + sourceDocKey);
+            if (rowFailures.isEmpty()) {
+                rowFailures.add(new RowFailure(SOURCE_TABLE, sourceDocKey, "EMPTY_CONTENT",
+                    "첨부 파일이 없는 인증서(LAST_CERTI_FILE 없음)", rawRow(first)));
+            }
+            return new ConversionResult(null, rowFailures, List.of());
         }
 
-        return new ConversionResult(document, rowFailures, reportNotes);
+        return new ConversionResult(document, rowFailures, List.of());
     }
 
     private Map<String, Object> buildAttrs(CertiRow row) {

@@ -19,7 +19,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class NewsletterInsightsService {
 
-	//hub-spot 메일 미정으로 테스트
 	//메일 수신자 공통코드로 수정
 	private static final String EMAIL_RECIPIENT_GROUP_CODE      = "EMAIL_RECIPIENT"; //메일 수신자 공통코드
 	private static final String EMAIL_RECIPIENT_NEWSLETTER_CODE = "NEWSLETTER";
@@ -39,7 +38,9 @@ public class NewsletterInsightsService {
     	OffsetDateTime now = OffsetDateTime.now(siteTimeZoneResolver.resolve(siteId));
 
     	//메일 제목 및 내용 세팅
-        String subject = "New Newsletter Subscriber (%s)".formatted(now.format(SUBJECT_DATE_FORMAT));
+    	//운영 환경에서는 아래 subject 주석 해제 및 테스트 주석
+//        String subject = "New Newsletter Subscriber (%s)".formatted(now.format(SUBJECT_DATE_FORMAT));
+        String subject = "[테스트] New Newsletter Subscriber (%s)".formatted(now.format(SUBJECT_DATE_FORMAT));
         String content = buildMailContent(request);
 
         //1. 공통코드 EMAIL_RECIPIENT 에서 CODE가 NEWSLETTER 인 수신자 이메일 조회

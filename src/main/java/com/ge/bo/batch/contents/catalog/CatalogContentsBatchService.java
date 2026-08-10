@@ -122,10 +122,16 @@ public class CatalogContentsBatchService {
         List<IfCatalogFileInfo> fileRows = files != null ? files : List.of();
 
         if (headers == null) {
-            // 파일 IF만 있고 헤더 IF가 없음 — 헤더가 파일보다 늦게 오는 건 실시간 델타에서 정상적인 타이밍이라
-            // 격리(E)하지 않고 if_result='N'인 채로 그대로 둔다. 여기서 E로 격리하면 나중에
-            // 헤더가 와도 그 파일 정보를 다시 안 읽어 영구 유실되므로, 다음 배치 때 헤더와 함께 재시도되게 둔다.
-            tally.reportNotes.add("헤더 IF 미도착으로 이번 회차 보류(파일 " + fileRows.size() + "건, 다음 배치에서 재시도): ctlg_code=" + ctlgCode);
+            // 파일 IF만 있고 헤더 IF가 없음 — EAI는 문서가 갱신될 때 헤더와 파일을 항상 함께 재전송하므로
+            // 지금 헤더 없이 파일만 있는 이 행들은 격리해도 헤더가 정상적으로 오면 그때 파일도 새 물리 행으로 함께 재전송되어 다시 처리된다.
+            for (IfCatalogFileInfo fileRow : fileRows) {
+                saveFailRow(batchId, "if_r_catalog_file_info", ctlgCode, "ctlg_code=" + ctlgCode + ", data_code=" + fileRow.getDataCode(),
+                    "CONVERT", "HEADER_MISSING", "헤더 IF(if_r_catalog_info)가 아직 도착하지 않아 파일만으로는 문서를 만들 수 없음",
+                    Map.of("ctlgCode", ctlgCode, "dataCode", String.valueOf(fileRow.getDataCode())));
+            }
+            reader.markFileResultOnly(ctlgCode, "E");
+            tally.failedDocCount++;
+            tally.quarantineCount += fileRows.size();
             return;
         }
 
