@@ -91,8 +91,14 @@ public class AccessAuthorizationService {
       return;
     }
 
-    Menu menu = resolveMenuByPath(trimmedMenuPath, siteId)
-                .orElseThrow(() -> new BusinessException(HttpStatus.FORBIDDEN, "MENU_NOT_FOUND", "요청 경로에 해당하는 메뉴를 찾을 수 없습니다."));
+    List<Menu> longestMatches = resolveMenuCandidatesByPath(trimmedMenuPath, siteId);
+    if (longestMatches.isEmpty()) {
+      throw new BusinessException(HttpStatus.FORBIDDEN, "MENU_NOT_FOUND", "요청 경로에 해당하는 메뉴를 찾을 수 없습니다.");
+    }
+    if (longestMatches.size() > 1) {
+      return;
+    }
+    Menu menu = longestMatches.get(0);
 
     Long roleId = resolveRoleId(authentication)
                 .orElseThrow(() -> new BusinessException(HttpStatus.FORBIDDEN, "MENU_ACCESS_DENIED", "해당 메뉴에 대한 접근 권한이 없습니다."));
@@ -104,19 +110,19 @@ public class AccessAuthorizationService {
   }
 
     /**
-     * 요청 경로와 최장 접두어로 일치하는 BO 메뉴 조회
+     * 요청 경로와 최장 접두어로 일치하는 BO 메뉴 후보 조회
      * 경로 세그먼트 경계를 지켜서 매칭한다 (예: url="/admin/settings/users"는 요청 경로가
      * 정확히 같거나 "/admin/settings/users/"로 시작할 때만 일치 — "/admin/settings/users2" 같은 오탐 방지)
      * 같은 site_id + url을 가진 메뉴 행이 중복 등록되어 최장 길이 후보가 2개 이상이면
-     * 어느 쪽을 채택할지 모호하므로 임의 선택하지 않고 실패 처리한다(fail-safe: 모호하면 거부)
+     * role_menu 매핑을 판별할 수 없으므로 호출부(validateMenuAccess)에서 접근을 허용한다
      */
-  private Optional<Menu> resolveMenuByPath(String path, Long siteId) {
+  private List<Menu> resolveMenuCandidatesByPath(String path, Long siteId) {
     List<Menu> candidates = menuRepository.findBoMenusWithUrlBySite(siteId);
     List<Menu> matched = candidates.stream()
                 .filter(m -> matchesPath(path, m.getUrl()))
                 .toList();
     if (matched.isEmpty()) {
-      return Optional.empty();
+      return matched;
     }
 
     int maxLength = matched.stream()
@@ -124,11 +130,9 @@ public class AccessAuthorizationService {
                 .max()
                 .orElseThrow();
 
-    List<Menu> longest = matched.stream()
+    return matched.stream()
                 .filter(m -> m.getUrl().length() == maxLength)
                 .toList();
-
-    return longest.size() == 1 ? Optional.of(longest.get(0)) : Optional.empty();
   }
 
   private boolean matchesPath(String requestPath, String menuUrl) {
