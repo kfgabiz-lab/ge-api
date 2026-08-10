@@ -27,8 +27,12 @@ import java.util.Set;
 @Component
 public class CatalogContentsConverter {
 
-    // 문서 유형 코드 — C(카탈로그)/M(매뉴얼)/D(CAD)/S(소프트웨어)/V(교육영상)/T(기술자료)/Z(미확인 유형 대비 fallback)
-    private static final Set<String> VALID_DOC_TYPES = Set.of("C", "M", "D", "S", "V", "T", "Z");
+    // 문서 유형 코드 — C(카탈로그)/M(매뉴얼)/D(CAD)/S(소프트웨어)/V(교육영상)/T(기술자료).
+    // Z는 원천이 실제로 보내는 값이 아니라, 이 중 어디에도 없는 미확인 DATA_CODE를 받았을 때 우리가 붙이는
+    // 내부 fallback 라벨이다 — 예전엔 목록에 없으면 문서 전체를 거부했는데, 새로운 유형이 추가될 때마다
+    // 매핑 갱신 전까지 문서가 통째로 유실되는 문제가 있어 Z로 받아들이고 문서는 정상 생성하도록 바꿨다.
+    private static final Set<String> KNOWN_DOC_TYPES = Set.of("C", "M", "D", "S", "V", "T");
+    private static final String FALLBACK_DOC_TYPE = "Z";
     private static final String VIDEO_DATA_CODE = "V";
     private static final String SOURCE_TABLE_INFO = "if_r_catalog_info";
     private static final String SOURCE_TABLE_FILE = "if_r_catalog_file_info";
@@ -40,7 +44,6 @@ public class CatalogContentsConverter {
      */
     public ConversionResult convert(String ctlgCode, List<CatalogHeaderRow> headerRows, List<IfCatalogFileInfo> fileRows) {
         List<RowFailure> rowFailures = new ArrayList<>();
-        List<String> reportNotes = new ArrayList<>();
 
         CatalogHeaderRow first = headerRows.get(0);
         String docTitle = ContentsNormalizer.trimToNull(first.ctlgName());
@@ -64,9 +67,14 @@ public class CatalogContentsConverter {
             }
         }
 
-        if (dataCode == null || !VALID_DOC_TYPES.contains(dataCode)) {
-            return documentLevelFailure(ctlgCode, "UNKNOWN_DOC_TYPE",
-                "정의되지 않은 DATA_CODE: '" + dataCode + "'", rawRow(first));
+        if (dataCode == null) {
+            return documentLevelFailure(ctlgCode, "UNKNOWN_DOC_TYPE", "DATA_CODE가 비어있음", rawRow(first));
+        }
+        // 미확인 DATA_CODE는 Z로 받아들이되, 원본 값은 따로 보존해둔다 — 파일 쪽 DATA_CODE와 비교할 때 둘 다
+        // 그냥 "Z"로만 비교하면 서로 다른 미확인 코드끼리도 같은 값으로 오인해 불일치를 못 잡아낸다.
+        String rawDataCode = dataCode;
+        if (!KNOWN_DOC_TYPES.contains(dataCode)) {
+            dataCode = FALLBACK_DOC_TYPE;
         }
 
         boolean expose;
@@ -137,7 +145,15 @@ public class CatalogContentsConverter {
         for (IfCatalogFileInfo fileRow : fileRows) {
             String rowKey = ctlgCode + "/" + fileRow.getDataCode();
             String fileDataCode = ContentsNormalizer.trimToNull(fileRow.getDataCode());
-            if (!eq(fileDataCode, dataCode)) {
+            String resolvedFileDataCode = fileDataCode != null && !KNOWN_DOC_TYPES.contains(fileDataCode)
+                ? FALLBACK_DOC_TYPE : fileDataCode;
+            // 헤더가 Z로 폴백된 경우 파일 쪽도 원본 문자열이 헤더 원본과 같아야 진짜 매칭으로 본다 — 둘 다
+            // "미확인"이라고 무조건 같다고 보면 서로 다른 미확인 코드끼리(예: 헤더 'X', 파일 'Y')도 같은 문서로
+            // 섞여 불일치를 못 잡아낸다.
+            boolean mismatch = FALLBACK_DOC_TYPE.equals(dataCode)
+                ? !eq(fileDataCode, rawDataCode)
+                : !eq(resolvedFileDataCode, dataCode);
+            if (mismatch) {
                 rowFailures.add(new RowFailure(SOURCE_TABLE_FILE, rowKey, "VALUE_CONFLICT",
                     "파일 IF의 DATA_CODE(" + fileDataCode + ")가 문서 DATA_CODE(" + dataCode + ")와 다름", rawRow(fileRow)));
                 continue;
@@ -171,17 +187,22 @@ public class CatalogContentsConverter {
                 continue;
             }
             String fileName = ContentsNormalizer.firstNonBlank(fileRow.getFileOri(), pathFileName);
+            // FILE_SIZE는 부가 메타데이터라 값이 이상해도 파일 자체(다운로드 가능 여부)는 살리고 사이즈만
+            // NULL 처리한다 — 대신 실패 기록은 남겨서 원천 데이터 이상은 계속 추적 가능하게 한다.
             Long fileSize = null;
             String rawSize = ContentsNormalizer.trimToNull(fileRow.getFileSize());
             if (rawSize != null) {
                 try {
                     long parsed = Long.parseLong(rawSize);
-                    fileSize = parsed >= 0 ? parsed : null;
                     if (parsed < 0) {
-                        reportNotes.add("음수 FILE_SIZE 수신 — NULL 처리: " + rowKey + " (" + rawSize + ")");
+                        rowFailures.add(new RowFailure(SOURCE_TABLE_FILE, rowKey, "VALUE_CONFLICT",
+                            "음수 FILE_SIZE 수신 — NULL 처리: '" + rawSize + "'", rawRow(fileRow)));
+                    } else {
+                        fileSize = parsed;
                     }
                 } catch (NumberFormatException e) {
-                    reportNotes.add("FILE_SIZE 숫자 변환 실패 — NULL 처리: " + rowKey + " (" + rawSize + ")");
+                    rowFailures.add(new RowFailure(SOURCE_TABLE_FILE, rowKey, "VALUE_CONFLICT",
+                        "FILE_SIZE 숫자 변환 실패 — NULL 처리: '" + rawSize + "'", rawRow(fileRow)));
                 }
             }
 
@@ -252,14 +273,29 @@ public class CatalogContentsConverter {
             .versions(List.of(version))
             .build();
 
-        if (categoriesByPath.isEmpty()) {
-            reportNotes.add("카테고리(NAHP_LEVEL1_ID~NAHP_LEVEL3_ID) 등록이 0건인 문서: " + ctlgCode);
+        // 명시적 삭제(USE_YN='D') 문서는 카테고리·파일이 원래 비어서 올 수 있어 완결성 검사 대상에서 제외한다.
+        // documentLevelFailure()가 아니라 rowFailures에 직접 추가하는 이유: 그 헬퍼는 결과를 통째로 새로
+        // 만들어서, 카테고리·파일 반복문에서 이미 쌓아둔 개별 실패 사유(왜 카테고리/파일이 하나도 안 남았는지)가
+        // 사라지고 이 요약 사유 하나만 남는 문제가 있었다.
+        // rowFailures가 이미 있으면(카테고리/파일 행 각각의 개별 사유가 이미 기록됨) 그걸로 충분히 설명되니
+        // 중복되는 요약 사유는 덧붙이지 않는다 — 개별 사유가 하나도 없는 경우(행 자체가 없었던 경우)에만 이
+        // 요약 사유를 유일한 설명으로 남긴다.
+        if (!explicitDelete && categoriesByPath.isEmpty()) {
+            if (rowFailures.isEmpty()) {
+                rowFailures.add(new RowFailure(SOURCE_TABLE_INFO, "ctlg_code=" + ctlgCode, "EMPTY_CATEGORY",
+                    "카테고리(NAHP_LEVEL1_ID~NAHP_LEVEL3_ID) 등록이 0건인 문서", rawRow(first)));
+            }
+            return new ConversionResult(null, rowFailures, List.of());
         }
-        if (filesByKey.isEmpty() && videoUrl == null) {
-            reportNotes.add("노출 파일(if_r_catalog_file_info)·영상(FILE_SRC) URL이 모두 0건인 문서(빈 콘텐츠): " + ctlgCode);
+        if (!explicitDelete && filesByKey.isEmpty() && videoUrl == null) {
+            if (rowFailures.isEmpty()) {
+                rowFailures.add(new RowFailure(SOURCE_TABLE_FILE, "ctlg_code=" + ctlgCode, "EMPTY_CONTENT",
+                    "노출 파일(if_r_catalog_file_info)·영상(FILE_SRC) URL이 모두 0건인 문서(빈 콘텐츠)", rawRow(first)));
+            }
+            return new ConversionResult(null, rowFailures, List.of());
         }
 
-        return new ConversionResult(document, rowFailures, reportNotes);
+        return new ConversionResult(document, rowFailures, List.of());
     }
 
     private ConversionResult documentLevelFailure(String ctlgCode, String failCode, String detail, Map<String, Object> raw) {
