@@ -171,11 +171,11 @@ public class TrainingRequestService {
             String adminSubject = "[New Request] Training Registration Confirmation — Action Required";
             for (String recipientCode : recipientCodes) {
                 List<String> managerEmails = resolveManagerEmails(List.of(recipientCode));
-                if (managerEmails.isEmpty()) {
-                    continue;
-                }
+                // 담당자 이메일이 미설정이어도 발송 시도 자체는 이력에 남긴다(recipient 자리에 코드명을 넣어 실패건으로 기록 —
+                // 조용히 건너뛰면 "왜 담당자 메일이 안 왔는지"를 이력만 보고 추적할 수 없다).
+                List<String> recipients = managerEmails.isEmpty() ? List.of(recipientCode) : managerEmails;
                 String adminContent = buildAdminEmail(request, trainingCourseName, inPerson, scheduleStart, scheduleEnd, recipientCode);
-                for (String recipient : managerEmails) {
+                for (String recipient : recipients) {
                     eventPublisher.publishEvent(new MailSendEvent(recipient, adminSubject, adminContent,
                             EMAIL_SEND_TYPE_IRREGULAR_TRAINING, trainingCourseCode, null));
                 }
@@ -223,20 +223,29 @@ public class TrainingRequestService {
     }
 
     /**
-     * Power 카테고리(depth=2, selectedProducts 의 id) 하위 리프 제품들의 order_method 존재 여부 조회.
+     * Power 선택 항목(selectedProducts 의 id) 하위/자체 order_method 존재 여부 조회.
+     * id 는 보통 depth=2 카테고리(자식 리프의 order_method 를 봐야 함)지만, product-data/category-data 리프 id 가
+     * 직접 들어오는 경우도 있어(FE 저장 방식이 혼재) 두 경우 모두 확인한다.
      * 반환값 [0]=양산(02) 포함 여부, [1]=수주(01) 포함 여부 — 두 값이 각각 독립적으로 계산되므로 같은 카테고리 안에
      * 양산/수주 제품이 섞여 있어도(선택된 카테고리 하위에 둘 다 존재해도) 두 담당자 모두에게 정상적으로 발송된다.
      */
     private boolean[] resolvePowerOrderMethods(List<Long> powerCategoryIds) {
         Query query = entityManager.createNativeQuery("""
                 SELECT
-                  bool_or(data_json->'product'->>'order_method' = '02') AS has_device,
-                  bool_or(data_json->'product'->>'order_method' = '01') AS has_system
-                FROM page_data
-                WHERE data_slug = 'category-data'
-                  AND data_json->'product'->>'parentId' IN (:parentIds)
+                  bool_or(order_method = '02') AS has_device,
+                  bool_or(order_method = '01') AS has_system
+                FROM (
+                  SELECT data_json->'product'->>'order_method' AS order_method
+                  FROM page_data
+                  WHERE id::text IN (:ids) AND data_slug IN ('product-data', 'category-data')
+                  UNION ALL
+                  SELECT child.data_json->'product'->>'order_method' AS order_method
+                  FROM page_data child
+                  WHERE child.data_slug = 'category-data'
+                    AND child.data_json->'product'->>'parentId' IN (:ids)
+                ) leaves
                 """);
-        query.setParameter("parentIds", powerCategoryIds.stream().map(String::valueOf).toList());
+        query.setParameter("ids", powerCategoryIds.stream().map(String::valueOf).toList());
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
@@ -247,15 +256,17 @@ public class TrainingRequestService {
         return new boolean[] {Boolean.TRUE.equals(row[0]), Boolean.TRUE.equals(row[1])};
     }
 
+    // TODO: 테스트용 — 실제 외부 주소(engineering.training_device@lselectricamerica.com 등)로 검증 끝나면
+    // CodeDetail::getName → CodeDetail::getExtra1 로 되돌린다(실제 수신 이메일은 extra1에 저장돼 있음).
     /**
-     * EMAIL_RECIPIENT 코드 목록 → 실제 수신 이메일(extra1) 조회 — 코드별 콤마 다중 저장을 개별 주소로 풀고, 코드 여러 개에 걸쳐 중복되면 한 번만 발송.
+     * EMAIL_RECIPIENT 코드 목록 → 수신 이메일(name, 테스트용 단일 주소) 조회 — 코드별 콤마 다중 저장을 개별 주소로 풀고, 코드 여러 개에 걸쳐 중복되면 한 번만 발송.
      * 코드가 없거나 담당자 코드가 미설정이면 빈 목록(신청자에게만 발송).
      */
     private List<String> resolveManagerEmails(List<String> recipientCodes) {
         LinkedHashSet<String> emails = new LinkedHashSet<>();
         for (String code : recipientCodes) {
             codeDetailRepository.findByGroup_GroupCodeAndCodeAndActiveTrue(GROUP_EMAIL_RECIPIENT, code)
-                    .map(CodeDetail::getExtra1)
+                    .map(CodeDetail::getName)
                     .filter(StringUtils::isNotBlank)
                     .ifPresent(value -> emails.addAll(splitEmails(value)));
         }
@@ -385,8 +396,8 @@ public class TrainingRequestService {
 
         body.append(sectionHeading("Action Required"))
             .append(bulletListRow(List.of(
-                    "Please review the submitted training request details and contact the customer to coordinate the schedule.")))
-            .append(closingRow("This is an automated notification. Please do not reply to this email.<br />LS ELECTRIC America"))
+                    "Please review the submitted training request details and contact the customer to coordinate the schedule."), true))
+            .append(closingRow("LS ELECTRIC America"))
             .append(emailClose());
         return body.toString();
     }
@@ -502,15 +513,21 @@ public class TrainingRequestService {
              + "line-height:1.4;letter-spacing:0.01em;color:#0f1f45;\">" + escape(text) + "</td></tr>";
     }
 
-    /** 섹션 제목 아래 불릿 목록 한 줄(항목들은 고정 문구라 escape 하지 않는다) */
-    private String bulletListRow(List<String> items) {
+    /**
+     * 섹션 제목 아래 불릿 목록 한 줄(항목들은 고정 문구라 escape 하지 않는다).
+     * tight=true — 뒤에 다른 행(Closing 등)이 바로 이어질 때(원본 디자인 기준 padding 0 32px 8px)
+     * tight=false — 카드 안에서 마지막 콘텐츠일 때(padding 8px 32px 28px)
+     */
+    private String bulletListRow(List<String> items, boolean tight) {
         StringBuilder ul = new StringBuilder("<ul style=\"margin:0;padding-left:22px;font-family:Arial, Helvetica, sans-serif;"
                 + "font-size:15px;line-height:1.7;color:#333333;\">");
         for (String item : items) {
             ul.append("<li>").append(item).append("</li>");
         }
         ul.append("</ul>");
-        return "<tr><td style=\"padding:8px 32px 28px;font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:1.75;"
+        String padding = tight ? "0 32px 8px" : "8px 32px 28px";
+        String lineHeight = tight ? "1.7" : "1.75";
+        return "<tr><td style=\"padding:" + padding + ";font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:" + lineHeight + ";"
              + "color:#333333;\">" + ul + "</td></tr>";
     }
 

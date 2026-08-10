@@ -151,11 +151,11 @@ public class TrainingRegistrationService {
             String adminSubject = "[%s]%s - %s".formatted(nz(ctx.trainingCourseName()), request.studentName(), nz(ctx.sessionTitle()));
             for (String recipientCode : recipientCodes) {
                 List<String> managerEmails = resolveManagerEmails(List.of(recipientCode));
-                if (managerEmails.isEmpty()) {
-                    continue;
-                }
+                // 담당자 이메일이 미설정이어도 발송 시도 자체는 이력에 남긴다(recipient 자리에 코드명을 넣어 실패건으로 기록 —
+                // 조용히 건너뛰면 "왜 담당자 메일이 안 왔는지"를 이력만 보고 추적할 수 없다).
+                List<String> recipients = managerEmails.isEmpty() ? List.of(recipientCode) : managerEmails;
                 String adminContent = buildAdminEmail(request, ctx, eventDate, recipientCode);
-                for (String recipient : managerEmails) {
+                for (String recipient : recipients) {
                     eventPublisher.publishEvent(new MailSendEvent(recipient, adminSubject, adminContent,
                             EMAIL_SEND_TYPE_REGULAR_TRAINING, trainingCourseCode, null));
                 }
@@ -192,15 +192,17 @@ public class TrainingRegistrationService {
         return List.of();
     }
 
+    // TODO: 테스트용 — 실제 외부 주소(engineering.training_device@lselectricamerica.com 등)로 검증 끝나면
+    // CodeDetail::getName → CodeDetail::getExtra1 로 되돌린다(실제 수신 이메일은 extra1에 저장돼 있음).
     /**
-     * EMAIL_RECIPIENT 코드 목록 → 실제 수신 이메일(extra1) 조회 — 코드별 콤마 다중 저장을 개별 주소로 풀고, 코드 여러 개에 걸쳐 중복되면 한 번만 발송.
+     * EMAIL_RECIPIENT 코드 목록 → 수신 이메일(name, 테스트용 단일 주소) 조회 — 코드별 콤마 다중 저장을 개별 주소로 풀고, 코드 여러 개에 걸쳐 중복되면 한 번만 발송.
      * 코드가 없거나(curriculum 조회 실패) 담당자 코드가 미설정이면 빈 목록(신청자에게만 발송).
      */
     private List<String> resolveManagerEmails(List<String> recipientCodes) {
         LinkedHashSet<String> emails = new LinkedHashSet<>();
         for (String code : recipientCodes) {
             codeDetailRepository.findByGroup_GroupCodeAndCodeAndActiveTrue(GROUP_EMAIL_RECIPIENT, code)
-                    .map(CodeDetail::getExtra1)
+                    .map(CodeDetail::getName)
                     .filter(StringUtils::isNotBlank)
                     .ifPresent(value -> emails.addAll(splitEmails(value)));
         }
@@ -318,18 +320,28 @@ public class TrainingRegistrationService {
                         WHERE prod.data_json->'product'->>'product_code' IN (:vfdCodes)
                       ) AS is_vfd,
                       (jsonb_array_length(COALESCE(sess.data_json->'automation_list', '[]'::jsonb)) > 0) AS has_automation,
-                      EXISTS (
+                      -- power_list 항목은 depth=2 카테고리(자식 리프의 order_method 를 봐야 함)일 수도 있고,
+                      -- product-data/category-data 리프 id 가 직접 들어있을 수도 있어(FE 저장 방식이 혼재) 두 경우 모두 확인한다.
+                      (EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) pid
+                        JOIN page_data leaf ON leaf.id = pid::bigint AND leaf.data_slug IN ('product-data', 'category-data')
+                        WHERE leaf.data_json->'product'->>'order_method' = '02'
+                      ) OR EXISTS (
                         SELECT 1 FROM jsonb_array_elements_text(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) pid
                         JOIN page_data child ON child.data_slug = 'category-data'
                           AND child.data_json->'product'->>'parentId' = pid
                         WHERE child.data_json->'product'->>'order_method' = '02'
-                      ) AS has_power_device,
-                      EXISTS (
+                      )) AS has_power_device,
+                      (EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) pid
+                        JOIN page_data leaf ON leaf.id = pid::bigint AND leaf.data_slug IN ('product-data', 'category-data')
+                        WHERE leaf.data_json->'product'->>'order_method' = '01'
+                      ) OR EXISTS (
                         SELECT 1 FROM jsonb_array_elements_text(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) pid
                         JOIN page_data child ON child.data_slug = 'category-data'
                           AND child.data_json->'product'->>'parentId' = pid
                         WHERE child.data_json->'product'->>'order_method' = '01'
-                      ) AS has_power_system
+                      )) AS has_power_system
                     FROM page_data sess
                     LEFT JOIN page_data curr ON curr.id = :curriculumId AND curr.data_slug = 'currMgmt-data'
                     WHERE sess.id = :sessionId AND sess.data_slug = 'currDtlMgmt-data'
@@ -404,11 +416,11 @@ public class TrainingRegistrationService {
         additionalInfo.add("Class is subject to cancellation if minimum enrollment is not met. In the event of cancellation, "
                 + "all registered participants will be notified at least one week in advance.");
         body.append(sectionHeading("Additional Information"))
-            .append(bulletListRow(additionalInfo));
+            .append(bulletListRow(additionalInfo, ctx.vfd()));
 
         if (ctx.vfd()) {
             // TODO: VFD 전용 첨부파일 실제 파일/URL 확정 필요(기획서에도 "개발 검토 필요"로 표시됨)
-            body.append(linkRow("#", "Attachment"));
+            body.append(attachmentLinkRow("#"));
         }
 
         body.append(closingRow("We look forward to your participation.<br /><br />Sincerely,<br />LS ELECTRIC America"))
@@ -443,11 +455,10 @@ public class TrainingRegistrationService {
             .append(cardTableClose());
 
         body.append(sectionHeading("Action Required"))
-            .append(sectionParagraph("Send reminder email one week before class"))
             .append(bulletListRow(List.of(
                     "Confirm seat reservation",
-                    "Send a reminder email one week prior to the class")))
-            .append(closingRow("This is an automated notification. Please do not reply to this email.<br />LS ELECTRIC America"))
+                    "Send a reminder email one week prior to the class"), true))
+            .append(closingRow("LS ELECTRIC America"))
             .append(emailClose());
         return body.toString();
     }
@@ -533,22 +544,35 @@ public class TrainingRegistrationService {
              + innerHtml + "</td></tr>";
     }
 
-    /** Payment Authorization Form / Attachment 등 링크 한 줄 */
+    /** Payment Authorization Form 링크 한 줄 */
     private String linkRow(String url, String label) {
         return "<tr><td style=\"padding:0 32px 8px;font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:1.7;\">"
              + "<a href=\"" + escape(url) + "\" style=\"color:#333;font-weight:600;text-decoration:underline;"
              + "font-family:Arial, Helvetica, sans-serif;\">[" + escape(label) + "]</a></td></tr>";
     }
 
-    /** 섹션 제목 아래 불릿 목록 한 줄(항목들은 고정 문구라 escape 하지 않는다) */
-    private String bulletListRow(List<String> items) {
+    /** Attachment 링크 한 줄 — Payment Authorization Form 과 달리 위쪽 여백이 4px 있다(원본 디자인 기준) */
+    private String attachmentLinkRow(String url) {
+        return "<tr><td style=\"padding:4px 32px 8px;font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:1.7;\">"
+             + "<a href=\"" + escape(url) + "\" style=\"color:#333;font-weight:600;text-decoration:underline;"
+             + "font-family:Arial, Helvetica, sans-serif;\">[Attachment]</a></td></tr>";
+    }
+
+    /**
+     * 섹션 제목 아래 불릿 목록 한 줄(항목들은 고정 문구라 escape 하지 않는다).
+     * tight=true — 뒤에 다른 행(Attachment 링크, Action Required 뒤 Closing 등)이 바로 이어질 때(원본 디자인 기준 padding 0 32px 8px)
+     * tight=false — 카드 안에서 마지막 콘텐츠일 때(padding 8px 32px 28px)
+     */
+    private String bulletListRow(List<String> items, boolean tight) {
         StringBuilder ul = new StringBuilder("<ul style=\"margin:0;padding-left:22px;font-family:Arial, Helvetica, sans-serif;"
                 + "font-size:15px;line-height:1.7;color:#333333;\">");
         for (String item : items) {
             ul.append("<li>").append(item).append("</li>");
         }
         ul.append("</ul>");
-        return "<tr><td style=\"padding:8px 32px 28px;font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:1.75;"
+        String padding = tight ? "0 32px 8px" : "8px 32px 28px";
+        String lineHeight = tight ? "1.7" : "1.75";
+        return "<tr><td style=\"padding:" + padding + ";font-family:Arial, Helvetica, sans-serif;font-size:15px;line-height:" + lineHeight + ";"
              + "color:#333333;\">" + ul + "</td></tr>";
     }
 
