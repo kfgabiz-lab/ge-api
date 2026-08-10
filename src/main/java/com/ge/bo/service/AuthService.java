@@ -75,6 +75,9 @@ public class AuthService {
   @Value("${ls.redis-enabled:false}")
   private boolean redisEnabled;
 
+  @Value("${server.servlet.session.cookie.secure:false}")
+  private boolean cookieSecure;
+
   @Value("${ls.lse.sso.sysName:NAHP}")
   private String ssoSysName;
 
@@ -267,7 +270,7 @@ public class AuthService {
     String refreshToken = jwtTokenProvider.generateRefreshToken(email);
     ResponseCookie cookie = ResponseCookie.from("refreshToken", refreshToken)
         .httpOnly(true)
-        .secure(false) // 운영 환경에서는 true로 변경
+        .secure(cookieSecure)
         .path("/api/v1/auth")
         .maxAge(Duration.ofDays(REFRESH_TOKEN_DAYS))
         .sameSite("Strict")
@@ -278,7 +281,7 @@ public class AuthService {
   private void clearRefreshTokenCookie(HttpServletResponse response) {
     ResponseCookie cookie = ResponseCookie.from("refreshToken", "")
         .httpOnly(true)
-        .secure(false)
+        .secure(cookieSecure)
         .path("/api/v1/auth")
         .maxAge(0)
         .sameSite("Strict")
