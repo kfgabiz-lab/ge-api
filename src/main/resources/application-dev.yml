@@ -23,25 +23,25 @@ spring:
           connectiontimeout: 15000
           timeout: 15000
           writetimeout: 15000
-  data:
-    redis:
-      host: redis-lse-kc-dev-nahp-01.redis.cache.windows.net
-      port: 6380
-      password: ${AZURE_REDIS_ACCESS_KEY:}
-      ssl:
-        enabled: true
-      connect-timeout: 5s
-      timeout: 3s
+#  data:
+#    redis:
+#      host: redis-lse-kc-dev-nahp-01.redis.cache.windows.net
+#      port: 6380
+#      password: ${AZURE_REDIS_ACCESS_KEY:}
+#      ssl:
+#        enabled: true
+#      connect-timeout: 5s
+#      timeout: 3s
   session:
-    store-type: redis
+    store-type: none
     timeout: 1d
-    redis:
-      namespace: nahpdev:session
-      flush-mode: on-save
-      save-mode: on-set-attribute
-      repository-type: indexed
+#    redis:
+#      namespace: nahpdev:session
+#      flush-mode: on-save
+#      save-mode: on-set-attribute
+#      repository-type: indexed
   cache:
-    type: redis
+    type: none
 
 server:
   servlet:
@@ -81,7 +81,7 @@ logging:
 ls:
   isApiLogin: true
   file-storage: local   # local, blob
-  redis-enabled: true
+  redis-enabled: false
   lse:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
