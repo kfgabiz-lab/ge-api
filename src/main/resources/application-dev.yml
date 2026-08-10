@@ -33,7 +33,7 @@ spring:
       connect-timeout: 5s
       timeout: 3s
   session:
-    store-type: redis
+    store-type: none
     timeout: 1d
     redis:
       namespace: nahpdev:session
@@ -41,7 +41,7 @@ spring:
       save-mode: on-set-attribute
       repository-type: indexed
   cache:
-    type: redis
+    type: none
 
 server:
   servlet:
