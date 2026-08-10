@@ -52,7 +52,7 @@ public class TrainingRegistrationService {
     /** 공통코드 EMAILSENDTYPE — 정기 Training(세션 상세 Registration Form) */
     private static final String EMAIL_SEND_TYPE_REGULAR_TRAINING = "02";
 
-    /** 담당자 이메일 공통코드 그룹 (extra1 필드에 실제 수신 이메일 저장, 콤마로 복수 가능 — name 은 표시용) */
+    /** 담당자 이메일 공통코드 그룹 (name 필드에 수신 이메일 저장, 콤마로 복수 가능) */
     private static final String GROUP_EMAIL_RECIPIENT = "EMAIL_RECIPIENT";
 
     /** TRAININGCOURSE 코드 */
@@ -192,10 +192,8 @@ public class TrainingRegistrationService {
         return List.of();
     }
 
-    // TODO: 테스트용 — 실제 외부 주소(engineering.training_device@lselectricamerica.com 등)로 검증 끝나면
-    // CodeDetail::getName → CodeDetail::getExtra1 로 되돌린다(실제 수신 이메일은 extra1에 저장돼 있음).
     /**
-     * EMAIL_RECIPIENT 코드 목록 → 수신 이메일(name, 테스트용 단일 주소) 조회 — 코드별 콤마 다중 저장을 개별 주소로 풀고, 코드 여러 개에 걸쳐 중복되면 한 번만 발송.
+     * EMAIL_RECIPIENT 코드 목록 → 수신 이메일(name) 조회 — 코드별 콤마 다중 저장을 개별 주소로 풀고, 코드 여러 개에 걸쳐 중복되면 한 번만 발송.
      * 코드가 없거나(curriculum 조회 실패) 담당자 코드가 미설정이면 빈 목록(신청자에게만 발송).
      */
     private List<String> resolveManagerEmails(List<String> recipientCodes) {
@@ -308,7 +306,7 @@ public class TrainingRegistrationService {
                            to_char(NULLIF(item->>'date', '')::date, 'FMMon FMDD, YYYY') || ': ' ||
                            to_char(NULLIF(item->>'time_from', '')::time, 'FMHH12:MI AM') || ' - ' ||
                            to_char(NULLIF(item->>'time_to', '')::time, 'FMHH12:MI AM'),
-                           ', ' ORDER BY (item->>'date')::date, (item->>'time_from')::time)
+                           E'\n' ORDER BY (item->>'date')::date, (item->>'time_from')::time)
                          FROM jsonb_array_elements(COALESCE(sess.data_json->'training_schedule', '[]'::jsonb)) AS item
                       ) AS schedule_text,
                       CASE WHEN sess.data_json->'curriculum_detail3'->>'training_fee_type' = '001' THEN NULL
@@ -520,15 +518,20 @@ public class TrainingRegistrationService {
         return "</table></td></tr>";
     }
 
-    /** 카드 테이블 한 줄(label/value) — 값이 없으면 빈 칸으로 표시(행 자체는 유지) */
+    /**
+     * 카드 테이블 한 줄(label/value) — 값이 없으면 빈 칸으로 표시(행 자체는 유지).
+     * 값에 개행이 있으면(예: Training Schedule 다건) escape 후 &lt;br /&gt;로 바꿔 줄바꿈해서 표시한다
+     * (escape 가 먼저 실행돼야 원본 개행은 그대로 두고 실제 HTML 특수문자만 이스케이프된다).
+     */
     private String row(String label, String value) {
+        String escapedValue = escape(nz(value)).replace("\n", "<br />");
         return "<tr>"
              + "<td width=\"38%\" valign=\"top\" style=\"padding:11px 16px;font-family:Arial, Helvetica, sans-serif;font-size:13px;"
              + "font-weight:600;line-height:1.5;color:#555555;text-align:left;vertical-align:top;background:#f7f8fa;"
              + "border-right:1px solid #e8e8e8;border-bottom:1px solid #e8e8e8;\">" + escape(label) + "</td>"
              + "<td valign=\"top\" style=\"padding:11px 16px;font-family:Arial, Helvetica, sans-serif;font-size:15px;font-weight:400;"
              + "line-height:1.55;color:#222222;text-align:left;vertical-align:top;background:#ffffff;border-bottom:1px solid #e8e8e8;\">"
-             + "<span style=\"color:#333;font-weight:600;\">" + escape(nz(value)) + "</span></td>"
+             + "<span style=\"color:#333;font-weight:600;\">" + escapedValue + "</span></td>"
              + "</tr>";
     }
 

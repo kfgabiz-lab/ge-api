@@ -48,7 +48,7 @@ public class TrainingRequestService {
     /** 공통코드 EMAILSENDTYPE — 비정기 Training(Training Request) */
     private static final String EMAIL_SEND_TYPE_IRREGULAR_TRAINING = "03";
 
-    /** 담당자 이메일 공통코드 그룹 (extra1 필드에 실제 수신 이메일 저장, 콤마로 복수 가능 — name 은 표시용) */
+    /** 담당자 이메일 공통코드 그룹 (name 필드에 수신 이메일 저장, 콤마로 복수 가능) */
     private static final String GROUP_EMAIL_RECIPIENT = "EMAIL_RECIPIENT";
 
     /** 공통코드 그룹 코드 — 교육 트랙(Training Track 표시명 조회용, TrainingRegistrationService 와 동일 그룹) */
@@ -256,10 +256,8 @@ public class TrainingRequestService {
         return new boolean[] {Boolean.TRUE.equals(row[0]), Boolean.TRUE.equals(row[1])};
     }
 
-    // TODO: 테스트용 — 실제 외부 주소(engineering.training_device@lselectricamerica.com 등)로 검증 끝나면
-    // CodeDetail::getName → CodeDetail::getExtra1 로 되돌린다(실제 수신 이메일은 extra1에 저장돼 있음).
     /**
-     * EMAIL_RECIPIENT 코드 목록 → 수신 이메일(name, 테스트용 단일 주소) 조회 — 코드별 콤마 다중 저장을 개별 주소로 풀고, 코드 여러 개에 걸쳐 중복되면 한 번만 발송.
+     * EMAIL_RECIPIENT 코드 목록 → 수신 이메일(name) 조회 — 코드별 콤마 다중 저장을 개별 주소로 풀고, 코드 여러 개에 걸쳐 중복되면 한 번만 발송.
      * 코드가 없거나 담당자 코드가 미설정이면 빈 목록(신청자에게만 발송).
      */
     private List<String> resolveManagerEmails(List<String> recipientCodes) {
