@@ -1,8 +1,8 @@
 spring:
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: ${DB_URL:jdbc:postgresql://10.153.11.120:5432/postgres}
-    username: ${DB_USERNAME:lsedbadmin}
+    url: ${DB_URL:}
+    username: ${DB_USERNAME:}
     password: ${DB_PASSWORD:}
   jpa:
     show-sql: true
@@ -89,7 +89,7 @@ ls:
       ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : "AIzaSyBkHvBn_MG-VWQd2C8-UA3PJBniWPy5QNk"
-      recapchaKey: ${RECAPTCHA_SECRET:6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe}
+      recapchaKey: ${RECAPTCHA_SECRET:}
       ctp:
         # Connect Portal(Salesforce) Sandbox — IF_SRR_NAHP_CTP_0001(문의접수) / _0002(문의결과조회)
         tokenUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/oauth2/token
