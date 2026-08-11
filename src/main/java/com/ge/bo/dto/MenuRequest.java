@@ -30,12 +30,12 @@ public record MenuRequest(
              message = "URL 형식이 올바르지 않습니다.")
     String url,
 
-    /** SEO Meta Title (FO 2Depth 이상 메뉴 전용, 선택 입력 시 50~60자) */
-    @Pattern(regexp = "^$|^[\\s\\S]{50,60}$", message = "Meta Title은 50~60자 사이로 입력해주세요.")
+    /** SEO Meta Title (FO 2Depth 이상 메뉴 전용, 선택 입력 시 최대 150자 이하) */
+    @Pattern(regexp = "^$|^[\\s\\S]{1,150}$", message = "Meta Title은 최대 150자 이하로 입력해주세요.")
     String metaTitle,
 
-    /** SEO Meta Description (FO 2Depth 이상 메뉴 전용, 선택 입력 시 150~160자) */
-    @Pattern(regexp = "^$|^[\\s\\S]{150,160}$", message = "Meta Description은 150~160자 사이로 입력해주세요.")
+    /** SEO Meta Description (FO 2Depth 이상 메뉴 전용, 선택 입력 시 최대 180자 이하) */
+    @Pattern(regexp = "^$|^[\\s\\S]{1,180}$", message = "Meta Description은 최대 180자 이하로 입력해주세요.")
     String metaDescription,
 
     @Size(max = 30, message = "아이콘명은 30자 이하여야 합니다.")
