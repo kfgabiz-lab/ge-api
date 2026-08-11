@@ -116,8 +116,8 @@ public class TrainingRegistrationAdminService {
         }
 
         String fromJoin = " FROM training_registration tr"
-                + " LEFT JOIN page_data curr ON curr.id = tr.curriculum_id AND curr.data_slug = '" + CURR_SLUG + "'"
-                + " LEFT JOIN page_data sess ON sess.id = tr.session_id AND sess.data_slug = '" + SESS_SLUG + "'";
+                + " LEFT JOIN page_data curr ON curr.id = tr.curriculum_id AND curr.data_slug = '" + CURR_SLUG + "' AND curr.is_deleted = false"
+                + " LEFT JOIN page_data sess ON sess.id = tr.session_id AND sess.data_slug = '" + SESS_SLUG + "' AND sess.is_deleted = false";
 
         // COUNT
         String countSql = "SELECT COUNT(*)" + fromJoin + where;

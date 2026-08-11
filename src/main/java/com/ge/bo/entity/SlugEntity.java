@@ -2,6 +2,7 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedBy;
@@ -21,6 +22,7 @@ import java.util.List;
         @UniqueConstraint(name = "uq_slug_entity_slug", columnNames = "slug")
     }
 )
+@SQLRestriction("is_deleted = false")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)
 public class SlugEntity {
@@ -60,6 +62,13 @@ public class SlugEntity {
     @OrderBy("sortOrder ASC")
     @Builder.Default
     private List<SlugEntityField> fields = new ArrayList<>();
+
+    @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+    @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
     @CreatedBy
     @Column(name = "created_by", nullable = false, updatable = false, length = 50)

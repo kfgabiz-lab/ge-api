@@ -52,7 +52,8 @@ public class DownloadCenterService {
         " LEFT JOIN code_detail cd"
       + "        ON cd.code = m.doc_type"
       + "       AND cd.is_active = true"
-      + "       AND cd.group_id = (SELECT id FROM code_group WHERE group_code = '" + DOC_TYPE_GROUP_CODE + "')";
+      + "       AND cd.is_deleted = false"
+      + "       AND cd.group_id = (SELECT id FROM code_group WHERE group_code = '" + DOC_TYPE_GROUP_CODE + "' AND is_deleted = false)";
 
     /** LV3 제품코드(예: L01-15-01)로 정확히 매핑된 콘텐츠뿐 아니라, LV3가 배정되지 않아 LV2/LV1까지만
      *  매핑된 콘텐츠도 요청 제품의 상위 카테고리 기준으로 함께 노출한다 (contents_id=5060 등, 2026-08-05). */

@@ -2,6 +2,8 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedBy;
@@ -21,6 +23,8 @@ import java.time.OffsetDateTime;
         @Index(name = "idx_validation_rule_slug_registry", columnList = "slug_registry_id")
     }
 )
+@SQLRestriction("is_deleted = false")
+@SQLDelete(sql = "UPDATE validation_rule SET is_deleted = true, deleted_at = now() WHERE id = ?")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)
 public class ValidationRule {
@@ -49,6 +53,13 @@ public class ValidationRule {
     /** maxCount 전용 — 최대 등록 건수 */
   @Column(name = "max_count")
     private Integer maxCount;
+
+  @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
   @CreatedBy
     @Column(name = "created_by", nullable = false, updatable = false, length = 50)

@@ -90,8 +90,8 @@ public class TrainingApplicationService {
             "CASE tr.training_format WHEN 'In-Person' THEN '001' WHEN 'Virtual' THEN '002' ELSE tr.training_format END";
 
     private static final String FROM_JOIN_REGULAR = " FROM training_registration tr"
-            + " LEFT JOIN page_data curr ON curr.id = tr.curriculum_id AND curr.data_slug = '" + CURR_SLUG + "'"
-            + " LEFT JOIN page_data sess ON sess.id = tr.session_id AND sess.data_slug = '" + SESS_SLUG + "'";
+            + " LEFT JOIN page_data curr ON curr.id = tr.curriculum_id AND curr.data_slug = '" + CURR_SLUG + "' AND curr.is_deleted = false"
+            + " LEFT JOIN page_data sess ON sess.id = tr.session_id AND sess.data_slug = '" + SESS_SLUG + "' AND sess.is_deleted = false";
 
     /** 비정기(training_request)는 관련 커리큘럼/세션 개념이 없어 JOIN하지 않는다 — IRREGULAR_SELECT_COLUMNS에서 NULL로 채움 */
     private static final String FROM_JOIN_IRREGULAR = " FROM training_request tr";

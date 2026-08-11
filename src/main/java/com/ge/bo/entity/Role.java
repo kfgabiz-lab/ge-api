@@ -2,14 +2,17 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Entity
 @Table(name = "role")
+@SQLRestriction("is_deleted = false")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -38,6 +41,13 @@ public class Role {
   @Builder.Default
     @Column(nullable = false)
     private boolean isSystem = false; // 시스템 기본 역할은 삭제 불가
+
+  @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
   @CreatedDate
     @Column(nullable = false, updatable = false)

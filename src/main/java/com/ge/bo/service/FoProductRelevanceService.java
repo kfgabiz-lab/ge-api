@@ -31,6 +31,7 @@ public class FoProductRelevanceService {
             + " SELECT string_to_array(attribute01, ',') AS codes"
             + " FROM page_data"
             + " WHERE data_slug = 'product-data'"
+            + "  AND is_deleted = false"
             + "  AND data_json->'seo'->>'slug' = :slug"
             + selfSiteCond
             + " LIMIT 1"
@@ -39,6 +40,7 @@ public class FoProductRelevanceService {
             + " SELECT cd.id"
             + " FROM page_data cd, self"
             + " WHERE cd.data_slug = 'category-data'"
+            + "  AND cd.is_deleted = false"
             + "  AND cd.data_json->'category'->>'code' = ANY(self.codes)"
             + "  AND cd.data_json->'category'->>'depth' = '2'"
             + targetLv2SiteCond
@@ -48,6 +50,7 @@ public class FoProductRelevanceService {
             + " FROM page_data map"
             + " JOIN target_lv2 t ON map.data_json->'product'->>'parentId' = t.id::text"
             + " WHERE map.data_slug = 'category-data'"
+            + "  AND map.is_deleted = false"
             + "  AND map.data_json->'product'->>'depth' = '3'"
             + mappingSiteCond
             + " )"
@@ -59,6 +62,7 @@ public class FoProductRelevanceService {
             + " FROM mapping m"
             + " JOIN page_data p ON p.id::text = m.product_id"
             + " WHERE p.data_slug = 'product-data'"
+            + "  AND p.is_deleted = false"
             + "  AND p.data_json->'product'->>'is_visible'   = '001'"
             + "  AND p.data_json->'product'->>'order_status' = '01'"
             + productSiteCond

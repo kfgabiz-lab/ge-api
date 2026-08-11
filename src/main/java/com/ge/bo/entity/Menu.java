@@ -3,6 +3,7 @@ package com.ge.bo.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.BatchSize;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedBy;
@@ -10,6 +11,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,6 +22,7 @@ import java.util.List;
 @Table(name = "menu",
     indexes = @Index(name = "idx_menu_type_parent", columnList = "menu_type, parent_id")
 )
+@SQLRestriction("is_deleted = false")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -99,6 +102,13 @@ public class Menu {
   @Column(name = "is_system", nullable = false)
     @Builder.Default
     private boolean isSystem = false;
+
+  @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
   @CreatedBy
     @Column(name = "created_by", nullable = false, updatable = false, length = 50)

@@ -68,9 +68,10 @@ public class NewsletterInsightsService {
         List<?> results = entityManager.createNativeQuery("""
                 SELECT cd.name
                 FROM code_detail cd
-                JOIN code_group cg ON cg.id = cd.group_id
+                JOIN code_group cg ON cg.id = cd.group_id AND cg.is_deleted = false
                 WHERE cg.group_code = :groupCode
                   AND cd.code = :code
+                  AND cd.is_deleted = false
                 """)
                 .setParameter("groupCode", EMAIL_RECIPIENT_GROUP_CODE)
                 .setParameter("code"     , EMAIL_RECIPIENT_NEWSLETTER_CODE)

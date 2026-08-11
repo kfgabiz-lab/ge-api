@@ -3,6 +3,8 @@ package com.ge.bo.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import io.hypersistence.utils.hibernate.type.json.JsonStringType;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.annotations.Type;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
@@ -11,6 +13,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 페이지 데이터 엔티티
@@ -26,6 +29,8 @@ import java.time.LocalDateTime;
         @Index(name = "idx_page_data_slug_created",  columnList = "template_slug, created_at DESC")
     }
 )
+@SQLRestriction("is_deleted = false")
+@SQLDelete(sql = "UPDATE page_data SET is_deleted = true WHERE id = ?")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)
 public class PageData {
@@ -58,6 +63,13 @@ public class PageData {
     /** 조회수 — DB DEFAULT 0으로 채워지며 일반 CRUD(save)로는 변경되지 않고 조회수 증가 네이티브 UPDATE로만 증가 */
   @Column(name = "count", nullable = false, insertable = false, updatable = false)
     private Long count;
+
+  @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
   @CreatedBy
     @Column(name = "created_by", updatable = false, length = 100)

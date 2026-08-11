@@ -2,11 +2,14 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 페이지 파일 엔티티
@@ -22,6 +25,8 @@ import java.time.LocalDateTime;
         @Index(name = "idx_page_file_slug_field", columnList = "template_slug, field_key")
     }
 )
+@SQLDelete(sql = "UPDATE page_file SET is_deleted = true WHERE id = ?")
+@SQLRestriction("is_deleted = false")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)
 public class PageFile {
@@ -65,6 +70,13 @@ public class PageFile {
     /** MIME 타입 (예: application/pdf) */
   @Column(name = "mime_type", nullable = false, length = 100)
     private String mimeType;
+
+  @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
     /** 업로드한 관리자 이메일 */
   @CreatedBy

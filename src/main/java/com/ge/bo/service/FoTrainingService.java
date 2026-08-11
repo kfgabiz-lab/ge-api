@@ -82,7 +82,7 @@ public class FoTrainingService {
 
         // ── HOP-2: currMgmt-data 최종 조회 + 페이징 ────────────────────────────
         StringBuilder cond = new StringBuilder(
-                " WHERE data_slug = :slug AND id IN (:curriculumIds)"
+                " WHERE data_slug = :slug AND id IN (:curriculumIds) AND is_deleted = false"
                         + " AND data_json->'curriculum'->>'is_visible' = '" + VISIBLE_CODE + "'");
         if (course != null) {
             cond.append(" AND data_json->'curriculum'->>'training_course' = :trainingCourse");
@@ -186,6 +186,7 @@ public class FoTrainingService {
                 "SELECT DISTINCT (data_json->'curriculum_detail1'->>'curriculum_id')"
                         + " FROM page_data"
                         + " WHERE data_slug = :slug"
+                        + " AND is_deleted = false"
                         + " AND ("
                         + "   EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'" + POWER_LIST_KEY + "') v"
                         + "           WHERE v ~ '^[0-9]+$' AND v::bigint IN (:catIds))"

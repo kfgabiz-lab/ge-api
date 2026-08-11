@@ -11,6 +11,7 @@ package com.ge.bo.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import io.hypersistence.utils.hibernate.type.json.JsonStringType;
+import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.annotations.Type;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
@@ -26,6 +27,7 @@ import java.time.OffsetDateTime;
  */
 @Entity
 @Table(name = "hero_banner")
+@SQLRestriction("is_deleted = false")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -74,6 +76,13 @@ public class HeroData {
   /** 항상 "-" 고정 저장되는 숨김 필드 */
   @Column(name = "default_val", length = 10, nullable = true)
   private String defaultVal;
+
+  @Builder.Default
+  @Column(name = "is_deleted", nullable = false)
+  private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+  private OffsetDateTime deletedAt;
 
   @CreatedBy
   @Column(name = "created_by", nullable = false, updatable = false, length = 50)

@@ -189,8 +189,7 @@ public class FileMetaService {
 
   /**
    * 파일 단건 삭제
-   * 순서: DB DELETE → 파일시스템 삭제 (파일시스템 실패는 로그만 기록)
-   * PageFileService.delete()와 동일 패턴
+   * DB soft delete (@SQLDelete로 is_deleted=true UPDATE 처리) — 물리 파일은 디스크에 유지
    *
    * @param id file_meta.id
    */
@@ -200,31 +199,7 @@ public class FileMetaService {
     FileMeta fileMeta = fileMetaRepository.findById(id)
         .orElseThrow(ErrorCode.FILE_NOT_FOUND::toException);
 
-    // DB에서 먼저 삭제
+    // DB soft delete (@SQLDelete 인터셉트 → UPDATE is_deleted=true)
     fileMetaRepository.delete(fileMeta);
-
-    // 파일시스템에서 삭제 (실패해도 예외 비전파 — 로그만 기록)
-    deleteFromFileSystem(fileMeta.getFilePath(), fileMeta.getSaveName());
-  }
-
-  // ── private 헬퍼 ──────────────────────────────────────────
-
-  /**
-   * 파일시스템에서 파일 삭제
-   * 실패해도 예외를 던지지 않음 — WARN 로그만 기록
-   */
-  private void deleteFromFileSystem(String dirPath, String saveName) {
-    Path filePath = Paths.get(dirPath, saveName);
-    try {
-      if (Files.exists(filePath)) {
-        Files.delete(filePath);
-        log.info("[FileMetaService] 파일 삭제 완료: {}", filePath);
-      } else {
-        log.warn("[FileMetaService] 삭제 대상 파일 없음 (무시): {}", filePath);
-      }
-    } catch (IOException e) {
-      // 파일 삭제 실패는 로그만 기록 — 예외 비전파
-      log.warn("[FileMetaService] 파일 삭제 실패 (무시): path={}", filePath, e);
-    }
   }
 }

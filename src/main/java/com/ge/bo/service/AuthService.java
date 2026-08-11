@@ -223,9 +223,9 @@ public class AuthService {
       throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_LOCKED", "잠긴 계정입니다. 관리자에게 문의하세요.");
     }
 
-    boolean isSystem = roleRepository.findByCode(admin.getRole())
-        .map(role -> role.isSystem())
-        .orElse(false);
+    var roleEntity = roleRepository.findByCode(admin.getRole());
+    boolean isSystem = roleEntity.map(role -> role.isSystem()).orElse(false);
+    String roleDisplayName = roleEntity.map(role -> role.getDisplayName()).orElse(admin.getRole());
 
     String newAccessToken = jwtTokenProvider.generateAccessToken(admin.getEmail(), admin.getRole());
     return LoginResponse.builder()
@@ -236,6 +236,7 @@ public class AuthService {
             .name(admin.getName())
             .email(admin.getEmail())
             .role(admin.getRole())
+            .roleDisplayName(roleDisplayName)
             .isSystem(isSystem)
             .build())
         .build();
@@ -396,9 +397,9 @@ public class AuthService {
 
   /* 2차 로그인 사용 안함(로컬용) */
   private LoginResponse directLoginResponse(AdminUser admin){
-    boolean isSystem = roleRepository.findByCode(admin.getRole())
-            .map(role -> role.isSystem())
-            .orElse(false);
+    var roleEntity = roleRepository.findByCode(admin.getRole());
+    boolean isSystem = roleEntity.map(role -> role.isSystem()).orElse(false);
+    String roleDisplayName = roleEntity.map(role -> role.getDisplayName()).orElse(admin.getRole());
     if(redisEnabled){
       return LoginResponse.builder()
               .accessToken("SUCCESS")
@@ -407,6 +408,7 @@ public class AuthService {
                       .name(admin.getName())
                       .email(admin.getEmail())
                       .role(admin.getRole())
+                      .roleDisplayName(roleDisplayName)
                       .isSystem(isSystem)
                       .build())
               .build();
@@ -420,6 +422,7 @@ public class AuthService {
                       .name(admin.getName())
                       .email(admin.getEmail())
                       .role(admin.getRole())
+                      .roleDisplayName(roleDisplayName)
                       .isSystem(isSystem)
                       .build())
               .build();
@@ -557,9 +560,9 @@ public class AuthService {
       );
     }
 
-    boolean isSystem = roleRepository.findByCode(admin.getRole())
-            .map(role -> role.isSystem())
-            .orElse(false);
+    var roleEntity = roleRepository.findByCode(admin.getRole());
+    boolean isSystem = roleEntity.map(role -> role.isSystem()).orElse(false);
+    String roleDisplayName = roleEntity.map(role -> role.getDisplayName()).orElse(admin.getRole());
 
     return LoginResponse.builder()
             .accessToken("SUCCESS") // 세션 방식에서는 accessToken 발급 안 함
@@ -568,6 +571,7 @@ public class AuthService {
                     .name(admin.getName())
                     .email(admin.getEmail())
                     .role(admin.getRole())
+                    .roleDisplayName(roleDisplayName)
                     .isSystem(isSystem)
                     .build())
             .build();

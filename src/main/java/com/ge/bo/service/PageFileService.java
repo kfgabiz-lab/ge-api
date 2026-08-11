@@ -255,8 +255,7 @@ public class PageFileService {
     // ── 단건 삭제 ─────────────────────────────────────────────
 
     /**
-     * 파일 단건 삭제
-     * 순서: DB DELETE → 파일시스템 삭제 (파일시스템 실패는 로그만 기록)
+     * 파일 단건 삭제 (소프트 삭제 — @SQLDelete로 UPDATE is_deleted=true 처리)
      *
      * @param id page_file.id
      */
@@ -266,11 +265,7 @@ public class PageFileService {
     PageFile pageFile = pageFileRepository.findById(id)
                 .orElseThrow(ErrorCode.FILE_NOT_FOUND::toException);
 
-        // DB에서 먼저 삭제
     pageFileRepository.delete(pageFile);
-
-        // 파일시스템에서 삭제 (실패해도 예외 비전파 — 로그만 기록)
-    deleteFromFileSystem(pageFile.getFilePath(), pageFile.getSaveName());
   }
 
     // ── dataId로 파일 목록 조회 ──────────────────────────────
@@ -305,32 +300,7 @@ public class PageFileService {
       return;
     }
 
-        // 파일시스템 파일 일괄 삭제 (실패해도 로그만 기록)
-    files.forEach(f -> deleteFromFileSystem(f.getFilePath(), f.getSaveName()));
-
-        // DB 일괄 삭제
     pageFileRepository.deleteAll(files);
     log.info("[PageFileService] 연관 파일 일괄 삭제 완료: dataId={}, 건수={}", dataId, files.size());
-  }
-
-    // ── private 헬퍼 ──────────────────────────────────────────
-
-    /**
-     * 파일시스템에서 파일 삭제
-     * 실패해도 예외를 던지지 않음 — WARN 로그만 기록
-     */
-  private void deleteFromFileSystem(String dirPath, String saveName) {
-    Path filePath = Paths.get(dirPath, saveName);
-    try {
-      if (Files.exists(filePath)) {
-        Files.delete(filePath);
-        log.info("[PageFileService] 파일 삭제 완료: {}", filePath);
-      } else {
-        log.warn("[PageFileService] 삭제 대상 파일 없음 (무시): {}", filePath);
-      }
-    } catch (IOException e) {
-            // 파일 삭제 실패는 로그만 기록 — 예외 비전파
-      log.warn("[PageFileService] 파일 삭제 실패 (무시): path={}", filePath, e);
-    }
   }
 }

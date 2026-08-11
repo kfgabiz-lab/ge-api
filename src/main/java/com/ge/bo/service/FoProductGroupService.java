@@ -55,6 +55,7 @@ public class FoProductGroupService {
         //    site_id = :siteId OR site_id IS NULL — PageDataService/FoMenuController와 동일한 사이트 스코프 패턴
         String groupSql = "SELECT id, data_json::text FROM page_data"
                 + " WHERE data_slug = :slug"
+                + " AND is_deleted = false"
                 + " AND data_json->'product_group'->>'is_visible' = '001'"
                 + (siteId != null ? " AND (site_id = :siteId OR site_id IS NULL)" : "")
                 + " ORDER BY NULLIF(data_json->'product_group'->>'group_order','')::numeric ASC NULLS LAST, id ASC";
@@ -146,12 +147,14 @@ public class FoProductGroupService {
         String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
         String productSql = "SELECT data_json::text FROM page_data"
                 + " WHERE data_slug = :slug"
+                + " AND is_deleted = false"
                 + " AND (data_json->>'id')::bigint IN (" + idList + ")"
                 + " AND data_json->'product'->>'order_status' <> '99'"
                 + productSiteCond
                 + " AND EXISTS ("
                 + " SELECT 1 FROM page_data j"
                 + " WHERE j.data_slug = 'category-data'"
+                + "  AND j.is_deleted = false"
                 + "  AND j.data_json->'product'->>'depth' = '3'"
                 + "  AND (j.data_json->'product'->>'id')::bigint = page_data.id"
                 + junctionSiteCond

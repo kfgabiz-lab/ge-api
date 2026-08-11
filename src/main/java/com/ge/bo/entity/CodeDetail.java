@@ -2,6 +2,7 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedBy;
@@ -9,6 +10,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 코드 상세 엔티티
@@ -18,6 +20,7 @@ import java.time.LocalDateTime;
     uniqueConstraints = @UniqueConstraint(name = "uq_code_detail_group_code", columnNames = {"group_id", "code"}),
     indexes = @Index(name = "idx_code_detail_sort", columnList = "group_id, sort_order")
 )
+@SQLRestriction("is_deleted = false")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)
 public class CodeDetail {
@@ -58,6 +61,13 @@ public class CodeDetail {
   @Column(length = 100) private String extra3;
   @Column(length = 100) private String extra4;
   @Column(length = 100) private String extra5;
+
+  @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
   @CreatedBy
     @Column(name = "created_by", nullable = false, updatable = false, length = 50)

@@ -2,6 +2,7 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -17,6 +18,7 @@ import java.time.OffsetDateTime;
         @Index(name = "idx_search_manage_text_search_manage", columnList = "search_manage_id")
     }
 )
+@SQLRestriction("is_deleted = false")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)
 public class SearchManageText {
@@ -41,6 +43,13 @@ public class SearchManageText {
     /** 검색용 텍스트 */
     @Column(columnDefinition = "TEXT", nullable = false)
     private String text;
+
+    @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+    @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
     @CreatedBy
     @Column(name = "created_by", nullable = false, updatable = false, length = 50)

@@ -2,11 +2,14 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * TSX 생성 이력 엔티티
@@ -19,6 +22,8 @@ import java.time.LocalDateTime;
             @Index(name = "idx_tsx_gen_type",    columnList = "template_type"),
             @Index(name = "idx_tsx_gen_created", columnList = "created_at DESC")
         })
+@SQLDelete(sql = "UPDATE tsx_generation SET is_deleted = true WHERE id = ?")
+@SQLRestriction("is_deleted = false")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)
 public class TsxGeneration {
@@ -50,6 +55,13 @@ public class TsxGeneration {
     /** 실제 생성된 TSX 코드 전문 */
   @Column(name = "tsx_code", nullable = false, columnDefinition = "TEXT")
     private String tsxCode;
+
+  @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
   @CreatedBy
     @Column(name = "created_by", updatable = false, length = 100)

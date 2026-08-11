@@ -11,6 +11,7 @@ package com.ge.bo.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
@@ -27,6 +28,7 @@ import java.time.OffsetDateTime;
  */
 @Entity
 @Table(name = "banner")
+@SQLRestriction("is_deleted = false")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -91,6 +93,13 @@ public class BannerData {
   /** 게시기간종료일 */
   @Column(name = "post_date_to", nullable = false)
   private OffsetDateTime postDateTo;
+
+  @Builder.Default
+  @Column(name = "is_deleted", nullable = false)
+  private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+  private OffsetDateTime deletedAt;
 
   @CreatedBy
   @Column(name = "created_by", nullable = false, updatable = false, length = 50)

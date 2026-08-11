@@ -33,6 +33,7 @@ public class FoMarketService {
             + " FROM page_data m,"
             + "      LATERAL unnest(string_to_array(m.attribute01, ',')) WITH ORDINALITY AS c(code, ord)"
             + " WHERE m.data_slug = 'market-data'"
+            + "  AND m.is_deleted = false"
             + "  AND m.data_json->>'name' = :name"
             + marketSiteCond
             + " )"
@@ -52,6 +53,7 @@ public class FoMarketService {
             + " LEFT JOIN LATERAL ("
             + "  SELECT pd.* FROM page_data pd"
             + "  WHERE pd.data_slug = 'product-data'"
+            + "   AND pd.is_deleted = false"
             + "   AND pd.data_json->'product'->>'product_code' = c.code"
             + "   AND pd.data_json->'product'->>'is_visible'   = '001'"
             + "   AND pd.data_json->'product'->>'order_status' = '01'"
@@ -61,6 +63,7 @@ public class FoMarketService {
             + " LEFT JOIN LATERAL ("
             + "  SELECT cd.* FROM page_data cd"
             + "  WHERE cd.data_slug = 'category-data'"
+            + "   AND cd.is_deleted = false"
             + "   AND cd.data_json->'category'->>'code'       = c.code"
             + "   AND cd.data_json->'category'->>'is_visible' = '001'"
             + categorySiteCond
@@ -70,10 +73,12 @@ public class FoMarketService {
             + "  SELECT l2.data_json FROM page_data j"
             + "  JOIN page_data l2"
             + "    ON l2.data_slug = 'category-data'"
+            + "   AND l2.is_deleted = false"
             + "   AND l2.id::text = j.data_json->'product'->>'parentId'"
             + "   AND l2.data_json->'category'->>'depth' = '2'"
             + lv2SiteCond
             + "  WHERE j.data_slug = 'category-data'"
+            + "   AND j.is_deleted = false"
             + "   AND j.data_json->'product'->>'depth' = '3'"
             + "   AND j.data_json->'product'->>'id'    = p.id::text"
             + mapSiteCond

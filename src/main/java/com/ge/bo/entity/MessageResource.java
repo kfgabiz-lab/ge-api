@@ -2,6 +2,7 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedBy;
@@ -9,6 +10,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 다국어 리소스 엔티티
@@ -19,6 +21,7 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "message_resource")
+@SQLRestriction("is_deleted = false")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -53,6 +56,13 @@ public class MessageResource {
     @Enumerated(EnumType.STRING)
     @Column(name = "resource_type", nullable = false, columnDefinition = "varchar(10) default 'WORD'")
     private MessageResourceType resourceType = MessageResourceType.WORD;
+
+  @Builder.Default
+    @Column(name = "is_deleted", nullable = false)
+    private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 
   @CreatedBy
     @Column(name = "created_by", nullable = false, updatable = false, length = 50)

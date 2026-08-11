@@ -2,6 +2,8 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -15,6 +17,8 @@ import java.time.OffsetDateTime;
  */
 @Entity
 @Table(name = "file_meta")
+@SQLRestriction("is_deleted = false")
+@SQLDelete(sql = "UPDATE file_meta SET is_deleted = true, deleted_at = now() WHERE id = ?")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)
 public class FileMeta {
@@ -46,6 +50,13 @@ public class FileMeta {
   /** MIME 타입 (예: application/pdf) */
   @Column(name = "mime_type", nullable = false, length = 100)
   private String mimeType;
+
+  @Builder.Default
+  @Column(name = "is_deleted", nullable = false)
+  private Boolean isDeleted = Boolean.FALSE;
+
+  @Column(name = "deleted_at")
+  private OffsetDateTime deletedAt;
 
   /** 업로드한 관리자 이메일 — JPA Auditing이 자동 설정 */
   @CreatedBy

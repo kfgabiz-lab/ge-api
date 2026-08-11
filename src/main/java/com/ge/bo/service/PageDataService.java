@@ -93,6 +93,7 @@ public class PageDataService {
       + "  SELECT c.id AS id, c.data_json AS data_json"
       + "  FROM page_data c"
       + "  WHERE c.data_slug = 'category-data'"
+      + "   AND c.is_deleted = false"
       + "   AND c.data_json->'category'->>'parentId' = :categoryId"
       + "   AND c.data_json->'category'->>'depth'    = '2'"
       + "   AND c.data_json->'category'->>'is_visible' = '001'"
@@ -102,11 +103,13 @@ public class PageDataService {
       + "  FROM visible_lv2 v"
       + "  JOIN page_data j"
       + "    ON j.data_slug = 'category-data'"
+      + "   AND j.is_deleted = false"
       + "   AND j.data_json->'product'->>'depth'    = '3'"
       + "   AND j.data_json->'product'->>'parentId' = v.id::text"
       + "   AND (j.site_id = :siteId OR j.site_id IS NULL)"
       + "  JOIN page_data p"
       + "    ON p.data_slug = 'product-data'"
+      + "   AND p.is_deleted = false"
       + "   AND p.id::text = j.data_json->'product'->>'id'"
       + "   AND (p.site_id = :siteId OR p.site_id IS NULL)"
       + "   AND p.data_json->'product'->>'is_visible'   = '001'"
@@ -121,11 +124,13 @@ public class PageDataService {
       + "  FROM page_data j"
       + "  JOIN page_data p"
       + "    ON p.data_slug = 'product-data'"
+      + "   AND p.is_deleted = false"
       + "   AND p.id::text = j.data_json->'product'->>'id'"
       + "   AND (p.site_id = :siteId OR p.site_id IS NULL)"
       + "   AND p.data_json->'product'->>'is_visible'   = '001'"
       + "   AND p.data_json->'product'->>'order_status' = '01'"
       + "  WHERE j.data_slug = 'category-data'"
+      + "   AND j.is_deleted = false"
       + "   AND j.data_json->'product'->>'depth'    = '3'"
       + "   AND j.data_json->'product'->>'parentId' = :categoryId"
       + "   AND (j.site_id = :siteId OR j.site_id IS NULL)"
@@ -158,7 +163,7 @@ public class PageDataService {
       else searchParams.put(key, value);
     });
 
-    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug");
+    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug AND is_deleted = false");
     if (siteId != null) {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
@@ -311,7 +316,7 @@ public class PageDataService {
       else searchParams.put(key, value);
     });
 
-    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug");
+    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug AND is_deleted = false");
     if (siteId != null) {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
@@ -442,7 +447,7 @@ public class PageDataService {
     public PageDataResponse findPublicDetail(String slug, Long id, Map<String, String> allParams, Long siteId) {
     Map<String, String> statusParams = extractStatusParams(allParams);
 
-    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug AND id = :id");
+    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug AND id = :id AND is_deleted = false");
     if (siteId != null) {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
@@ -497,7 +502,7 @@ public class PageDataService {
     String sortExpr = resolveFieldExpr(sortField, true);
     String titleExpr = resolveFieldExpr(titleField, false);
 
-    StringBuilder baseWhere = new StringBuilder("WHERE data_slug = :slug");
+    StringBuilder baseWhere = new StringBuilder("WHERE data_slug = :slug AND is_deleted = false");
     if (siteId != null) {
       baseWhere.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
@@ -549,10 +554,12 @@ public class PageDataService {
         + " FROM page_data c"
         + " LEFT JOIN page_data p"
         + "  ON p.data_slug = 'product-data'"
+        + " AND p.is_deleted = false"
         + " AND p.id = (c.data_json->'product'->>'id')::bigint"
         + " AND p.data_json->'product'->>'is_visible' = '001'"
         + " AND (p.site_id = :siteId OR p.site_id IS NULL)"
         + " WHERE c.data_slug = 'category-data'"
+        + "  AND c.is_deleted = false"
         + "  AND CASE WHEN jsonb_exists(c.data_json, 'category')"
         + "           THEN c.data_json->'category'->>'is_visible' = '001'"
         + "           ELSE true"
@@ -596,6 +603,7 @@ public class PageDataService {
         String sql = "SELECT data_json->'product_manager'->>'email'"
             + " FROM page_data"
             + " WHERE data_slug = 'productManager-data'"
+            + "  AND is_deleted = false"
             + "  AND data_json->'ms' @> to_jsonb(:productId)"
             + "  AND data_json->'product_manager'->>'is_visible' = '001'"
             + "  AND (site_id = :siteId OR site_id IS NULL)"
@@ -619,6 +627,7 @@ public class PageDataService {
             + "  " + section + "->>'image'        AS image"
             + " FROM page_data"
             + " WHERE data_slug IN ('blog-data','press-data','articles-data')"
+            + "  AND is_deleted = false"
             + "  AND data_json->'product_list' @> to_jsonb(:productId)"
             + "  AND " + section + "->>'is_visible' = '001'"
             + "  AND substring(regexp_replace(" + section + "->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today"
@@ -671,6 +680,7 @@ public class PageDataService {
         String siteCond = siteId != null ? " AND (pd.site_id = :siteId OR pd.site_id IS NULL)" : "";
         String fromClause = " FROM page_data pd";
         String whereClause = " WHERE pd.data_slug = 'product-data'"
+            + "  AND pd.is_deleted = false"
             + "  AND pd.data_json->'product'->>'is_visible' = '001'"
             + siteCond;
         if (hasKeyword) {
@@ -682,6 +692,7 @@ public class PageDataService {
             whereClause += " AND EXISTS ("
                 + " SELECT 1 FROM page_data j"
                 + " WHERE j.data_slug = 'category-data'"
+                + "  AND j.is_deleted = false"
                 + "  AND j.data_json->'product'->>'depth' = '3'"
                 + "  AND (j.data_json->'product'->>'id')::bigint = pd.id"
                 + "  AND (j.data_json->'product'->>'parentId')::bigint IN (:categoryIds)"
@@ -722,6 +733,7 @@ public class PageDataService {
             + "  SELECT (j3.data_json->'product'->>'parentId')::bigint AS lv2_id"
             + "  FROM page_data j3"
             + "  WHERE j3.data_slug = 'category-data'"
+            + "   AND j3.is_deleted = false"
             + "   AND j3.data_json->'product'->>'depth' = '3'"
             + "   AND (j3.data_json->'product'->>'id')::bigint = pd.id"
             + j3SiteCond
@@ -730,8 +742,8 @@ public class PageDataService {
             + "   j3.id ASC"
             + "  LIMIT 1"
             + " ) pc ON true"
-            + " LEFT JOIN page_data lv2 ON lv2.id = pc.lv2_id AND lv2.data_slug = 'category-data'" + lv2SiteCond
-            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data'" + lv1SiteCond;
+            + " LEFT JOIN page_data lv2 ON lv2.id = pc.lv2_id AND lv2.data_slug = 'category-data' AND lv2.is_deleted = false" + lv2SiteCond
+            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data' AND lv1.is_deleted = false" + lv1SiteCond;
         String listSql = "SELECT pd.id,"
             + "  pd.data_json->'product'->>'product_name'        AS product_name,"
             + "  pd.data_json->'product'->>'product_description' AS product_description,"
@@ -788,10 +800,12 @@ public class PageDataService {
             + "       count(DISTINCT p.id)::int AS cnt"
             + " FROM page_data p"
             + " JOIN page_data j ON j.data_slug = 'category-data'"
+            + "   AND j.is_deleted = false"
             + "   AND j.data_json->'product'->>'depth' = '3'"
             + "   AND (j.data_json->'product'->>'id')::bigint = p.id"
             + junctionSiteCond
             + " WHERE p.data_slug = 'product-data'"
+            + "   AND p.is_deleted = false"
             + "   AND p.data_json->'product'->>'is_visible' = '001'"
             + productSiteCond;
         if (hasKeyword) {
@@ -842,6 +856,7 @@ public class PageDataService {
             + "  data_json->'popup'->'image'->>0     AS image_file_id"
             + " FROM page_data"
             + " WHERE data_slug = 'popup-data'"
+            + "  AND is_deleted = false"
             + siteCond
             + "  AND " + fromCmp + " <= :nowValue"
             + "  AND " + toCmp + " >= :nowValue"
@@ -953,19 +968,23 @@ public class PageDataService {
           + " FROM page_data lv2"
           + " JOIN page_data lv1"
           + "   ON lv1.data_slug = 'category-data'"
+          + "  AND lv1.is_deleted = false"
           + "  AND lv1.id::text = lv2.data_json->'category'->>'parentId'"
           + " JOIN page_data j"
           + "   ON j.data_slug = 'category-data'"
+          + "  AND j.is_deleted = false"
           + "  AND j.data_json->'product'->>'depth' = '3'"
           + "  AND j.data_json->'product'->>'parentId' = lv2.id::text"
           + "  AND (j.site_id = :siteId OR j.site_id IS NULL)"
           + " JOIN page_data p"
           + "   ON p.data_slug = 'product-data'"
+          + "  AND p.is_deleted = false"
           + "  AND p.id::text = j.data_json->'product'->>'id'"
           + (activeOnly ? "  AND p.data_json->'product'->>'has_training' = '001'"
                         + "  AND p.data_json->'product'->>'is_visible' = '001'" : "")
           + "  AND (p.site_id = :siteId OR p.site_id IS NULL)"
           + " WHERE lv2.data_slug = 'category-data'"
+          + "  AND lv2.is_deleted = false"
           + "  AND lv2.data_json->'category'->>'depth' = '2'"
           + "  AND (lv2.site_id = :siteId OR lv2.site_id IS NULL)"
           + "  AND (lv1.site_id = :siteId OR lv1.site_id IS NULL)"
@@ -1054,9 +1073,11 @@ public class PageDataService {
           + " FROM page_data c"
           + " LEFT JOIN page_data p"
           + "   ON p.data_slug = 'product-data'"
+          + "  AND p.is_deleted = false"
           + "  AND p.id::text = c.data_json->'product'->>'id'"
           + "  AND (p.site_id = :siteId OR p.site_id IS NULL)"
           + " WHERE c.data_slug = 'category-data'"
+          + "  AND c.is_deleted = false"
           + "  AND c.id IN (:ids)"
           + "  AND (c.site_id = :siteId OR c.site_id IS NULL)";
 
@@ -1095,6 +1116,7 @@ public class PageDataService {
             + "   FROM visible_product vp"
             + "   JOIN page_data n"
             + "     ON n.data_slug IN ('blog-data','press-data','articles-data')"
+            + "    AND n.is_deleted = false"
             + "    AND n.data_json->'product_list' @> to_jsonb(vp.product_id)"
             + " )"
             + " SELECT n.id, n.data_slug,"
@@ -1103,7 +1125,8 @@ public class PageDataService {
             + "  " + section + "->>'image'        AS image"
             + " FROM page_data n"
             + " JOIN matched m ON m.id = n.id"
-            + " WHERE " + section + "->>'is_visible' = '001'"
+            + " WHERE n.is_deleted = false"
+            + "  AND " + section + "->>'is_visible' = '001'"
             + "  AND substring(regexp_replace(" + section + "->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today"
             + "  AND (n.site_id = :siteId OR n.site_id IS NULL)"
             + " ORDER BY " + section + "->>'publish_dttm' DESC, n.id DESC"
@@ -1349,7 +1372,7 @@ public class PageDataService {
     }
 
     StringBuilder sql = new StringBuilder(
-                "SELECT id FROM page_data WHERE data_slug = :slug");
+                "SELECT id FROM page_data WHERE data_slug = :slug AND is_deleted = false");
     for (String key : validKeys) {
       sql.append(" AND data_json->>'").append(key).append("' = :pk_").append(key);
     }
@@ -1386,7 +1409,7 @@ public class PageDataService {
       else searchParams.put(key, value);
     });
 
-    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug");
+    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug AND is_deleted = false");
     if (siteId != null) {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
@@ -1458,7 +1481,7 @@ public class PageDataService {
       }
     });
 
-    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug");
+    StringBuilder whereClause = new StringBuilder("WHERE data_slug = :slug AND is_deleted = false");
     if (siteId != null) {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
@@ -1595,7 +1618,7 @@ public class PageDataService {
     }
 
     StringBuilder sql = new StringBuilder(
-                "SELECT COUNT(*) FROM page_data WHERE data_slug = :slug");
+                "SELECT COUNT(*) FROM page_data WHERE data_slug = :slug AND is_deleted = false");
     for (String key : validKeys) {
       sql.append(" AND data_json->>'").append(key).append("' = :pk_").append(key);
     }
@@ -1641,7 +1664,7 @@ public class PageDataService {
     }
 
     StringBuilder sql = new StringBuilder(
-                "SELECT COUNT(*) FROM page_data WHERE data_slug = :slug");
+                "SELECT COUNT(*) FROM page_data WHERE data_slug = :slug AND is_deleted = false");
     for (int i = 0; i < fields.size(); i++) {
       sql.append(" AND ").append(toJsonPathExpr(fields.get(i))).append(" = :f_").append(i);
     }
@@ -1680,7 +1703,7 @@ public class PageDataService {
     }
 
     StringBuilder sql = new StringBuilder(
-                "SELECT COUNT(*) FROM page_data WHERE data_slug = :slug");
+                "SELECT COUNT(*) FROM page_data WHERE data_slug = :slug AND is_deleted = false");
     appendConditionSql(sql, rule.getCondition());
     appendSiteSql(sql, siteId);
     if (excludeId != null) {
@@ -2890,7 +2913,7 @@ public class PageDataService {
                 .collect(java.util.stream.Collectors.joining(","));
 
             StringBuilder sql = new StringBuilder(
-                "SELECT id, data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+                "SELECT id, data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
             appendSlaveKeyInCondition(sql, parentKeyPath, catIdList);
             Map<String, String> filterParams = new LinkedHashMap<>();
             if (StringUtils.hasText(rel.getSlaveFilter())) {
@@ -2935,16 +2958,18 @@ public class PageDataService {
         String sql = """
             WITH RECURSIVE descendant_categories AS (
                 SELECT id FROM page_data
-                 WHERE data_slug = 'category-data' AND id = :categoryId
+                 WHERE data_slug = 'category-data' AND id = :categoryId AND is_deleted = false
                 UNION ALL
                 SELECT p.id FROM page_data p
                  JOIN descendant_categories d
                    ON p.data_slug = 'category-data'
+                  AND p.is_deleted = false
                   AND p.data_json->'category'->>'parentId' ~ '^[0-9]+$'
                   AND (p.data_json->'category'->>'parentId')::bigint = d.id
             )
             SELECT id FROM page_data
              WHERE data_slug = 'currDtlMgmt-data'
+               AND is_deleted = false
                AND (
                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'power_list') v
                              WHERE v ~ '^[0-9]+$' AND v::bigint IN (SELECT id FROM descendant_categories))
@@ -2995,7 +3020,7 @@ public class PageDataService {
             boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
 
             StringBuilder slaveSql = new StringBuilder(
-                "SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+                "SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
             Map<String, String> condParams = new LinkedHashMap<>();
             String condExpr = joinFieldKey + (ilike ? "~" : "=") + value;
             appendSlaveFilter(slaveSql, condExpr, condParams);
@@ -3026,7 +3051,7 @@ public class PageDataService {
             }
 
             Set<Long> ids = new HashSet<>();
-            StringBuilder masterSql = new StringBuilder("SELECT id FROM page_data WHERE data_slug = :masterSlug");
+            StringBuilder masterSql = new StringBuilder("SELECT id FROM page_data WHERE data_slug = :masterSlug AND is_deleted = false");
             boolean runMasterQuery = true;
 
             if (isArrayContains) {
@@ -3084,7 +3109,7 @@ public class PageDataService {
             boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
 
             StringBuilder slaveSql = new StringBuilder(
-                "SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+                "SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
             Map<String, String> condParams = new LinkedHashMap<>();
             if (StringUtils.hasText(rel.getSlaveFilter())) {
                 appendSlaveFilter(slaveSql, rel.getSlaveFilter(), condParams);
@@ -3113,7 +3138,7 @@ public class PageDataService {
             }
 
             Set<Long> ids = new HashSet<>();
-            StringBuilder masterSql = new StringBuilder("SELECT id FROM page_data WHERE data_slug = :masterSlug");
+            StringBuilder masterSql = new StringBuilder("SELECT id FROM page_data WHERE data_slug = :masterSlug AND is_deleted = false");
             boolean runMasterQuery = true;
 
             if (isArrayContains) {
@@ -3166,7 +3191,7 @@ public class PageDataService {
 
             @SuppressWarnings("unchecked")
             List<Object> rows = entityManager.createNativeQuery(
-                "SELECT id FROM page_data WHERE data_slug = :slug"
+                "SELECT id FROM page_data WHERE data_slug = :slug AND is_deleted = false"
                 + " AND EXISTS ("
                 + "   SELECT 1 FROM jsonb_each(data_json) kv"
                 + "   WHERE jsonb_typeof(kv.value) = 'object'"
@@ -3310,7 +3335,7 @@ public class PageDataService {
             .map(v -> "'" + v + "'")
             .collect(java.util.stream.Collectors.joining(","));
 
-        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
         appendSlaveKeyInCondition(sql, slaveKey, idList);
         if (siteId != null) {
             sql.append(" AND (site_id = :siteId OR site_id IS NULL)");
@@ -3367,7 +3392,7 @@ public class PageDataService {
             .map(v -> "'" + v.replace("'", "''") + "'")
             .collect(java.util.stream.Collectors.joining(","));
 
-        StringBuilder sql1 = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        StringBuilder sql1 = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
         appendSlaveKeyInCondition(sql1, rel.getSlaveKey(), masterIdList);
         Map<String, String> filterParams = new LinkedHashMap<>();
         if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
@@ -3423,7 +3448,7 @@ public class PageDataService {
             String parentIdList = parentIdSet.stream()
                 .map(id -> "'" + id.replace("'", "''") + "'")
                 .collect(java.util.stream.Collectors.joining(","));
-            StringBuilder sqlLevel = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+            StringBuilder sqlLevel = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
             appendSlaveKeyInCondition(sqlLevel, "id", parentIdList);
             Query qLevel = entityManager.createNativeQuery(sqlLevel.toString());
             qLevel.setParameter("slaveSlug", rel.getSlaveSlug());
@@ -3481,7 +3506,7 @@ public class PageDataService {
                 String productIdList = productIdSet.stream()
                     .map(id -> "'" + id.replace("'", "''") + "'")
                     .collect(java.util.stream.Collectors.joining(","));
-                StringBuilder sqlProduct = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+                StringBuilder sqlProduct = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
                 appendSlaveKeyInCondition(sqlProduct, "id", productIdList);
                 Query qProduct = entityManager.createNativeQuery(sqlProduct.toString());
                 qProduct.setParameter("slaveSlug", "product-data");
@@ -3597,7 +3622,7 @@ public class PageDataService {
             .map(v -> "'" + v + "'")
             .collect(java.util.stream.Collectors.joining(","));
 
-        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
         appendSlaveKeyInCondition(sql, rel.getSlaveKey(), idList);
         Map<String, String> filterParams = new LinkedHashMap<>();
         if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
@@ -3653,7 +3678,7 @@ public class PageDataService {
             .map(v -> "'" + v + "'")
             .collect(java.util.stream.Collectors.joining(","));
 
-        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
         appendSlaveKeyInCondition(sql, rel.getSlaveKey(), idList);
         Map<String, String> filterParams = new LinkedHashMap<>();
         if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
@@ -3748,7 +3773,7 @@ public class PageDataService {
             .collect(java.util.stream.Collectors.joining(","));
         if (idList.isBlank()) return null;
 
-        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        StringBuilder sql = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
         appendSlaveKeyInCondition(sql, rel.getSlaveKey(), idList);
         Map<String, String> filterParams = new LinkedHashMap<>();
         if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
@@ -3782,7 +3807,7 @@ public class PageDataService {
         boolean hasFetchFields = StringUtils.hasText(rel.getFetchFields());
 
 
-        StringBuilder sql1 = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug");
+        StringBuilder sql1 = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
         appendSlaveKeyCondition(sql1, rel.getSlaveKey(), "masterValue");
         Map<String, String> filterParams = new LinkedHashMap<>();
         if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
@@ -3845,6 +3870,7 @@ public class PageDataService {
             if (parentId == null || parentId.isBlank()) break;
 
             String sql = "SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug"
+                + " AND is_deleted = false"
                 + " AND data_json->>'id' = :parentId LIMIT 1";
             Query q = entityManager.createNativeQuery(sql);
             q.setParameter("slaveSlug", slaveSlug);
@@ -3897,6 +3923,7 @@ public class PageDataService {
             if (parentId == null || parentId.isBlank()) break;
 
             String sql = "SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug"
+                + " AND is_deleted = false"
                 + " AND data_json->>'id' = :parentId LIMIT 1";
             Query q = entityManager.createNativeQuery(sql);
             q.setParameter("slaveSlug", rel.getSlaveSlug());
@@ -3925,6 +3952,7 @@ public class PageDataService {
                 String productId = extractField(linkDataJson, "product.id");
                 if (productId != null && !productId.isBlank()) {
                     String sqlProduct = "SELECT data_json::text FROM page_data WHERE data_slug = 'product-data'"
+                        + " AND is_deleted = false"
                         + " AND data_json->>'id' = :productId LIMIT 1";
                     Query qProduct = entityManager.createNativeQuery(sqlProduct);
                     qProduct.setParameter("productId", productId);

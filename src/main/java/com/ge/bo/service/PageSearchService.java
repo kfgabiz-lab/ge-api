@@ -118,13 +118,15 @@ public class PageSearchService {
             inner.append("  0::int AS score");
         }
         inner.append(" FROM search_manage m")
-             .append(" JOIN search_manage_text t ON t.search_manage_id = m.id")
+             .append(" JOIN search_manage_text t ON t.search_manage_id = m.id AND t.is_deleted = false")
              .append(" LEFT JOIN code_detail cd")
              .append("        ON cd.code = m.page_section")
              .append("       AND cd.is_active = true")
+             .append("       AND cd.is_deleted = false")
              .append("       AND cd.group_id = (SELECT id FROM code_group WHERE group_code = '")
-             .append(PAGE_SECTION_GROUP_CODE).append("')")
-             .append(" WHERE m.is_active = true");
+             .append(PAGE_SECTION_GROUP_CODE).append("' AND is_deleted = false)")
+             .append(" WHERE m.is_active = true")
+             .append(" AND m.is_deleted = false");
         if (hasKeyword) {
             inner.append(" AND (t.title ILIKE :q ESCAPE '\\' OR t.text ILIKE :q ESCAPE '\\')");
         }
@@ -173,8 +175,9 @@ public class PageSearchService {
              .append("  ROW_NUMBER() OVER (PARTITION BY m.url")
              .append("    ORDER BY (t.title IS NULL), t.created_at DESC, t.id DESC) AS rn")
              .append(" FROM search_manage m")
-             .append(" JOIN search_manage_text t ON t.search_manage_id = m.id")
-             .append(" WHERE m.is_active = true");
+             .append(" JOIN search_manage_text t ON t.search_manage_id = m.id AND t.is_deleted = false")
+             .append(" WHERE m.is_active = true")
+             .append(" AND m.is_deleted = false");
         if (hasKeyword) {
             inner.append(" AND (t.title ILIKE :q ESCAPE '\\' OR t.text ILIKE :q ESCAPE '\\')");
         }
