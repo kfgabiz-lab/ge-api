@@ -1,7 +1,6 @@
 package com.ge.bo.service;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,7 +15,6 @@ import org.springframework.http.HttpStatus;
 
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -25,7 +23,6 @@ public class AdminService {
 
   private final AdminRepository adminRepository;
   private final RoleRepository roleRepository;
-  private final PasswordEncoder passwordEncoder;
 
   /**
    * 관리자 단건 조회 (is_system=true 역할 계정은 존재하지 않는 것처럼 처리)
@@ -69,42 +66,6 @@ public class AdminService {
   }
 
   /**
-   * 관리자 신규 등록 (임시 비밀번호 자동 생성 후 응답에 포함)
-   *
-   * @param request 관리자 생성 요청 DTO
-   * @return 등록된 관리자 응답 DTO (tempPassword 포함)
-   */
-  @Transactional
-  public AdminDto.Response createAdmin(AdminDto.CreateRequest request) {
-    if (!roleRepository.existsByCode(request.getRole()) || isSystemRole(request.getRole())) {
-      throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_ROLE", "유효하지 않은 역할 코드입니다.");
-    }
-    if (adminRepository.existsByEmail(request.getEmail())) {
-      throw new BusinessException(HttpStatus.BAD_REQUEST, "DUPLICATE_EMAIL", "이미 등록된 아이디입니다.");
-    }
-
-    /* 임시 비밀번호 자동 생성 */
-    String rawPassword = UUID.randomUUID().toString().substring(0, 12);
-
-    AdminUser adminUser = AdminUser.builder()
-        .email(request.getEmail())
-        .name(request.getName())
-        .deptCode(request.getDeptCode())
-        .deptName(request.getDeptName())
-        .remark(request.getRemark())
-        .passwordHash(passwordEncoder.encode(rawPassword))
-        .role(request.getRole())
-        .isActive(request.isActive())
-        .build();
-
-    AdminUser saved = adminRepository.save(adminUser);
-    AdminDto.Response response = convertToResponse(saved);
-    response.setTempPassword(rawPassword);
-
-    return response;
-  }
-
-  /**
    * 관리자 정보 수정
    *
    * @param id 관리자 PK
@@ -122,9 +83,6 @@ public class AdminService {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_ROLE", "유효하지 않은 역할 코드입니다.");
     }
 
-    adminUser.setName(request.getName());
-    adminUser.setDeptCode(request.getDeptCode());
-    adminUser.setDeptName(request.getDeptName());
     adminUser.setRemark(request.getRemark());
     adminUser.setRole(request.getRole());
     adminUser.setActive(request.isActive());

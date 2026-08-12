@@ -45,18 +45,6 @@ public class AdminController {
   }
 
   /**
-   * 관리자 신규 등록
-   *
-   * @param request 관리자 생성 요청 DTO
-   * @return 등록된 관리자 응답 DTO (임시 비밀번호 포함)
-   */
-  @PostMapping
-  public ResponseEntity<AdminDto.Response> createAdmin(
-      @Valid @RequestBody AdminDto.CreateRequest request) {
-    return ResponseEntity.ok(adminService.createAdmin(request));
-  }
-
-  /**
    * 관리자 정보 수정
    *
    * @param id 관리자 PK
