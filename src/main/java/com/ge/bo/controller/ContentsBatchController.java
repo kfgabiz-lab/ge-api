@@ -19,7 +19,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -87,7 +86,6 @@ public class ContentsBatchController {
     /**
      * 배치 실행 이력 단건 조회 — row_counts/report(jsonb)를 파싱해 그대로 내려준다(수동 실행 화면의 간단 리포트용).
      */
-    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
     @GetMapping("/{batchId}")
     public ResponseEntity<ContentsBatchLogResponse> getBatchLog(@PathVariable Long batchId) {
         ContentsBatchLog batchLog = batchLogRepository.findById(batchId)
@@ -103,7 +101,6 @@ public class ContentsBatchController {
      * 소스(카탈로그/SSQ/인증서)별 가장 최근 배치 이력 조회 — 수동 실행 화면이 새로고침돼도 마지막 실행 결과를
      * 다시 보여줄 수 있도록, 페이지 진입 시 이 API로 마지막 상태를 복원한다(실행 이력이 없는 소스는 결과에서 빠진다).
      */
-    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
     @GetMapping("/latest")
     public ResponseEntity<List<ContentsBatchLogResponse>> getLatestBatchLogs() {
         List<ContentsBatchLogResponse> response = new ArrayList<>();
@@ -121,7 +118,6 @@ public class ContentsBatchController {
      * 배치 1회 실행에서 격리된(적재 실패) 행 목록 조회 — 리포트 노트만으로는 원본 데이터를 볼 수 없어서,
      * 어떤 원천 행이 왜 걸렸는지 raw_data까지 그대로 내려준다.
      */
-    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
     @GetMapping("/{batchId}/fail-rows")
     public ResponseEntity<List<ContentsIfFailRowResponse>> getFailRows(@PathVariable Long batchId) {
         List<ContentsIfFailRowResponse> response = failRowRepository.findByBatchId(batchId).stream()
@@ -134,7 +130,6 @@ public class ContentsBatchController {
      * 배치 1회 실행에서 실제로 적재된(성공+부분성공) 문서 목록 조회 — 격리/실패 행만으로는 "뭐가 문제였는지"만
      * 보이고 "뭐가 정상 처리됐는지"는 알 수 없어서, 성공 쪽도 어드민 화면에서 바로 확인할 수 있게 내려준다.
      */
-    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
     @GetMapping("/{batchId}/processed-docs")
     public ResponseEntity<List<ContentsProcessedDocResponse>> getProcessedDocs(@PathVariable Long batchId) {
         ContentsBatchLog batchLog = batchLogRepository.findById(batchId)
@@ -168,7 +163,6 @@ public class ContentsBatchController {
      * SSQ 미매핑 카테고리 재처리 — SsqCategoryMappingEntry(변환표)에 새 항목을 추가·배포한 뒤 실행하면,
      * 원본 IF 재수신 없이도 그동안 nahp_category_id=NULL이던 카테고리가 채워진다.
      */
-    @PreAuthorize("@securityService.isSystemAdmin(authentication)")
     @PostMapping("/ssq/remap-categories")
     public ResponseEntity<SsqCategoryRemapResponse> remapSsqCategories() {
         int remapped = ssqCategoryRemapService.remapUnmapped();
