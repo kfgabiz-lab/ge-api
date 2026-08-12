@@ -79,6 +79,9 @@ public class FileMetaService {
     String ext = fileStorageService.extractExtension(originalName);
     String saveName = UUID.randomUUID() + (ext.isEmpty() ? "" : "." + ext);
 
+    // 클라이언트가 보낸 Content-Type은 위조 가능하므로 실제 파일 내용으로 서버가 재판정
+    String mimeType = fileStorageService.detectMimeType(file, originalName);
+
     // 연월 디렉토리 경로 생성: {upload-root}/file-meta/{YYYY}/{MM}/
     LocalDate today = LocalDate.now();
     String dirPath = uploadRoot + "/file-meta/"
@@ -102,7 +105,7 @@ public class FileMetaService {
         .filePath(dirPath)
         .blobUrl(blobUrl)
         .fileSize(file.getSize())
-        .mimeType(file.getContentType() != null ? file.getContentType() : "application/octet-stream")
+        .mimeType(mimeType)
         .createdBy(createdBy)
         .build();
 

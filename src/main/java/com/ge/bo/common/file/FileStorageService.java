@@ -10,6 +10,7 @@ import com.ge.bo.exception.ErrorCode;
 import com.ge.bo.repository.PageFileRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.tika.Tika;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -23,11 +24,49 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.Set;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class FileStorageService {
+
+    public static final String DEFAULT_MIME_TYPE = "application/octet-stream";
+
+    private static final int MIME_TYPE_MAX_LENGTH = 100;
+
+    private static final Tika TIKA = new Tika();
+
+    private static final Set<String> ALLOWED_MIME_TYPES = Set.of(
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp",
+            "image/bmp",
+            "image/svg+xml",
+            "video/mp4",
+            "video/quicktime",
+            "video/x-msvideo",
+            "video/x-matroska",
+            "video/webm",
+            "video/x-ms-wmv",
+            "video/x-flv",
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/x-tika-ooxml",
+            "application/x-tika-msoffice",
+            "application/x-hwp",
+            "application/x-hwp-v5",
+            "application/haansofthwp",
+            "application/vnd.hancom.hwp",
+            "application/vnd.hancom.hwpx",
+            "text/plain"
+    );
 
     private final AzureBlobProperties properties;
 
@@ -136,5 +175,27 @@ public class FileStorageService {
             return "";
         }
         return fileName.substring(dotIndex + 1).toLowerCase();
+    }
+
+    /**
+     * 업로드 파일의 실제 바이트 내용을 분석해 MIME 타입을 판정한다.
+     * 클라이언트가 보낸 Content-Type 헤더는 위조 가능하므로 신뢰하지 않는다.
+     * 판정 불가/비정상 길이인 경우 application/octet-stream으로 처리한다.
+     */
+    public String detectMimeType(MultipartFile file, String originalName) {
+        try (InputStream inputStream = file.getInputStream()) {
+            String detected = TIKA.detect(inputStream, originalName);
+            if (detected == null || detected.isBlank() || detected.length() > MIME_TYPE_MAX_LENGTH) {
+                return DEFAULT_MIME_TYPE;
+            }
+            if (!ALLOWED_MIME_TYPES.contains(detected)) {
+                log.warn("[FileStorageService] 허용목록 외 MIME 감지: origName={}, clientMime={}, detectedMime={}",
+                        originalName, file.getContentType(), detected);
+            }
+            return detected;
+        } catch (IOException e) {
+            log.error("[FileStorageService] MIME 판정 실패: origName={}", originalName, e);
+            return DEFAULT_MIME_TYPE;
+        }
     }
 }

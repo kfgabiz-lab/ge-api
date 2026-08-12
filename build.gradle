@@ -72,6 +72,9 @@ dependencies {
     // HTML sanitize/파싱 — SSQ version_desc 정제, data-oembed-url 추출용
     implementation 'org.jsoup:jsoup:1.18.1'
 
+    // 업로드 파일 실제 바이트 기반 MIME 판정 (클라이언트 Content-Type 신뢰 제거)
+    implementation 'org.apache.tika:tika-core:2.9.2'
+
     // redis
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     implementation 'org.springframework.session:spring-session-data-redis'
