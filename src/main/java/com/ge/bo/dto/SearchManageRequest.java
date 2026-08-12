@@ -15,5 +15,8 @@ public record SearchManageRequest(
 
     /** 분류(페이지 섹션) — code_detail(group_code='PAGE_SECTION') 코드값. 선택 입력. */
     @Size(max = 30, message = "분류 코드는 30자 이하로 입력해주세요.")
-    String pageSection
+    String pageSection,
+
+    /** 연동된 FO 메뉴 id — 수동 URL 입력이면 null. 항상 현재 선택 상태를 그대로 전송(부분수정 아님). */
+    Long menuId
 ) {}

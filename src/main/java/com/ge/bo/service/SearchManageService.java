@@ -3,9 +3,11 @@ package com.ge.bo.service;
 import com.ge.bo.dto.SearchManageRequest;
 import com.ge.bo.dto.SearchManageResponse;
 import com.ge.bo.dto.SearchManageTextRequest;
+import com.ge.bo.entity.Menu;
 import com.ge.bo.entity.SearchManage;
 import com.ge.bo.entity.SearchManageText;
 import com.ge.bo.exception.ErrorCode;
+import com.ge.bo.repository.MenuRepository;
 import com.ge.bo.repository.SearchManageRepository;
 import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +30,7 @@ import java.util.List;
 public class SearchManageService {
 
     private final SearchManageRepository searchManageRepository;
+    private final MenuRepository menuRepository;
 
     /* ══════════ 목록 조회 (url 필터 + 페이징) ══════════ */
 
@@ -53,6 +56,7 @@ public class SearchManageService {
             .url(request.url().trim())
             .active(request.active() != null ? request.active() : true)
             .pageSection(normalizePageSection(request.pageSection()))
+            .menu(resolveMenu(request.menuId()))
             .build();
 
         return SearchManageResponse.from(searchManageRepository.save(entity));
@@ -74,6 +78,8 @@ public class SearchManageService {
         if (request.pageSection() != null) {
             entity.setPageSection(normalizePageSection(request.pageSection()));
         }
+        // menu 연결은 url/active 와 동일하게 매번 현재 선택 상태 그대로 반영(부분수정 아님) — null 이면 연결 해제
+        entity.setMenu(resolveMenu(request.menuId()));
 
         return SearchManageResponse.from(entity);
     }
@@ -132,6 +138,13 @@ public class SearchManageService {
     /** 분류(page_section) 정규화 — null/공백이면 null(FK 아닌 얕은 참조 코드값, 선택 입력) */
     private String normalizePageSection(String pageSection) {
         return (pageSection == null || pageSection.isBlank()) ? null : pageSection.trim();
+    }
+
+    /** 연동 메뉴 조회 — menuId 가 없으면(수동 URL 입력) null */
+    private Menu resolveMenu(Long menuId) {
+        if (menuId == null) return null;
+        return menuRepository.findById(menuId)
+            .orElseThrow(ErrorCode.MENU_NOT_FOUND::toException);
     }
 
     private SearchManage findOrThrow(Long id) {

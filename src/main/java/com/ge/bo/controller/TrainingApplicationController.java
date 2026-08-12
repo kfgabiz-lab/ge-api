@@ -1,6 +1,7 @@
 package com.ge.bo.controller;
 
 import com.ge.bo.dto.TrainingApplicationResponse;
+import com.ge.bo.dto.TrainingApplicationSummaryResponse;
 import com.ge.bo.service.TrainingApplicationService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +39,16 @@ public class TrainingApplicationController {
         return ResponseEntity.ok(
                 trainingApplicationService.getList(trainingScheduleType, trainingCourse, trainingType,
                         curriculumTitle, sessionTitle, searchPeriodType, startDate, endDate, pageable));
+    }
+
+    @GetMapping("/summary")
+    public ResponseEntity<TrainingApplicationSummaryResponse> getSummary(
+            @RequestParam(required = false) String regularTrainingType,
+            @RequestParam(required = false) String irregularTrainingType,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime endDate) {
+        return ResponseEntity.ok(
+                trainingApplicationService.getSummary(regularTrainingType, irregularTrainingType, startDate, endDate));
     }
 
     @GetMapping("/export")

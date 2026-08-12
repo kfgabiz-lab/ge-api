@@ -198,7 +198,7 @@ public class SsqContentsConverter {
         }
         boolean hasExposableContent = versions.stream()
             .anyMatch(v -> v.getVideoUrl() != null || !v.getFiles().isEmpty());
-        if (!explicitDelete && !versions.isEmpty() && !hasExposableContent) {
+        if (!explicitDelete && !hasExposableContent) {
             if (rowFailures.isEmpty()) {
                 rowFailures.add(new RowFailure(SOURCE_TABLE_FILE, "doc_id=" + docId, "EMPTY_CONTENT",
                     "노출 파일(if_r_ssq_file_info)·영상(version_desc) URL이 모두 0건인 문서(빈 콘텐츠)", rawRow(first)));

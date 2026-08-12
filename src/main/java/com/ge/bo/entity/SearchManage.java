@@ -42,6 +42,11 @@ public class SearchManage {
     @Column(name = "page_section", length = 30)
     private String pageSection;
 
+    /** 연동된 FO 메뉴 — 수동 URL 입력 시 null. 연결 시 FO 검색결과 title이 이 메뉴의 metaTitle을 우선 사용한다. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "menu_id")
+    private Menu menu;
+
     /** 등록된 검색텍스트 목록 — cascade ALL + orphanRemoval로 일괄 저장/삭제 처리 */
     @OneToMany(mappedBy = "searchManage", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("createdAt DESC")
