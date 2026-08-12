@@ -83,6 +83,21 @@ public class PageDataService {
         " AND data_json->(replace(data_slug,'-data','')) ->> 'is_visible' = '001'"
       + " AND substring(regexp_replace(data_json->(replace(data_slug,'-data',''))->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today";
 
+  /**
+   * FO 공개 API에서 게시일(publish_dttm) 없이 노출여부(is_visible)만 서버가 강제하는 slug → JSON 섹션명 매핑.
+   * FO_PUBLISH_GATED_SLUGS와 동일한 목적이나, 섹션명이 slug명에서 유도되지 않아 별도 매핑이 필요하다.
+   */
+  private static final Map<String, String> FO_VISIBILITY_GATED_SLUGS =
+      Map.of(
+          "wheretobuy-agency-data", "agency",
+          "currMgmt-data", "curriculum",
+          "currDtlMgmt-data", "curriculum_detail3");
+
+  private String visibilityGateSql(String slug) {
+    String section = FO_VISIBILITY_GATED_SLUGS.get(slug);
+    return section == null ? "" : " AND data_json->'" + section + "'->>'is_visible' = '001'";
+  }
+
   private static final String PRODUCT_DATA_SLUG_COND = "#slug == 'product-data'";
 
   private static final String CONTENTS_DATA_SLUG_COND =
@@ -170,6 +185,9 @@ public class PageDataService {
     appendWhereConditions(whereClause, searchParams);
     if (enforcePublishGate && FO_PUBLISH_GATED_SLUGS.contains(slug)) {
       whereClause.append(FO_PUBLISH_GATE_SQL);
+    }
+    if (enforcePublishGate) {
+      whereClause.append(visibilityGateSql(slug));
     }
 
     if ("currDtlMgmt-data".equals(slug) && relFilterParams.containsKey("rel_4")) {
@@ -455,6 +473,7 @@ public class PageDataService {
     if (FO_PUBLISH_GATED_SLUGS.contains(slug) && !isValidPreviewToken(allParams.get("previewToken"), slug, id)) {
       whereClause.append(FO_PUBLISH_GATE_SQL);
     }
+    whereClause.append(visibilityGateSql(slug));
 
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
                 + " created_by, created_at, updated_by, updated_at, \"count\" "
@@ -510,6 +529,7 @@ public class PageDataService {
     if (FO_PUBLISH_GATED_SLUGS.contains(slug)) {
       baseWhere.append(FO_PUBLISH_GATE_SQL);
     }
+    baseWhere.append(visibilityGateSql(slug));
 
     String curVal = "(SELECT " + sortExpr + " FROM page_data WHERE data_slug = :slug AND id = :id)";
 
