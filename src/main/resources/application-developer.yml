@@ -24,20 +24,20 @@ spring:
           connectiontimeout: 15000
           timeout: 15000
 
-  data:
-    redis:
-      password: ${REDIS_PASSWORD:}
+#  data:
+#    redis:
+#      password: ${REDIS_PASSWORD:}
 
   session:
-    store-type: redis
+    store-type: none
     timeout: 1d
-    redis:
-      namespace: nahpdev:session
-      flush-mode: on-save
-      save-mode: on-set-attribute
-      repository-type: indexed
+#    redis:
+#      namespace: nahpdev:session
+#      flush-mode: on-save
+#      save-mode: on-set-attribute
+#      repository-type: indexed
   cache:
-    type: redis
+    type: none
 
 server:
   servlet:
