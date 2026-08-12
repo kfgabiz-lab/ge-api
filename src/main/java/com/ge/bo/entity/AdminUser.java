@@ -2,6 +2,7 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -16,6 +17,7 @@ import java.time.ZoneId;
 @Entity
 @Table(name = "admin_user")
 @SQLRestriction("is_deleted = false")
+@SQLDelete(sql = "UPDATE admin_user SET is_deleted = true, deleted_at = now() WHERE id = ?")
 @Getter
 @Setter
 @NoArgsConstructor
