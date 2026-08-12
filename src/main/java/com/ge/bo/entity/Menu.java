@@ -3,6 +3,7 @@ package com.ge.bo.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.BatchSize;
+import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
@@ -23,6 +24,7 @@ import java.util.List;
     indexes = @Index(name = "idx_menu_type_parent", columnList = "menu_type, parent_id")
 )
 @SQLRestriction("is_deleted = false")
+@SQLDelete(sql = "UPDATE menu SET is_deleted = true, deleted_at = now() WHERE id = ?")
 @Getter
 @Setter
 @NoArgsConstructor

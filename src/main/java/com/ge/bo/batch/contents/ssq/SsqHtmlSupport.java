@@ -6,7 +6,6 @@ import org.jsoup.nodes.Element;
 import org.jsoup.safety.Safelist;
 import org.springframework.stereotype.Component;
 
-import java.net.URI;
 import java.util.Optional;
 import java.util.Set;
 
@@ -42,16 +41,6 @@ public class SsqHtmlSupport {
     }
 
     public boolean isAllowedVideoUrl(String url) {
-        if (url == null || url.isBlank()) {
-            return false;
-        }
-        try {
-            URI uri = URI.create(url);
-            String host = uri.getHost();
-            return "https".equalsIgnoreCase(uri.getScheme()) && host != null
-                && ALLOWED_VIDEO_HOSTS.contains(host.toLowerCase());
-        } catch (IllegalArgumentException e) {
-            return false;
-        }
+        return com.ge.bo.common.html.VideoUrlHostValidator.isAllowedHost(url, ALLOWED_VIDEO_HOSTS);
     }
 }

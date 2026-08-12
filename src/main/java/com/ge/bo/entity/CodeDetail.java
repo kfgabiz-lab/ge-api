@@ -2,6 +2,7 @@ package com.ge.bo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
@@ -21,6 +22,7 @@ import java.time.OffsetDateTime;
     indexes = @Index(name = "idx_code_detail_sort", columnList = "group_id, sort_order")
 )
 @SQLRestriction("is_deleted = false")
+@SQLDelete(sql = "UPDATE code_detail SET is_deleted = true, deleted_at = now() WHERE id = ?")
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @EntityListeners(AuditingEntityListener.class)
 public class CodeDetail {

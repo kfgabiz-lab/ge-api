@@ -2,6 +2,7 @@ package com.ge.bo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.common.context.SiteTimeZoneResolver;
+import com.ge.bo.common.html.RichTextSanitizer;
 import com.ge.bo.common.search.SearchSqlSupport;
 import com.ge.bo.dto.AdjacentResponse;
 import com.ge.bo.dto.CategoryLv2RowResponse;
@@ -65,6 +66,7 @@ public class PageDataService {
   private final SiteTimeZoneResolver siteTimeZoneResolver;
   private final IntegrationContentsSyncService integrationContentsSyncService;
   private final JwtTokenProvider jwtTokenProvider;
+  private final RichTextSanitizer richTextSanitizer;
 
   @PersistenceContext
     private EntityManager entityManager;
@@ -1172,7 +1174,7 @@ public class PageDataService {
     dataJson.forEach((key, value) -> {
       if (!key.startsWith("_fetchedRel")) cleaned.put(key, value);
     });
-    return cleaned;
+    return richTextSanitizer.sanitizeDataJson(cleaned);
   }
 
   @Transactional
@@ -1300,6 +1302,7 @@ public class PageDataService {
         @CachePut(cacheNames = "contentsData", key = "#id", condition = CONTENTS_DATA_SLUG_COND)
     })
     public PageDataResponse patchField(String slug, Long id, String fieldKey, Object value) {
+    value = richTextSanitizer.sanitizeValue(value);
     PageData existing = pageDataRepository.findByIdAndDataSlug(id, slug)
                 .orElseThrow(ErrorCode.PAGE_DATA_NOT_FOUND::toException);
     Map<String, Object> dataJson;
@@ -1752,6 +1755,16 @@ public class PageDataService {
       if (t.isToday()) {
         sql.append(" AND substring(regexp_replace(").append(toJsonPathExpr(t.key()))
                 .append(", '[^0-9]', '', 'g'), 1, 8) ").append(sqlOp).append(" :today");
+      } else if (!t.key().contains(".")) {
+        String fieldKey = t.key();
+        String paramName = "cond_" + i;
+        sql.append(" AND (data_json->>'").append(fieldKey).append("' ").append(sqlOp).append(" :").append(paramName)
+                .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv1")
+                .append(" WHERE jsonb_typeof(kv1.value) = 'object'")
+                .append(" AND (kv1.value->>'").append(fieldKey).append("' ").append(sqlOp).append(" :").append(paramName)
+                .append(" OR EXISTS (SELECT 1 FROM jsonb_each(kv1.value) kv2")
+                .append(" WHERE jsonb_typeof(kv2.value) = 'object'")
+                .append(" AND kv2.value->>'").append(fieldKey).append("' ").append(sqlOp).append(" :").append(paramName).append("))))");
       } else {
         sql.append(" AND ").append(toJsonPathExpr(t.key())).append(" ").append(sqlOp).append(" :cond_").append(i);
       }
@@ -1970,6 +1983,11 @@ public class PageDataService {
 
   private void appendWhereConditions(StringBuilder whereClause, Map<String, String> searchParams) {
     searchParams.forEach((key, value) -> {
+      if (key.equals("filterExpr")) {
+        appendConditionSql(whereClause, value);
+        return;
+      }
+
       if (key.startsWith("drs_")) {
         String rangeKey = key.substring(4);
         String fromPart, toPart;
@@ -2400,6 +2418,11 @@ public class PageDataService {
         return;
       }
 
+      if (key.equals("filterExpr")) {
+        appendConditionSql(whereClause, value);
+        return;
+      }
+
       if (key.startsWith("condexpr_")) {
         String fk = key.substring("condexpr_".length());
         if (!fk.matches("[a-zA-Z0-9_]+")) return;
@@ -2728,6 +2751,11 @@ public class PageDataService {
 
   private void bindSearchParams(Query query, Map<String, String> searchParams) {
     searchParams.forEach((key, value) -> {
+      if (key.equals("filterExpr")) {
+        setConditionParams(query, value);
+        return;
+      }
+
       if (key.startsWith("drs_")) return;
 
       if (key.startsWith("condval_")) return;
