@@ -42,9 +42,8 @@ public class PageSearchService {
         boolean hasKeyword = q != null && !q.isBlank();
 
         String kw = hasKeyword ? SearchSqlSupport.toLikePattern(q.trim()) : null;
-        String kwExact = hasKeyword ? SearchSqlSupport.toLikeExactPattern(q.trim()) : null;
-        String kwPrefix = hasKeyword ? SearchSqlSupport.toLikePrefixPattern(q.trim()) : null;
-        String kwRegex = hasKeyword ? SearchSqlSupport.toWordStartRegex(q.trim()) : null;
+        String qRaw = hasKeyword ? SearchSqlSupport.toRawLowerKeyword(q) : null;
+        int qLen = hasKeyword ? Math.max(1, q.trim().length()) : 1;
 
         Set<String> sectionTokens = parseSections(sections);
         boolean hasSections = !sectionTokens.isEmpty();
@@ -52,9 +51,8 @@ public class PageSearchService {
         Query query = entityManager.createNativeQuery(buildSql(hasKeyword, hasSections));
         if (hasKeyword) {
             query.setParameter("q", kw);
-            query.setParameter("qExact", kwExact);
-            query.setParameter("qPrefix", kwPrefix);
-            query.setParameter("qRegex", kwRegex);
+            query.setParameter("qRaw", qRaw);
+            query.setParameter("qLen", qLen);
         }
         if (hasSections) {
             query.setParameter("sections", new ArrayList<>(sectionTokens));
@@ -96,11 +94,13 @@ public class PageSearchService {
         String snippetExpr = SNIPPET_MAX_CHARS > 0
                 ? "btrim(left(t.text, :snippetCap))::text"
                 : "t.text::text";
+        String textPlainExpr = SearchSqlSupport.buildPlainTextExpr("t.text");
+        String titleExpr = "COALESCE(NULLIF(mn.meta_title, ''), NULLIF(t.title, ''))";
 
         StringBuilder inner = new StringBuilder();
         inner.append("SELECT m.id AS id,")
              .append("  m.url::text AS url,")
-             .append("  t.title::text AS title,")
+             .append("  ").append(titleExpr).append("::text AS title,")
              .append("  ").append(snippetExpr).append(" AS snippet,")
              .append("  m.updated_at AS sort_at,")
              .append("  m.page_section::text AS page_section,")
@@ -108,17 +108,16 @@ public class PageSearchService {
              .append("  ROW_NUMBER() OVER (PARTITION BY m.url")
              .append("    ORDER BY (t.title IS NULL), t.created_at DESC, t.id DESC) AS rn,");
         if (hasKeyword) {
-            inner.append("  (CASE")
-                 .append("    WHEN t.title ILIKE :qExact  ESCAPE '\\' THEN 100")
-                 .append("    WHEN t.title ILIKE :qPrefix ESCAPE '\\' THEN 80")
-                 .append("    WHEN t.title ~* :qRegex THEN 60")
-                 .append("    WHEN t.title ILIKE :q ESCAPE '\\' THEN 40")
-                 .append("    ELSE 10 END)::int AS score");
+            String metaCountExpr = SearchSqlSupport.buildOccurrenceCountExpr("mn.meta_title");
+            String textCountExpr = SearchSqlSupport.buildOccurrenceCountExpr(textPlainExpr);
+            inner.append("  (").append(metaCountExpr).append(" * 3 + ").append(textCountExpr)
+                 .append(")::int AS score");
         } else {
             inner.append("  0::int AS score");
         }
         inner.append(" FROM search_manage m")
              .append(" JOIN search_manage_text t ON t.search_manage_id = m.id AND t.is_deleted = false")
+             .append(" LEFT JOIN menu mn ON mn.id = m.menu_id AND mn.is_deleted = false AND mn.is_visible = true")
              .append(" LEFT JOIN code_detail cd")
              .append("        ON cd.code = m.page_section")
              .append("       AND cd.is_active = true")
@@ -128,7 +127,7 @@ public class PageSearchService {
              .append(" WHERE m.is_active = true")
              .append(" AND m.is_deleted = false");
         if (hasKeyword) {
-            inner.append(" AND (t.title ILIKE :q ESCAPE '\\' OR t.text ILIKE :q ESCAPE '\\')");
+            inner.append(" AND (mn.meta_title ILIKE :q ESCAPE '\\' OR t.text ILIKE :q ESCAPE '\\')");
         }
         if (hasSections) {
             inner.append(" AND m.page_section IN (:sections)");
@@ -176,10 +175,11 @@ public class PageSearchService {
              .append("    ORDER BY (t.title IS NULL), t.created_at DESC, t.id DESC) AS rn")
              .append(" FROM search_manage m")
              .append(" JOIN search_manage_text t ON t.search_manage_id = m.id AND t.is_deleted = false")
+             .append(" LEFT JOIN menu mn ON mn.id = m.menu_id AND mn.is_deleted = false AND mn.is_visible = true")
              .append(" WHERE m.is_active = true")
              .append(" AND m.is_deleted = false");
         if (hasKeyword) {
-            inner.append(" AND (t.title ILIKE :q ESCAPE '\\' OR t.text ILIKE :q ESCAPE '\\')");
+            inner.append(" AND (mn.meta_title ILIKE :q ESCAPE '\\' OR t.text ILIKE :q ESCAPE '\\')");
         }
 
         StringBuilder sb = new StringBuilder();

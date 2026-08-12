@@ -50,4 +50,17 @@ public final class SearchSqlSupport {
         String amp = "regexp_replace(" + nbsp + ", '&amp;', '&', 'gi')";
         return "btrim(regexp_replace(" + amp + ", '\\s+', ' ', 'g'))";
     }
+
+    public static String toRawLowerKeyword(String value) {
+        return value.trim().toLowerCase();
+    }
+
+    /**
+     * 등장 횟수(occurrence count) 계산식. :qRaw(소문자 원본 키워드, LIKE 이스케이프 안 됨)/:qLen 바인딩 전제.
+     * expr에는 NULL이 올 수 있어 COALESCE로 감싼다.
+     */
+    public static String buildOccurrenceCountExpr(String expr) {
+        String safe = "COALESCE(" + expr + ", '')";
+        return "((length(lower(" + safe + ")) - length(replace(lower(" + safe + "), :qRaw, ''))) / :qLen)";
+    }
 }
