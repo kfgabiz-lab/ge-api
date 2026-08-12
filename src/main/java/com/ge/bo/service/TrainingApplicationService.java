@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.common.excel.ExcelService;
 import com.ge.bo.common.util.ClientIpUtils;
 import com.ge.bo.dto.TrainingApplicationResponse;
+import com.ge.bo.dto.TrainingApplicationSummaryResponse;
 import com.ge.bo.repository.AdminRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -172,6 +173,61 @@ public class TrainingApplicationService {
             content.add(mapRowToResponse(row));
         }
         return new PageImpl<>(content, pageable, totalElements);
+    }
+
+    @Transactional(readOnly = true)
+    public TrainingApplicationSummaryResponse getSummary(String regularTrainingType, String irregularTrainingType,
+                                                           OffsetDateTime startDate, OffsetDateTime endDate) {
+        TrainingApplicationSummaryResponse.CourseCounts regular =
+                queryCourseCounts(true, regularTrainingType, startDate, endDate);
+        TrainingApplicationSummaryResponse.CourseCounts irregular =
+                queryCourseCounts(false, irregularTrainingType, startDate, endDate);
+        return new TrainingApplicationSummaryResponse(regular, irregular);
+    }
+
+    private TrainingApplicationSummaryResponse.CourseCounts queryCourseCounts(boolean regular, String trainingType,
+                                                                                OffsetDateTime startDate, OffsetDateTime endDate) {
+        String courseExpr = regular ? REGULAR_TRAINING_COURSE_EXPR : IRREGULAR_TRAINING_COURSE_EXPR;
+        String fromJoin = regular ? FROM_JOIN_REGULAR : FROM_JOIN_IRREGULAR;
+
+        StringBuilder where = regular
+                ? buildRegularWhere(null, trainingType, null, null, SEARCH_PERIOD_CREATED_AT, startDate, endDate)
+                : buildIrregularWhere(null, trainingType, null, null, SEARCH_PERIOD_CREATED_AT, startDate, endDate);
+
+        String sql = "SELECT COUNT(*) AS total,"
+                + " COUNT(*) FILTER (WHERE " + courseExpr + " = '01') AS engineering,"
+                + " COUNT(*) FILTER (WHERE " + courseExpr + " = '02') AS service,"
+                + " COUNT(*) FILTER (WHERE " + courseExpr + " = '03') AS sales"
+                + fromJoin + where;
+
+        Query query = entityManager.createNativeQuery(sql);
+        bindFilters(query, regular, !regular, null, trainingType, null, null,
+                SEARCH_PERIOD_CREATED_AT, startDate, endDate);
+
+        Object[] row = (Object[]) query.getSingleResult();
+        long total = StringUtils.isBlank(trainingType)
+                ? TRAINING_TYPE_CODE_TO_FORMAT.keySet().stream()
+                        .mapToLong(code -> countByTrainingType(regular, code, startDate, endDate))
+                        .sum()
+                : ((Number) row[0]).longValue();
+        return new TrainingApplicationSummaryResponse.CourseCounts(
+                total,
+                ((Number) row[1]).longValue(),
+                ((Number) row[2]).longValue(),
+                ((Number) row[3]).longValue());
+    }
+
+    private long countByTrainingType(boolean regular, String trainingTypeCode,
+                                      OffsetDateTime startDate, OffsetDateTime endDate) {
+        String fromJoin = regular ? FROM_JOIN_REGULAR : FROM_JOIN_IRREGULAR;
+        StringBuilder where = regular
+                ? buildRegularWhere(null, trainingTypeCode, null, null, SEARCH_PERIOD_CREATED_AT, startDate, endDate)
+                : buildIrregularWhere(null, trainingTypeCode, null, null, SEARCH_PERIOD_CREATED_AT, startDate, endDate);
+
+        Query query = entityManager.createNativeQuery("SELECT COUNT(*)" + fromJoin + where);
+        bindFilters(query, regular, !regular, null, trainingTypeCode, null, null,
+                SEARCH_PERIOD_CREATED_AT, startDate, endDate);
+        return ((Number) query.getSingleResult()).longValue();
     }
 
     private UnionQuery buildUnionQuery(String trainingScheduleType, String trainingCourse, String trainingType,
