@@ -55,7 +55,7 @@ cors:
 
 # 파일 업로드 루트 경로
 file:
-  upload-root: "/uploads"
+  upload-root: "C:/uploads"
 
 # 페이지 템플릿 TSX 파일 출력 경로
 page-template:

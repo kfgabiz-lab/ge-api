@@ -701,13 +701,39 @@ public class PageDataService {
 
         String siteCond = siteId != null ? " AND (pd.site_id = :siteId OR pd.site_id IS NULL)" : "";
         String fromClause = " FROM page_data pd";
+
+        String j3SiteCond = siteId != null ? " AND (j3.site_id = :siteId OR j3.site_id IS NULL)" : "";
+        String lv2SiteCond = siteId != null ? " AND (lv2.site_id = :siteId OR lv2.site_id IS NULL)" : "";
+        String lv1SiteCond = siteId != null ? " AND (lv1.site_id = :siteId OR lv1.site_id IS NULL)" : "";
+        String categoryJoin = " LEFT JOIN LATERAL ("
+            + "  SELECT (j3.data_json->'product'->>'parentId')::bigint AS lv2_id"
+            + "  FROM page_data j3"
+            + "  WHERE j3.data_slug = 'category-data'"
+            + "   AND j3.is_deleted = false"
+            + "   AND j3.data_json->'product'->>'depth' = '3'"
+            + "   AND (j3.data_json->'product'->>'id')::bigint = pd.id"
+            + j3SiteCond
+            + "  ORDER BY"
+            + "   CASE WHEN j3.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j3.data_json->>'sortOrder')::int END ASC NULLS LAST,"
+            + "   j3.id ASC"
+            + "  LIMIT 1"
+            + " ) pc ON true"
+            + " LEFT JOIN page_data lv2 ON lv2.id = pc.lv2_id AND lv2.data_slug = 'category-data' AND lv2.is_deleted = false" + lv2SiteCond
+            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data' AND lv1.is_deleted = false" + lv1SiteCond;
+
         String whereClause = " WHERE pd.data_slug = 'product-data'"
             + "  AND pd.is_deleted = false"
             + "  AND pd.data_json->'product'->>'is_visible' = '001'"
             + siteCond;
         if (hasKeyword) {
-            whereClause += "  AND ( pd.data_json->'product'->>'product_name'        ILIKE :kw ESCAPE '\\'"
-                + "     OR pd.data_json->'product'->>'product_description' ILIKE :kw ESCAPE '\\' )";
+            // 검색 대상: Lv3 제품명/제품명 보조설명/제품설명 + Lv1·Lv2 카테고리명/카테고리명 보조설명
+            whereClause += "  AND ( pd.data_json->'product'->>'product_name'             ILIKE :kw ESCAPE '\\'"
+                + "     OR pd.data_json->'product'->>'product_description'      ILIKE :kw ESCAPE '\\'"
+                + "     OR pd.data_json->'product_info'->>'info_description'    ILIKE :kw ESCAPE '\\'"
+                + "     OR lv1.data_json->'category'->>'title'                  ILIKE :kw ESCAPE '\\'"
+                + "     OR lv1.data_json->'category'->>'sub_title'              ILIKE :kw ESCAPE '\\'"
+                + "     OR lv2.data_json->'category'->>'title'                  ILIKE :kw ESCAPE '\\'"
+                + "     OR lv2.data_json->'category'->>'sub_title'              ILIKE :kw ESCAPE '\\' )";
         }
         if (hasCategories) {
             String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
@@ -726,7 +752,7 @@ public class PageDataService {
                 + " ) IN (:categoryIds)";
         }
 
-        String countSql = "SELECT COUNT(*)" + fromClause + whereClause;
+        String countSql = "SELECT COUNT(*)" + fromClause + categoryJoin + whereClause;
         Query countQuery = entityManager.createNativeQuery(countSql);
         if (hasKeyword) {
             countQuery.setParameter("kw", kw);
@@ -752,24 +778,6 @@ public class PageDataService {
                 + " WHEN " + titleExpr + " ILIKE :kw ESCAPE '\\' THEN 40"
                 + " ELSE 10 END) DESC,";
         }
-        String j3SiteCond = siteId != null ? " AND (j3.site_id = :siteId OR j3.site_id IS NULL)" : "";
-        String lv2SiteCond = siteId != null ? " AND (lv2.site_id = :siteId OR lv2.site_id IS NULL)" : "";
-        String lv1SiteCond = siteId != null ? " AND (lv1.site_id = :siteId OR lv1.site_id IS NULL)" : "";
-        String categoryJoin = " LEFT JOIN LATERAL ("
-            + "  SELECT (j3.data_json->'product'->>'parentId')::bigint AS lv2_id"
-            + "  FROM page_data j3"
-            + "  WHERE j3.data_slug = 'category-data'"
-            + "   AND j3.is_deleted = false"
-            + "   AND j3.data_json->'product'->>'depth' = '3'"
-            + "   AND (j3.data_json->'product'->>'id')::bigint = pd.id"
-            + j3SiteCond
-            + "  ORDER BY"
-            + "   CASE WHEN j3.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j3.data_json->>'sortOrder')::int END ASC NULLS LAST,"
-            + "   j3.id ASC"
-            + "  LIMIT 1"
-            + " ) pc ON true"
-            + " LEFT JOIN page_data lv2 ON lv2.id = pc.lv2_id AND lv2.data_slug = 'category-data' AND lv2.is_deleted = false" + lv2SiteCond
-            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data' AND lv1.is_deleted = false" + lv1SiteCond;
         String listSql = "SELECT pd.id,"
             + "  pd.data_json->'product'->>'product_name'        AS product_name,"
             + "  pd.data_json->'product'->>'product_description' AS product_description,"
