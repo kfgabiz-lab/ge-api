@@ -21,7 +21,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -32,7 +31,6 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/test_sub_data")
 @RequiredArgsConstructor
-@PreAuthorize("@securityService.isSystemAdmin(authentication)")
 @ApiLinkedEntity("TestSubData")
 public class TestSubDataController {
 

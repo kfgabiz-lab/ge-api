@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/slug-relations")
 @RequiredArgsConstructor
-@PreAuthorize("@securityService.isSystemAdmin(authentication)")
+@PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
 public class SlugRelationController {
 
     private final SlugRelationService slugRelationService;

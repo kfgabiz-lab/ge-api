@@ -4,7 +4,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import com.ge.bo.dto.SiteDto;
@@ -31,14 +30,12 @@ public class SiteController {
   }
 
   @PostMapping
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasAnyRole('SUPER_ADMIN','OP_ADMIN')")
   public ResponseEntity<SiteDto.Response> createSite(
       @Valid @RequestBody SiteDto.CreateRequest request) {
     return ResponseEntity.status(HttpStatus.CREATED).body(siteService.createSite(request));
   }
 
   @PatchMapping("/{id}")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasAnyRole('SUPER_ADMIN','OP_ADMIN')")
   public ResponseEntity<SiteDto.Response> updateSite(
       @PathVariable Long id,
       @Valid @RequestBody SiteDto.UpdateRequest request) {
@@ -46,7 +43,6 @@ public class SiteController {
   }
 
   @DeleteMapping("/{id}")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasAnyRole('SUPER_ADMIN','OP_ADMIN')")
   public ResponseEntity<Void> deleteSite(@PathVariable Long id) {
     siteService.deleteSite(id);
     return ResponseEntity.noContent().build();

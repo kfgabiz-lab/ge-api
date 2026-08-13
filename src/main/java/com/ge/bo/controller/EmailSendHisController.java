@@ -10,7 +10,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
@@ -19,12 +18,10 @@ import java.util.Map;
 /**
  * 이메일 발송 이력 조회/재발송 REST API
  * - 조회 + 재발송 (이력성 테이블이므로 수정/삭제 없음)
- * - 시스템관리자(role.is_system=true)만 접근 가능 — error/login/transaction 로그와 동일 정책
  */
 @RestController
 @RequestMapping("/api/v1/email-send-his")
 @RequiredArgsConstructor
-@PreAuthorize("@securityService.isSystemAdmin(authentication)")
 public class EmailSendHisController {
 
     private final EmailSendHisService emailSendHisService;

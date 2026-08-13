@@ -510,7 +510,6 @@ public class SlugEntityCodeGenerator {
     sb.append("import org.springframework.data.web.PageableDefault;\n");
     sb.append("import org.springframework.http.HttpStatus;\n");
     sb.append("import org.springframework.http.ResponseEntity;\n");
-    sb.append("import org.springframework.security.access.prepost.PreAuthorize;\n");
     sb.append("import org.springframework.web.bind.annotation.*;\n");
     sb.append("\n");
     sb.append("import java.util.Map;\n");
@@ -519,7 +518,6 @@ public class SlugEntityCodeGenerator {
     sb.append("@RestController\n");
     sb.append("@RequestMapping(\"").append(basePath).append("\")\n");
     sb.append("@RequiredArgsConstructor\n");
-    sb.append("@PreAuthorize(\"@securityService.isSystemAdmin(authentication)\")\n");
     sb.append("@ApiLinkedEntity(\"").append(className).append("\")\n");
     sb.append("public class ").append(className).append("Controller {\n\n");
     sb.append("  private final ").append(className).append("Service ").append(var).append("Service;\n");
