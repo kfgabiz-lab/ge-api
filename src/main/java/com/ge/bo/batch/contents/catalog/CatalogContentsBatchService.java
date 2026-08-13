@@ -86,14 +86,15 @@ public class CatalogContentsBatchService {
 
             markStep(batchLog, "UPSERT");
             Set<Long> cleanSuccessContentsIds = new LinkedHashSet<>();
+            Set<Long> writtenContentsIds = new LinkedHashSet<>();
 
             for (String ctlgCode : allCtlgCodes) {
                 processDocument(ctlgCode, headerGroups.get(ctlgCode), fileGroups.get(ctlgCode), batchId, tally,
-                    cleanSuccessContentsIds);
+                    cleanSuccessContentsIds, writtenContentsIds);
             }
 
             markStep(batchLog, "DELETE_CHECK");
-            int deletedCount = deleteStaleRows(cleanSuccessContentsIds, batchId, tally);
+            int deletedCount = deleteStaleRows(cleanSuccessContentsIds, writtenContentsIds, batchId, tally);
             applyLatestVersionOnly(tally);
 
             markStep(batchLog, "REPORT");
@@ -118,7 +119,8 @@ public class CatalogContentsBatchService {
     }
 
     private void processDocument(String ctlgCode, List<CatalogHeaderRow> headers, List<IfCatalogFileInfo> files,
-                                  long batchId, BatchTally tally, Set<Long> cleanSuccessContentsIds) {
+                                  long batchId, BatchTally tally, Set<Long> cleanSuccessContentsIds,
+                                  Set<Long> writtenContentsIds) {
         List<IfCatalogFileInfo> fileRows = files != null ? files : List.of();
 
         if (headers == null) {
@@ -177,6 +179,10 @@ public class CatalogContentsBatchService {
         tally.reportNotes.addAll(result.reportNotes());
         tally.accumulate(counts);
         reader.markIfResult(ctlgCode, "P");
+        // 카테고리는 이번 IF에 실제로 온 내용을 그대로 반영해야 하므로(예: EMPTY_CATEGORY로 부분성공 처리된
+        // 문서라도 "카테고리가 0건으로 재전송됨"은 유효한 최신 상태), 행 실패 여부와 무관하게 카테고리
+        // 삭제 감지 대상에는 포함시킨다. 버전·파일은 기존대로 완전 정상 처리된 문서만 대상으로 한다.
+        writtenContentsIds.add(counts.contentsId());
 
         if (result.hasRowFailures()) {
             tally.partialDocCount++;
@@ -188,20 +194,28 @@ public class CatalogContentsBatchService {
     }
 
     /**
-     * 하위 행 삭제 처리(문서 스코프) — 완전 정상 처리된 문서에 한해, 이번 배치 도장을 못 받은 카테고리·버전·파일을
-     * 소스에서 삭제된 것으로 간주해 즉시 soft delete한다. CATALOG는 카테고리·버전·파일 모두 삭제 여부를 알려주는
-     * 상태 컬럼이 따로 없어(문서 자체의 USE_YN='D'만 명시적 삭제 신호) 행 부재 자체를 삭제로 판단한다.
+     * 하위 행 삭제 처리(문서 스코프) — 이번 배치 도장을 못 받은 카테고리·버전·파일을 소스에서 삭제된 것으로
+     * 간주해 즉시 soft delete한다. CATALOG는 카테고리·버전·파일 모두 삭제 여부를 알려주는 상태 컬럼이 따로
+     * 없어(문서 자체의 USE_YN='D'만 명시적 삭제 신호) 행 부재 자체를 삭제로 판단한다.
+     * 카테고리는 writtenContentsIds(문서 저장에 성공한 모든 문서, 행 실패 여부 무관) 기준으로 검사한다 —
+     * EMPTY_CATEGORY로 부분성공 처리된 문서도 "이번 IF에 카테고리가 0건으로 재전송됨"이 유효한 최신 상태이므로
+     * 기존 카테고리를 그대로 삭제 반영해야 한다. 버전·파일은 완전 정상 처리된 문서(cleanSuccessContentsIds)만
+     * 대상으로 유지한다(그 외 실패 사유로 인한 부분 저장 상태에서 섣불리 지우지 않기 위함).
      */
-    private int deleteStaleRows(Set<Long> cleanSuccessContentsIds, long batchId, BatchTally tally) {
+    private int deleteStaleRows(Set<Long> cleanSuccessContentsIds, Set<Long> writtenContentsIds, long batchId,
+                                 BatchTally tally) {
         int deletedCount = 0;
-        for (Long contentsId : cleanSuccessContentsIds) {
+        for (Long contentsId : writtenContentsIds) {
             List<ContentsCategory> staleCategories =
                 categoryRepository.findStale(contentsId, batchId);
             for (ContentsCategory category : staleCategories) {
                 category.markDeleted();
                 categoryRepository.save(category);
             }
+            deletedCount += staleCategories.size();
+        }
 
+        for (Long contentsId : cleanSuccessContentsIds) {
             List<ContentsVersion> staleVersions =
                 versionRepository.findStale(contentsId, batchId);
             for (ContentsVersion version : staleVersions) {
@@ -209,7 +223,7 @@ public class CatalogContentsBatchService {
                 versionRepository.save(version);
             }
 
-            deletedCount += staleCategories.size() + staleVersions.size();
+            deletedCount += staleVersions.size();
 
             for (ContentsVersion version : versionRepository.findByContentsId(contentsId)) {
                 List<ContentsFile> staleFiles = fileRepository

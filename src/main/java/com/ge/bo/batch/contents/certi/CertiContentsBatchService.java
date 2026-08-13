@@ -31,7 +31,8 @@ import java.util.Set;
 /**
  * CERTI 소스 콘텐츠 통합배치 오케스트레이터 — Catalog/SsqContentsBatchService와 동일 골격(ContentsWriter 공용 재사용).
  * CERTI는 원천 테이블이 1개뿐이라 "헤더 없이 파일만 존재" 같은 교차 불일치 케이스가 없다.
- * 델타(증분) 소스라 문서 삭제는 감지하지 않으며(Converter가 explicitDelete=false 고정), Writer의 null 보존 정책이 적용된다.
+ * 델타(증분) 소스라 행 부재 기반 삭제 감지는 하지 않지만, CERTI_STATUS='7'(규격폐기)은 Converter가
+ * explicitDelete=true로 명시적 삭제 신호를 세워 is_deleted=true를 즉시 반영한다. Writer의 null 보존 정책이 적용된다.
  */
 @Slf4j
 @Service

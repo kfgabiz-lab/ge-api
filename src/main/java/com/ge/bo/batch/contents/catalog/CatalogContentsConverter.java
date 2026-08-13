@@ -273,22 +273,24 @@ public class CatalogContentsConverter {
             .versions(List.of(version))
             .build();
 
-        // 명시적 삭제(USE_YN='D') 문서는 카테고리·파일이 원래 비어서 올 수 있어 완결성 검사 대상에서 제외한다.
-        // documentLevelFailure()가 아니라 rowFailures에 직접 추가하는 이유: 그 헬퍼는 결과를 통째로 새로
-        // 만들어서, 카테고리·파일 반복문에서 이미 쌓아둔 개별 실패 사유(왜 카테고리/파일이 하나도 안 남았는지)가
-        // 사라지고 이 요약 사유 하나만 남는 문제가 있었다.
-        // rowFailures가 이미 있으면(카테고리/파일 행 각각의 개별 사유가 이미 기록됨) 그걸로 충분히 설명되니
-        // 중복되는 요약 사유는 덧붙이지 않는다 — 개별 사유가 하나도 없는 경우(행 자체가 없었던 경우)에만 이
-        // 요약 사유를 유일한 설명으로 남긴다.
-        if (!explicitDelete && categoriesByPath.isEmpty()) {
-            if (rowFailures.isEmpty()) {
-                rowFailures.add(new RowFailure(SOURCE_TABLE_INFO, "ctlg_code=" + ctlgCode, "EMPTY_CATEGORY",
-                    "카테고리(NAHP_LEVEL1_ID~NAHP_LEVEL3_ID) 등록이 0건인 문서", rawRow(first)));
-            }
-            return new ConversionResult(null, rowFailures, List.of());
+        // 카테고리가 0건이어도 문서(마스터+파일) 자체는 유효한 콘텐츠라 문서 생성은 막지 않는다 — 카테고리
+        // 테이블만 비어있게 되고, EMPTY_CATEGORY는 문서를 막지 않는 행 수준 실패로 기록해 부분성공(P) 처리한다.
+        // 카테고리 행 각각의 개별 사유(SOURCE_TABLE_INFO)가 이미 기록돼 있으면 그걸로 충분히 설명되니
+        // 중복되는 요약 사유는 덧붙이지 않는다 — EMPTY_CONTENT(SOURCE_TABLE_FILE) 사유와는 무관하게 독립 판단.
+        boolean hasCategoryRowFailure = rowFailures.stream().anyMatch(f -> SOURCE_TABLE_INFO.equals(f.sourceTable()));
+        if (!explicitDelete && categoriesByPath.isEmpty() && !hasCategoryRowFailure) {
+            rowFailures.add(new RowFailure(SOURCE_TABLE_INFO, "ctlg_code=" + ctlgCode, "EMPTY_CATEGORY",
+                "카테고리(NAHP_LEVEL1_ID~NAHP_LEVEL3_ID) 등록이 0건인 문서 — 카테고리 없이 문서만 생성됨", rawRow(first)));
         }
+
+        // 명시적 삭제(USE_YN='D') 문서는 파일이 원래 비어서 올 수 있어 완결성 검사 대상에서 제외한다.
+        // documentLevelFailure()가 아니라 rowFailures에 직접 추가하는 이유: 그 헬퍼는 결과를 통째로 새로
+        // 만들어서, 파일 반복문에서 이미 쌓아둔 개별 실패 사유(왜 파일이 하나도 안 남았는지)가
+        // 사라지고 이 요약 사유 하나만 남는 문제가 있었다. 위 EMPTY_CATEGORY와 독립적으로 파일 쪽 개별
+        // 사유(SOURCE_TABLE_FILE)만 확인한다.
         if (!explicitDelete && filesByKey.isEmpty() && videoUrl == null) {
-            if (rowFailures.isEmpty()) {
+            boolean hasFileRowFailure = rowFailures.stream().anyMatch(f -> SOURCE_TABLE_FILE.equals(f.sourceTable()));
+            if (!hasFileRowFailure) {
                 rowFailures.add(new RowFailure(SOURCE_TABLE_FILE, "ctlg_code=" + ctlgCode, "EMPTY_CONTENT",
                     "노출 파일(if_r_catalog_file_info)·영상(FILE_SRC) URL이 모두 0건인 문서(빈 콘텐츠)", rawRow(first)));
             }

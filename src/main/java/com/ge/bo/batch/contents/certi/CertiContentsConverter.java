@@ -22,7 +22,8 @@ import java.util.Objects;
  * IF_R_CERTI_MASTER(인증서 IF) → ContentDocument 변환
  * (NAHP_IF_콘텐츠테이블_매핑정의서_v0.7 06_CERTI_MASTER 시트 기준)
  *
- * CERTI는 최근 변경분만 보내는 델타 방식이라 문서 삭제 신호가 없다(explicitDelete 항상 false).
+ * CERTI는 최근 변경분만 보내는 델타 방식. CERTI_STATUS='7'(규격폐기)이 CATALOG의 USE_YN='D', SSQ의
+ * delete_yn='Y'와 동급인 명시적 삭제 신호로, explicitDelete=true → contents_master.is_deleted=true 처리된다.
  * 버전 개념이 없어 DEFAULT 버전 1건, 파일은 LAST_CERTI_FILE이 있을 때만 1건 생성한다.
  *
  * ※ 명세서 충돌: 테이블 명세서는 contents_master.nahp_title에도 CERTI의 NAHP_TITLE을 채우라고 하지만,
@@ -61,8 +62,9 @@ public class CertiContentsConverter {
         String title = ContentsNormalizer.trimToNull(first.nahpTitle());
         OffsetDateTime sourceUpdatedAt = first.updateDate() != null
             ? ContentsNormalizer.koreaTimeToUtc(first.updateDate().atStartOfDay()) : null;
-        // CERTI_STATUS='7'(규격폐기) — 실삭제가 아니라 비노출 처리(파일 삭제 대상 체크 기준표 기준, 2026-07-24 확인)
-        boolean expose = !"7".equals(ContentsNormalizer.trimToNull(first.certiStatus()));
+        // CERTI_STATUS='7'(규격폐기) — CATALOG USE_YN='D', SSQ delete_yn='Y'와 동급인 명시적 삭제 신호로 취급한다.
+        boolean explicitDelete = "7".equals(ContentsNormalizer.trimToNull(first.certiStatus()));
+        boolean expose = !explicitDelete;
 
         // 카테고리 — 행마다 1건, source_path 기준 dedupe(행 단위 격리)
         Map<String, CategoryItem> categoriesByPath = new LinkedHashMap<>();
@@ -152,22 +154,25 @@ public class CertiContentsConverter {
             .attrs(attrs)
             .sourceCreatedAt(null)
             .sourceUpdatedAt(sourceUpdatedAt)
-            .explicitDelete(false)
+            .explicitDelete(explicitDelete)
             .categories(new ArrayList<>(categoriesByPath.values()))
             .versions(List.of(version))
             .build();
 
+        // 명시적 삭제(CERTI_STATUS='7') 인증서는 카테고리·파일이 원래 비어서 올 수 있어 완결성 검사 대상에서
+        // 제외한다(CATALOG/SSQ와 동일 원칙) — 그래야 규격폐기 신호가 EMPTY_CATEGORY/EMPTY_CONTENT로 막히지
+        // 않고 문서가 정상 upsert되어 is_deleted=true가 실제로 반영된다.
         // rowFailures에 직접 추가하는 이유: 결과를 통째로 새로 만들면 위에서 이미 쌓인 개별 실패 사유
         // (예: LAST_CERTI_FILE 파일명 추출 실패)가 사라지고 이 요약 사유 하나만 남는 문제가 있었다.
         // 이미 개별 사유가 있으면(예: NULL_KEY로 파일명 추출 실패가 기록됨) 중복되는 요약 사유는 생략한다.
-        if (categoriesByPath.isEmpty()) {
+        if (!explicitDelete && categoriesByPath.isEmpty()) {
             if (rowFailures.isEmpty()) {
                 rowFailures.add(new RowFailure(SOURCE_TABLE, sourceDocKey, "EMPTY_CATEGORY",
                     "카테고리(NAHP_LEVEL1_ID~NAHP_LEVEL3_ID) 등록이 0건인 인증서", rawRow(first)));
             }
             return new ConversionResult(null, rowFailures, List.of());
         }
-        if (files.isEmpty()) {
+        if (!explicitDelete && files.isEmpty()) {
             if (rowFailures.isEmpty()) {
                 rowFailures.add(new RowFailure(SOURCE_TABLE, sourceDocKey, "EMPTY_CONTENT",
                     "첨부 파일이 없는 인증서(LAST_CERTI_FILE 없음)", rawRow(first)));
