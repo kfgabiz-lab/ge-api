@@ -171,12 +171,14 @@ public class PageDataService {
     Map<String, String> relFilterParams = new LinkedHashMap<>();
     Map<String, String> joinFilterParams = new LinkedHashMap<>();
     Map<String, String> innerRelParams = new LinkedHashMap<>();
+    Map<String, String> existsRelParams = new LinkedHashMap<>();
     Map<String, String> searchParams = new LinkedHashMap<>();
     allParams.forEach((key, value) -> {
       if (RESERVED_PARAMS.contains(key) || value == null || value.isBlank()) return;
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
       else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
       else if (key.startsWith("innerRel_")) innerRelParams.put(key, value);
+      else if (key.startsWith("exs_") || key.startsWith("exk_") || key.startsWith("exm_") || key.startsWith("exf_")) existsRelParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -227,6 +229,9 @@ public class PageDataService {
       }
     }
 
+    Map<String, String> existsBindParams = new LinkedHashMap<>();
+    appendExistsRelationConditions(whereClause, existsRelParams, existsBindParams, siteId);
+
     long totalElements = -1;
     if (!unpaged) {
       String countSql = "SELECT COUNT(*) FROM page_data " + whereClause;
@@ -238,6 +243,7 @@ public class PageDataService {
       bindSearchParams(countQuery, searchParams);
       bindTodayIfPresent(countQuery, countSql, siteId);
       bindNowIfPresent(countQuery, countSql, siteId);
+      existsBindParams.forEach(countQuery::setParameter);
       totalElements = ((Number) countQuery.getSingleResult()).longValue();
 
       if (totalElements == 0) {
@@ -283,6 +289,7 @@ public class PageDataService {
     bindSearchParams(dataQuery, searchParams);
     bindTodayIfPresent(dataQuery, dataSql, siteId);
     bindNowIfPresent(dataQuery, dataSql, siteId);
+    existsBindParams.forEach(dataQuery::setParameter);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -327,12 +334,14 @@ public class PageDataService {
     Map<String, String> relFilterParams = new LinkedHashMap<>();
     Map<String, String> joinFilterParams = new LinkedHashMap<>();
     Map<String, String> innerRelParams = new LinkedHashMap<>();
+    Map<String, String> existsRelParams = new LinkedHashMap<>();
     Map<String, String> searchParams = new LinkedHashMap<>();
     allParams.forEach((key, value) -> {
       if (RESERVED_PARAMS.contains(key) || value == null || value.isBlank()) return;
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
       else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
       else if (key.startsWith("innerRel_")) innerRelParams.put(key, value);
+      else if (key.startsWith("exs_") || key.startsWith("exk_") || key.startsWith("exm_") || key.startsWith("exf_")) existsRelParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -369,6 +378,9 @@ public class PageDataService {
       }
     }
 
+    Map<String, String> existsBindParams = new LinkedHashMap<>();
+    appendExistsRelationConditions(whereClause, existsRelParams, existsBindParams, siteId);
+
     long totalElements = -1;
     if (!unpaged) {
       String countSql = "SELECT COUNT(*) FROM page_data " + whereClause;
@@ -380,6 +392,7 @@ public class PageDataService {
       bindSearchParams(countQuery, searchParams);
       bindTodayIfPresent(countQuery, countSql, siteId);
       bindNowIfPresent(countQuery, countSql, siteId);
+      existsBindParams.forEach(countQuery::setParameter);
       totalElements = ((Number) countQuery.getSingleResult()).longValue();
 
       if (totalElements == 0) {
@@ -425,6 +438,7 @@ public class PageDataService {
     bindSearchParams(dataQuery, searchParams);
     bindTodayIfPresent(dataQuery, dataSql, siteId);
     bindNowIfPresent(dataQuery, dataSql, siteId);
+    existsBindParams.forEach(dataQuery::setParameter);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -702,38 +716,14 @@ public class PageDataService {
         String siteCond = siteId != null ? " AND (pd.site_id = :siteId OR pd.site_id IS NULL)" : "";
         String fromClause = " FROM page_data pd";
 
-        String j3SiteCond = siteId != null ? " AND (j3.site_id = :siteId OR j3.site_id IS NULL)" : "";
-        String lv2SiteCond = siteId != null ? " AND (lv2.site_id = :siteId OR lv2.site_id IS NULL)" : "";
-        String lv1SiteCond = siteId != null ? " AND (lv1.site_id = :siteId OR lv1.site_id IS NULL)" : "";
-        String categoryJoin = " LEFT JOIN LATERAL ("
-            + "  SELECT (j3.data_json->'product'->>'parentId')::bigint AS lv2_id"
-            + "  FROM page_data j3"
-            + "  WHERE j3.data_slug = 'category-data'"
-            + "   AND j3.is_deleted = false"
-            + "   AND j3.data_json->'product'->>'depth' = '3'"
-            + "   AND (j3.data_json->'product'->>'id')::bigint = pd.id"
-            + j3SiteCond
-            + "  ORDER BY"
-            + "   CASE WHEN j3.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j3.data_json->>'sortOrder')::int END ASC NULLS LAST,"
-            + "   j3.id ASC"
-            + "  LIMIT 1"
-            + " ) pc ON true"
-            + " LEFT JOIN page_data lv2 ON lv2.id = pc.lv2_id AND lv2.data_slug = 'category-data' AND lv2.is_deleted = false" + lv2SiteCond
-            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data' AND lv1.is_deleted = false" + lv1SiteCond;
+        String categoryJoin = buildProductCategoryJoin("pd", siteId);
 
         String whereClause = " WHERE pd.data_slug = 'product-data'"
             + "  AND pd.is_deleted = false"
             + "  AND pd.data_json->'product'->>'is_visible' = '001'"
             + siteCond;
         if (hasKeyword) {
-            // 검색 대상: Lv3 제품명/제품명 보조설명/제품설명 + Lv1·Lv2 카테고리명/카테고리명 보조설명
-            whereClause += "  AND ( pd.data_json->'product'->>'product_name'             ILIKE :kw ESCAPE '\\'"
-                + "     OR pd.data_json->'product'->>'product_description'      ILIKE :kw ESCAPE '\\'"
-                + "     OR pd.data_json->'product_info'->>'info_description'    ILIKE :kw ESCAPE '\\'"
-                + "     OR lv1.data_json->'category'->>'title'                  ILIKE :kw ESCAPE '\\'"
-                + "     OR lv1.data_json->'category'->>'sub_title'              ILIKE :kw ESCAPE '\\'"
-                + "     OR lv2.data_json->'category'->>'title'                  ILIKE :kw ESCAPE '\\'"
-                + "     OR lv2.data_json->'category'->>'sub_title'              ILIKE :kw ESCAPE '\\' )";
+            whereClause += buildProductKeywordCondition("pd");
         }
         if (hasCategories) {
             String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
@@ -829,20 +819,7 @@ public class PageDataService {
         boolean hasKeyword = q != null && !q.isBlank();
 
         String productSiteCond = siteId != null ? " AND (p.site_id = :siteId OR p.site_id IS NULL)" : "";
-        String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
-        String categoryJoin = " LEFT JOIN LATERAL ("
-            + "  SELECT (j.data_json->'product'->>'parentId')::bigint AS lv2_id"
-            + "  FROM page_data j"
-            + "  WHERE j.data_slug = 'category-data'"
-            + "   AND j.is_deleted = false"
-            + "   AND j.data_json->'product'->>'depth' = '3'"
-            + "   AND (j.data_json->'product'->>'id')::bigint = p.id"
-            + junctionSiteCond
-            + "  ORDER BY"
-            + "   CASE WHEN j.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j.data_json->>'sortOrder')::int END ASC NULLS LAST,"
-            + "   j.id ASC"
-            + "  LIMIT 1"
-            + " ) pc ON true";
+        String categoryJoin = buildProductCategoryJoin("p", siteId);
         String sql = "SELECT pc.lv2_id AS category_l2_id,"
             + "       count(*)::int AS cnt"
             + " FROM page_data p"
@@ -852,11 +829,9 @@ public class PageDataService {
             + "   AND p.data_json->'product'->>'is_visible' = '001'"
             + productSiteCond;
         if (hasKeyword) {
-            sql += "  AND ( p.data_json->'product'->>'product_name'        ILIKE :kw ESCAPE '\\'"
-                + "     OR p.data_json->'product'->>'product_description' ILIKE :kw ESCAPE '\\' )";
+            sql += buildProductKeywordCondition("p");
         }
-        sql += "   AND pc.lv2_id IS NOT NULL"
-            + " GROUP BY pc.lv2_id";
+        sql += " GROUP BY pc.lv2_id";
 
         Query query = entityManager.createNativeQuery(sql);
         if (hasKeyword) {
@@ -874,6 +849,38 @@ public class PageDataService {
                 r[1] != null ? ((Number) r[1]).intValue() : 0));
         }
         return result;
+    }
+
+    private String buildProductCategoryJoin(String productAlias, Long siteId) {
+        String j3SiteCond = siteId != null ? " AND (j3.site_id = :siteId OR j3.site_id IS NULL)" : "";
+        String lv2SiteCond = siteId != null ? " AND (lv2.site_id = :siteId OR lv2.site_id IS NULL)" : "";
+        String lv1SiteCond = siteId != null ? " AND (lv1.site_id = :siteId OR lv1.site_id IS NULL)" : "";
+        return " LEFT JOIN LATERAL ("
+            + "  SELECT (j3.data_json->'product'->>'parentId')::bigint AS lv2_id"
+            + "  FROM page_data j3"
+            + "  WHERE j3.data_slug = 'category-data'"
+            + "   AND j3.is_deleted = false"
+            + "   AND j3.data_json->'product'->>'depth' = '3'"
+            + "   AND (j3.data_json->'product'->>'id')::bigint = " + productAlias + ".id"
+            + j3SiteCond
+            + "  ORDER BY"
+            + "   CASE WHEN j3.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j3.data_json->>'sortOrder')::int END ASC NULLS LAST,"
+            + "   j3.id ASC"
+            + "  LIMIT 1"
+            + " ) pc ON true"
+            + " LEFT JOIN page_data lv2 ON lv2.id = pc.lv2_id AND lv2.data_slug = 'category-data' AND lv2.is_deleted = false" + lv2SiteCond
+            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data' AND lv1.is_deleted = false" + lv1SiteCond;
+    }
+
+    private String buildProductKeywordCondition(String productAlias) {
+        // 검색 대상: Lv3 제품명/제품명 보조설명/제품설명 + Lv1·Lv2 카테고리명/카테고리명 보조설명
+        return "  AND ( " + productAlias + ".data_json->'product'->>'product_name'             ILIKE :kw ESCAPE '\\'"
+            + "     OR " + productAlias + ".data_json->'product'->>'product_description'      ILIKE :kw ESCAPE '\\'"
+            + "     OR " + productAlias + ".data_json->'product_info'->>'info_description'    ILIKE :kw ESCAPE '\\'"
+            + "     OR lv1.data_json->'category'->>'title'                  ILIKE :kw ESCAPE '\\'"
+            + "     OR lv1.data_json->'category'->>'sub_title'              ILIKE :kw ESCAPE '\\'"
+            + "     OR lv2.data_json->'category'->>'title'                  ILIKE :kw ESCAPE '\\'"
+            + "     OR lv2.data_json->'category'->>'sub_title'              ILIKE :kw ESCAPE '\\' )";
     }
 
     private String resolveMediaProxyUrl(Object mediaIdValue) {
@@ -1656,12 +1663,14 @@ public class PageDataService {
     Map<String, String> relFilterParams = new LinkedHashMap<>();
     Map<String, String> joinFilterParams = new LinkedHashMap<>();
     Map<String, String> innerRelParams = new LinkedHashMap<>();
+    Map<String, String> existsRelParams = new LinkedHashMap<>();
     Map<String, String> searchParams = new LinkedHashMap<>();
     allParams.forEach((key, value) -> {
       if (RESERVED_PARAMS.contains(key) || value == null || value.isBlank()) return;
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
       else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
       else if (key.startsWith("innerRel_")) innerRelParams.put(key, value);
+      else if (key.startsWith("exs_") || key.startsWith("exk_") || key.startsWith("exm_") || key.startsWith("exf_")) existsRelParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -1706,6 +1715,9 @@ public class PageDataService {
       }
     }
 
+    Map<String, String> existsBindParams = new LinkedHashMap<>();
+    appendExistsRelationConditions(whereClause, existsRelParams, existsBindParams, siteId);
+
     String sql = "SELECT id FROM page_data " + whereClause;
     Query query = entityManager.createNativeQuery(sql);
     query.setParameter("slug", slug);
@@ -1715,6 +1727,7 @@ public class PageDataService {
     bindSearchParams(query, searchParams);
     bindTodayIfPresent(query, sql, siteId);
     bindNowIfPresent(query, sql, siteId);
+    existsBindParams.forEach(query::setParameter);
 
     @SuppressWarnings("unchecked")
     List<Object> rows = query.getResultList();
@@ -2892,12 +2905,81 @@ public class PageDataService {
   }
 
   private String buildJsonPath(String[] segments) {
-    StringBuilder path = new StringBuilder("data_json");
+    return buildJsonPath(null, segments);
+  }
+
+  private String buildJsonPath(String tableAlias, String[] segments) {
+    StringBuilder path = new StringBuilder();
+    if (StringUtils.hasText(tableAlias)) {
+      path.append(tableAlias).append(".");
+    }
+    path.append("data_json");
     for (int i = 0; i < segments.length - 1; i++) {
       path.append("->'").append(segments[i]).append("'");
     }
     path.append("->>'").append(segments[segments.length - 1]).append("'");
     return path.toString();
+  }
+
+  private void appendExistsRelationConditions(StringBuilder whereClause, Map<String, String> existsRelParams,
+                                              Map<String, String> bindParams, Long siteId) {
+    if (existsRelParams == null || existsRelParams.isEmpty()) return;
+
+    Map<String, String[]> groups = new LinkedHashMap<>();
+    existsRelParams.forEach((key, value) -> {
+      int idx;
+      if (key.startsWith("exs_")) idx = 0;
+      else if (key.startsWith("exk_")) idx = 1;
+      else if (key.startsWith("exm_")) idx = 2;
+      else if (key.startsWith("exf_")) idx = 3;
+      else return;
+      groups.computeIfAbsent(key.substring(4), k -> new String[4])[idx] = value;
+    });
+
+    int seq = 0;
+    for (String[] group : groups.values()) {
+      String slaveSlug = group[0];
+      String slaveKey = group[1];
+      String masterKey = group[2];
+      String slaveFilter = group[3];
+      if (!StringUtils.hasText(slaveSlug) || !StringUtils.hasText(slaveKey) || !StringUtils.hasText(masterKey)) continue;
+      if (!slaveSlug.matches("[a-zA-Z0-9_-]+")) continue;
+
+      String[] slaveSegs = slaveKey.trim().split("\\.");
+      String[] masterSegs = masterKey.trim().split("\\.");
+      if (!isValidSegments(slaveSegs) || !isValidSegments(masterSegs)) continue;
+
+      String alias = "exr" + seq;
+      String slugParam = "exSlug_" + seq;
+      StringBuilder cond = new StringBuilder(" AND EXISTS (SELECT 1 FROM page_data ").append(alias)
+          .append(" WHERE ").append(alias).append(".data_slug = :").append(slugParam)
+          .append(" AND ").append(alias).append(".is_deleted = false")
+          .append(" AND ").append(buildJsonPath(alias, slaveSegs))
+          .append(" = ").append(buildJsonPath("page_data", masterSegs));
+      bindParams.put(slugParam, slaveSlug.trim());
+
+      if (siteId != null) {
+        cond.append(" AND (").append(alias).append(".site_id = :siteId OR ").append(alias).append(".site_id IS NULL)");
+      }
+
+      if (StringUtils.hasText(slaveFilter)) {
+        int filterSeq = 0;
+        for (String rawCond : slaveFilter.split("&")) {
+          String[] kv = rawCond.split("=", 2);
+          if (kv.length != 2) continue;
+          String[] filterSegs = kv[0].trim().split("\\.");
+          if (!isValidSegments(filterSegs)) continue;
+          String filterParam = "exFilter_" + seq + "_" + filterSeq;
+          cond.append(" AND ").append(buildJsonPath(alias, filterSegs)).append(" = :").append(filterParam);
+          bindParams.put(filterParam, kv[1].trim());
+          filterSeq++;
+        }
+      }
+
+      cond.append(")");
+      whereClause.append(cond);
+      seq++;
+    }
   }
 
   private String buildJsonbContainerPath(String keyPath) {

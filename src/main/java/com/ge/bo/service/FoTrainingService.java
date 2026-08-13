@@ -187,6 +187,7 @@ public class FoTrainingService {
                         + " FROM page_data"
                         + " WHERE data_slug = :slug"
                         + " AND is_deleted = false"
+                        + " AND data_json->'curriculum_detail3'->>'is_visible' = '" + VISIBLE_CODE + "'"
                         + " AND ("
                         + "   EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(data_json->'" + POWER_LIST_KEY + "', '[]'::jsonb)) el"
                         + "           WHERE (el->>'depth2') ~ '^[0-9]+$' AND (el->>'depth2')::bigint IN (:catIds))"
