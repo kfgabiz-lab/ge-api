@@ -11,7 +11,7 @@ spring:
     hibernate:
       ddl-auto: validate   # 배포 환경 — 스키마 자동 변경 차단
   mail:
-    host: 10.153.2.44     # 운영으로 변경 필요.
+    host: 10.153.2.44
     port: 25
     username: A003elesmtp
     password: ${MAIL_PASSWORD:}
@@ -52,11 +52,11 @@ server:
 
 # CORS — 운영서버 FE 주소
 cors:
-  allowed-origins: "https://10.153.0.22,https://nahp.ls-electric.com,https://nahp-web.ls-electric.com,https://afd-lse-nahp-crg4emfxbvfnbddy.a01.azurefd.net"
+  allowed-origins: "http://localhost:3002,http://localhost:3001,https://10.153.0.22,https://nahp.ls-electric.com,https://nahp-web.ls-electric.com,https://afd-lse-nahp-crg4emfxbvfnbddy.a01.azurefd.net"
 
 # 파일 업로드 루트 경로
 file:
-  upload-root: "Z:/uploads"
+  upload-root: "//strglsekcprdnahpfu.file.core.windows.net/fslseprdnahp01/uploads"
 
 # 페이지 템플릿 TSX 파일 출력 경로
 page-template:

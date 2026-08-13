@@ -84,8 +84,9 @@ public class FoDownloadCenterController {
     /**
      * 문서유형(docType)별 콘텐츠 건수(필터 패널 문서유형 옆 숫자)
      * GET /api/v1/fo/download-center/doctype-counts?q={키워드}&categories={LV2코드,콤마}&parentCategories={LV1코드,콤마}&docTypes={유형코드,콤마}&productCodes={LV3제품코드,콤마}
-     * - 6개 문서유형(C/M/D/S/R/O) 전체를 항상 반환(매칭 없으면 count=0).
-     * - OS/Firmware 는 대응 doc_type 이 없어 미포함(FE 정적 표시).
+     * - 6개 문서유형(C/M/D/R/S/T) 전체를 항상 반환(매칭 없으면 count=0). doc_type='V'(Video)와
+     *   code_detail(DOC_TYPE)에 정의되지 않은 값(예: 'O')은 MASTER_GATE 단계에서부터 제외된다.
+     * - OS/Firmware 는 대응 doc_type 이 없어 미포함.
      * - 파라미터 의미는 /contents 와 동일(미지정 시 전체 기준). categories/parentCategories 는 대표 카테고리 기준.
      * - productCodes: LV3 제품코드(contents_category.category_l3_id, 예: L02-01-01) 콤마구분.
      *   지정 시 해당 제품에 연계된 콘텐츠만 유형별 집계 → 제품상세 Downloads 섹션의 Document Type 필터 유형별 검색결과 수.
@@ -121,15 +122,17 @@ public class FoDownloadCenterController {
 
     /**
      * FO 통합검색 AI챗봇 keyword 기반 문서 전체 목록
-     * GET /api/v1/fo/download-center/keyword-contents?keyword={챗봇 keyword,연관검색어 콤마구분}
+     * GET /api/v1/fo/download-center/keyword-contents?keyword={챗봇 keyword,연관검색어 콤마구분}&q={원본 검색어}
      * - Azure AI Search 후보(file_name 매칭) + contents_master 제목(주 키워드) 직접매칭을 합친 전체 결과를
      *   페이징/필터 없이 한 번에 반환한다. All탭(4건)/Documents탭(10건씩)의 슬라이싱·카테고리/문서유형 필터는
      *   FE가 이 전체 리스트를 받아 클라이언트에서 처리한다(재호출 없음).
+     * - keyword 가 없으면(챗봇 응답 실패/지연) q(원본 검색어) 기준 제목 검색으로 대체 조회한다.
      */
     @GetMapping("/keyword-contents")
     public ResponseEntity<FoDocumentSearchResponse> getContentsByKeyword(
-            @RequestParam(required = false) String keyword) {
-        return ResponseEntity.ok(downloadCenterService.getContentsByKeyword(keyword));
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String q) {
+        return ResponseEntity.ok(downloadCenterService.getContentsByKeyword(keyword, q));
     }
 
     /** "C,M,R" → ["C","M","R"] (공백/빈값 제거). null/blank → null(필터 미적용). */
