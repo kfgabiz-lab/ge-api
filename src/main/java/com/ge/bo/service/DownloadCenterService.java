@@ -37,8 +37,14 @@ public class DownloadCenterService {
     private final CodeService codeService;
     private final AzureAiSearchService azureAiSearchService;
 
+    private static final String DOC_TYPE_GROUP_CODE = "DOC_TYPE";
+
     private static final String MASTER_GATE =
-        " m.expose = true AND m.is_deleted = false AND m.doc_type <> 'V'"
+        " m.expose = true AND m.is_deleted = false"
+      + " AND m.doc_type IN (SELECT cd.code FROM code_detail cd"
+      + "   JOIN code_group cg ON cg.id = cd.group_id"
+      + "     AND cg.group_code = '" + DOC_TYPE_GROUP_CODE + "' AND cg.is_deleted = false"
+      + "   WHERE cd.is_active = true AND cd.is_deleted = false)"
       + " AND EXISTS (SELECT 1 FROM contents_version v"
       + "   JOIN contents_file f ON f.contents_version_id = v.id"
       + "     AND f.file_expose = true AND f.is_deleted = false"
@@ -47,8 +53,6 @@ public class DownloadCenterService {
       + " AND EXISTS (SELECT 1 FROM contents_category ccg"
       + "   WHERE ccg.contents_id = m.id"
       + "     AND ccg.nahp_display_flag = true AND ccg.is_deleted = false)";
-
-    private static final String DOC_TYPE_GROUP_CODE = "DOC_TYPE";
 
     private static final String DOC_TYPE_CODE_JOIN =
         " LEFT JOIN code_detail cd"
@@ -270,9 +274,7 @@ public class DownloadCenterService {
      * All탭 프리뷰/Documents탭은 이 리스트를 필요한 만큼만 잘라서 쓴다.
      */
     @Transactional(readOnly = true)
-    public List<DownloadCenterContentResponse> searchDocumentsByKeyword(
-            String keyword, List<String> categories, List<String> parentCategories,
-            List<String> docTypes, List<String> productCodes) {
+    public List<DownloadCenterContentResponse> searchDocumentsByKeyword(String keyword) {
         if (keyword == null || keyword.isBlank()) {
             return new ArrayList<>();
         }
@@ -292,56 +294,19 @@ public class DownloadCenterService {
             }
         }
 
-        boolean hasCats = categories != null && !categories.isEmpty();
-        boolean hasParentCats = parentCategories != null && !parentCategories.isEmpty();
-        boolean hasDocTypes = docTypes != null && !docTypes.isEmpty();
-        boolean hasProductCodes = productCodes != null && !productCodes.isEmpty();
-
-        List<String> categoryClauses = new ArrayList<>();
-        if (hasCats) {
-            categoryClauses.add("EXISTS (SELECT 1 FROM contents_category cc"
-                + " WHERE cc.contents_id = m.id AND cc.category_l2_id IN (:cats)"
-                + "   AND cc.nahp_display_flag = true AND cc.is_deleted = false)");
-        }
-        if (hasParentCats) {
-            categoryClauses.add("EXISTS (SELECT 1 FROM contents_category cc1"
-                + " WHERE cc1.contents_id = m.id AND cc1.category_l1_id IN (:parentCats)"
-                + "   AND cc1.category_l2_id IS NULL"
-                + "   AND cc1.nahp_display_flag = true AND cc1.is_deleted = false)");
-        }
-
         Map<Long, Integer> masterBestRank = new LinkedHashMap<>();
 
         /* ── 1) Azure 후보(file_name) 매칭 ── */
         if (!candidateFileNames.isEmpty()) {
-            StringBuilder where = new StringBuilder(" WHERE").append(MASTER_GATE)
-                .append(" AND f.file_name IN (:fileNames)");
-            if (hasDocTypes) {
-                where.append(" AND m.doc_type IN (:docTypes)");
-            }
-            if (!categoryClauses.isEmpty()) {
-                where.append(" AND (").append(String.join(" OR ", categoryClauses)).append(")");
-            }
-            if (hasProductCodes) {
-                where.append(" AND").append(PRODUCT_CODE_EXISTS_CLAUSE);
-            }
-
             Query matchQuery = entityManager.createNativeQuery(
                 "SELECT DISTINCT m.id, f.file_name FROM contents_master m"
                 + " JOIN contents_version v ON v.contents_id = m.id"
                 + "   AND v.version_expose = true AND v.is_deleted = false"
                 + " JOIN contents_file f ON f.contents_version_id = v.id"
                 + "   AND f.file_expose = true AND f.is_deleted = false"
-                + where);
+                + " WHERE" + MASTER_GATE
+                + " AND f.file_name IN (:fileNames)");
             matchQuery.setParameter("fileNames", candidateFileNames);
-            if (hasDocTypes) matchQuery.setParameter("docTypes", docTypes);
-            if (hasCats) matchQuery.setParameter("cats", categories);
-            if (hasParentCats) matchQuery.setParameter("parentCats", parentCategories);
-            if (hasProductCodes) {
-                matchQuery.setParameter("productCodes", productCodes);
-                matchQuery.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
-                matchQuery.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
-            }
 
             @SuppressWarnings("unchecked")
             List<Object[]> rows = matchQuery.getResultList();
@@ -356,29 +321,11 @@ public class DownloadCenterService {
 
         /* ── 2) contents_master 제목(주 키워드) 직접 매칭 — Azure와 별개로 추가, Azure 순위 뒤로 이어 붙임 ── */
         if (!primaryKeyword.isEmpty()) {
-            StringBuilder titleWhere = new StringBuilder(" WHERE").append(MASTER_GATE)
-                .append(" AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'");
-            if (hasDocTypes) {
-                titleWhere.append(" AND m.doc_type IN (:docTypes)");
-            }
-            if (!categoryClauses.isEmpty()) {
-                titleWhere.append(" AND (").append(String.join(" OR ", categoryClauses)).append(")");
-            }
-            if (hasProductCodes) {
-                titleWhere.append(" AND").append(PRODUCT_CODE_EXISTS_CLAUSE);
-            }
-
             Query titleQuery = entityManager.createNativeQuery(
-                "SELECT DISTINCT m.id FROM contents_master m" + titleWhere);
+                "SELECT DISTINCT m.id FROM contents_master m"
+                + " WHERE" + MASTER_GATE
+                + " AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'");
             titleQuery.setParameter("q", SearchSqlSupport.toLikePattern(primaryKeyword));
-            if (hasDocTypes) titleQuery.setParameter("docTypes", docTypes);
-            if (hasCats) titleQuery.setParameter("cats", categories);
-            if (hasParentCats) titleQuery.setParameter("parentCats", parentCategories);
-            if (hasProductCodes) {
-                titleQuery.setParameter("productCodes", productCodes);
-                titleQuery.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
-                titleQuery.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
-            }
 
             @SuppressWarnings("unchecked")
             List<Object> titleRows = titleQuery.getResultList();
@@ -405,14 +352,37 @@ public class DownloadCenterService {
 
     /**
      * FO 통합검색용 — 챗봇 keyword로 매칭된 전체 문서 리스트를 페이징/필터 없이 한 번에 반환한다.
+     * keyword 가 없으면(챗봇 응답 실패/지연) q(원본 검색어) 기준 제목 검색으로 대체 조회한다.
      * All탭(4건)/Documents탭(10건씩 클라이언트 페이지네이션)의 슬라이싱과 카테고리/문서유형 필터는
      * FE가 이 전체 리스트를 받아 클라이언트에서 처리한다(재호출 없음).
      */
     @Transactional(readOnly = true)
-    public FoDocumentSearchResponse getContentsByKeyword(String keyword) {
-        List<DownloadCenterContentResponse> matched =
-            searchDocumentsByKeyword(keyword, null, null, null, null);
+    public FoDocumentSearchResponse getContentsByKeyword(String keyword, String q) {
+        List<DownloadCenterContentResponse> matched = (keyword != null && !keyword.isBlank())
+            ? searchDocumentsByKeyword(keyword)
+            : searchDocumentsByTitle(q);
         return new FoDocumentSearchResponse(matched.size(), matched);
+    }
+
+    /** keyword 없이 q(제목검색)만으로 매칭된 전체 문서 리스트를 반환한다(페이징 없음). */
+    private List<DownloadCenterContentResponse> searchDocumentsByTitle(String q) {
+        if (q == null || q.isBlank()) {
+            return new ArrayList<>();
+        }
+        Query idQuery = entityManager.createNativeQuery(
+            "SELECT m.id FROM contents_master m"
+            + " WHERE" + MASTER_GATE
+            + " AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
+            + " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC");
+        idQuery.setParameter("q", SearchSqlSupport.toLikePattern(q.trim()));
+
+        @SuppressWarnings("unchecked")
+        List<Object> idRows = idQuery.getResultList();
+        List<Long> ids = new ArrayList<>();
+        for (Object o : idRows) {
+            ids.add(((Number) o).longValue());
+        }
+        return ids.isEmpty() ? new ArrayList<>() : loadContents(ids);
     }
 
     private Map<String, String> loadDocTypeLabels() {
