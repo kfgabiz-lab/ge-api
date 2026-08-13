@@ -1,3 +1,5 @@
+# 환경 3: 개발서버 배포 전용
+# 배포 담당자 관리 — 개발자가 직접 수정하지 않음
 spring:
   datasource:
     driver-class-name: org.postgresql.Driver
@@ -5,14 +7,11 @@ spring:
     username: ${DB_USERNAME:}
     password: ${DB_PASSWORD:}
   jpa:
-    show-sql: true
+    show-sql: false
     hibernate:
-      ddl-auto: update   # 개발 단계 — 스키마 자동 반영
-    properties:
-      hibernate:
-        format_sql: true
+      ddl-auto: validate   # 배포 환경 — 스키마 자동 변경 차단
   mail:
-    host: 10.153.2.44
+    host: 10.153.2.44     # 운영으로 변경 필요.
     port: 25
     username: A003elesmtp
     password: ${MAIL_PASSWORD:}
@@ -23,13 +22,19 @@ spring:
           auth: true
           connectiontimeout: 15000
           timeout: 15000
-
+          writetimeout: 15000
+  # 아직 운영 redis 세팅이 안되서 JWT로 임시 연결
 #  data:
 #    redis:
-#      password: ${REDIS_PASSWORD:}
-
+#      host: redis-lse-kc-dev-nahp-01.redis.cache.windows.net      #운영으로 변경 필요.
+#      port: 6380
+#      password: ${AZURE_REDIS_ACCESS_KEY:}
+#      ssl:
+#        enabled: true
+#      connect-timeout: 5s
+#      timeout: 3s
   session:
-    store-type: none
+    store-type: none   # 운영 redis 세팅 시 redis로 변경
     timeout: 1d
 #    redis:
 #      namespace: nahpdev:session
@@ -37,26 +42,28 @@ spring:
 #      save-mode: on-set-attribute
 #      repository-type: indexed
   cache:
-    type: none
+    type: none   # 운영 redis 세팅 시 redis로 변경
 
 server:
   servlet:
     session:
       cookie:
-        secure: false
+        secure: true
 
-# CORS — 로컬 FE 주소 (각자 로컬에서 FE 실행)
+# CORS — 운영서버 FE 주소
 cors:
-  allowed-origins: "http://localhost:3002,http://localhost:3001"
+  allowed-origins: "https://10.153.0.22,https://nahp.ls-electric.com,https://nahp-web.ls-electric.com,https://afd-lse-nahp-crg4emfxbvfnbddy.a01.azurefd.net"
 
 # 파일 업로드 루트 경로
 file:
-  upload-root: "C:/uploads"
+  upload-root: "Z:/uploads"
 
 # 페이지 템플릿 TSX 파일 출력 경로
 page-template:
   output-dir: "../bo/src/app/admin/generated"
 
+# Slug Entity 코드 생성기 설정 — 이 기능은 local 프로파일에서만 동작하므로 dev(배포) 프로파일에서는 실사용되지 않는다.
+# (앱 부팅 안전성을 위해 값만 명시. @Value 기본값이 있어 이 키가 없어도 부팅에는 문제 없음)
 codegen:
   entity:
     entity-dir: "src/main/java/com/ge/bo/entity"
@@ -65,37 +72,28 @@ codegen:
     service-dir: "src/main/java/com/ge/bo/service"
     controller-dir: "src/main/java/com/ge/bo/controller"
 
-# 개발자 디버깅용 상세 로그
+# 배포 환경 — WARN 수준만 출력
 logging:
   level:
-    com.ge.bo: DEBUG
-    org.springframework.security: DEBUG
-    # SQL 파라미터 실제 값 출력
-    org.hibernate.SQL: DEBUG
-    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
-    # 트랜잭션 커밋/롤백 로그
-    org.springframework.transaction: TRACE
-    org.springframework.orm.jpa: DEBUG
+    root: WARN
+    com.ge.bo: WARN
 
 
 ls:
-  isApiLogin: false    # true = SSO API 활성화 / false = 비밀번호만으로 로그인
+  isApiLogin: true
   file-storage: local   # local, blob
   redis-enabled: false
-  totp:
-    isUser: "LSE Admin"
-    enabled: false    # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
   lse:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
       connectPortalIv: ${CONNECT_PORTAL_IV:}
-      ctpFileDownApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/download
+      ctpFileDownApiUrl: https://func-lse-eus-prd-ctp-01-fnapeqa7hzbwcbbd.eastus-01.azurewebsites.net/api/download
       ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
-      googleMapKey : "AIzaSyBkHvBn_MG-VWQd2C8-UA3PJBniWPy5QNk"
+      googleMapKey : abc
       recapchaKey: ${RECAPTCHA_SECRET:}
       ctp:
-        # Connect Portal(Salesforce) Sandbox — IF_SRR_NAHP_CTP_0001(문의접수) / _0002(문의결과조회)
+        # Connect Portal(Salesforce) Sandbox — IF_SRR_NAHP_CTP_0001(문의접수) / _0002(문의결과조회) 현재 개발 정보임. 운영 정보로 변경 필요.
         tokenUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/oauth2/token
         apiUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0001
         detailApiUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0002
@@ -104,18 +102,15 @@ ls:
         grantType: client_credentials
       # 통합챗봇 검색 API
       chatbotSearch:
-        apiUrl: https://cxai-dev.ls-electric.com/api/v1/search/stream?include_keywords=true
+        apiUrl: https://cxai.ls-electric.com/api/v1/search/stream?include_keywords=true
         apiKey: ${CHATBOT_SEACH_API_KEY:}
       # Azure AI Search API
       azureSearch:
-        apiUrl: https://ais-lse-eus-dev-ctp-01.search.windows.net/indexes('customerportal-index')/docs/search.post.search?api-version=2025-09-01
+        apiUrl: https://ais-lse-eus-prd-ctp-02.search.windows.net/indexes('customerportal-index')/docs/search.post.search?api-version=2025-09-01
         apiKey: ${AZURE_SEARCH_API_KEY:}
-
     # Azure Blob Storage 정보
     azure:
       blob-storage:
         endpoint-url: "https://blobctpeus2.blob.core.windows.net"
         container-name: "download-test"
         sas-token: ${AZURE_BLOB_SAS_TOKEN:}
-
-
