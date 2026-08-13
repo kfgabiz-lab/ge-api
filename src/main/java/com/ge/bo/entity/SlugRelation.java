@@ -92,6 +92,10 @@ public class SlugRelation {
     @Builder.Default
     private Boolean includeLeaf = false;
 
+    /** 멀티셀렉트 저장 시 카테고리 경로 스냅샷을 함께 굳힐지 여부 — 참조할 relation(id=4 등)의 id, null이면 미사용(기존 평면 배열 저장) */
+    @Column(name = "snapshot_path_relation_id")
+    private Long snapshotPathRelationId;
+
     /** 설명 */
     @Column(columnDefinition = "TEXT")
     private String description;

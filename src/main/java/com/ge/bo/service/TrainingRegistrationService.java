@@ -314,34 +314,24 @@ public class TrainingRegistrationService {
                       CASE WHEN sess.data_json->'curriculum_detail3'->>'training_fee_type' = '001' THEN NULL
                            ELSE NULLIF(btrim(sess.data_json->'curriculum_detail3'->>'training_fee'), '') END AS fee_amount,
                       EXISTS (
-                        SELECT 1 FROM jsonb_array_elements_text(COALESCE(sess.data_json->'automation_list', '[]'::jsonb)) v
-                        JOIN page_data cat ON cat.id = v::bigint AND cat.data_slug = 'category-data' AND cat.is_deleted = false
-                        JOIN page_data prod ON prod.id = (cat.data_json->'product'->>'id')::bigint AND prod.data_slug = 'product-data' AND prod.is_deleted = false
+                        SELECT 1 FROM jsonb_array_elements(COALESCE(sess.data_json->'automation_list', '[]'::jsonb)) el
+                        JOIN page_data prod ON prod.id = NULLIF(el->>'productId','')::bigint
+                          AND prod.data_slug = 'product-data' AND prod.is_deleted = false
                         WHERE prod.data_json->'product'->>'product_code' IN (:vfdCodes)
                       ) AS is_vfd,
                       (jsonb_array_length(COALESCE(sess.data_json->'automation_list', '[]'::jsonb)) > 0) AS has_automation,
-                      -- power_list 항목은 depth=2 카테고리(자식 리프의 order_method 를 봐야 함)일 수도 있고,
-                      -- product-data/category-data 리프 id 가 직접 들어있을 수도 있어(FE 저장 방식이 혼재) 두 경우 모두 확인한다.
-                      (EXISTS (
-                        SELECT 1 FROM jsonb_array_elements_text(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) pid
-                        JOIN page_data leaf ON leaf.id = pid::bigint AND leaf.data_slug IN ('product-data', 'category-data')
-                        WHERE leaf.data_json->'product'->>'order_method' = '02'
-                      ) OR EXISTS (
-                        SELECT 1 FROM jsonb_array_elements_text(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) pid
-                        JOIN page_data child ON child.data_slug = 'category-data' AND child.is_deleted = false
-                          AND child.data_json->'product'->>'parentId' = pid
-                        WHERE child.data_json->'product'->>'order_method' = '02'
-                      )) AS has_power_device,
-                      (EXISTS (
-                        SELECT 1 FROM jsonb_array_elements_text(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) pid
-                        JOIN page_data leaf ON leaf.id = pid::bigint AND leaf.data_slug IN ('product-data', 'category-data')
-                        WHERE leaf.data_json->'product'->>'order_method' = '01'
-                      ) OR EXISTS (
-                        SELECT 1 FROM jsonb_array_elements_text(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) pid
-                        JOIN page_data child ON child.data_slug = 'category-data' AND child.is_deleted = false
-                          AND child.data_json->'product'->>'parentId' = pid
-                        WHERE child.data_json->'product'->>'order_method' = '01'
-                      )) AS has_power_system
+                      EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) el
+                        JOIN page_data prod ON prod.id = NULLIF(el->>'productId','')::bigint
+                          AND prod.data_slug = 'product-data' AND prod.is_deleted = false
+                        WHERE prod.data_json->'product'->>'order_method' = '02'
+                      ) AS has_power_device,
+                      EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(COALESCE(sess.data_json->'power_list', '[]'::jsonb)) el
+                        JOIN page_data prod ON prod.id = NULLIF(el->>'productId','')::bigint
+                          AND prod.data_slug = 'product-data' AND prod.is_deleted = false
+                        WHERE prod.data_json->'product'->>'order_method' = '01'
+                      ) AS has_power_system
                     FROM page_data sess
                     LEFT JOIN page_data curr ON curr.id = :curriculumId AND curr.data_slug = 'currMgmt-data' AND curr.is_deleted = false
                     WHERE sess.id = :sessionId AND sess.data_slug = 'currDtlMgmt-data' AND sess.is_deleted = false

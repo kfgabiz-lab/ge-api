@@ -177,7 +177,7 @@ public class FoTrainingService {
 
     /**
      * HOP-1) currDtlMgmt-data 에서 카테고리(power_list/automation_list)에 매칭되는 curriculum_id 수집
-     * - jsonb_array_elements_text 로 배열 원소를 펼쳐 bigint 비교 (Hibernate '?' 파서 충돌 없는 방식)
+     * - jsonb_array_elements 로 배열 원소(객체)를 펼쳐 depth2/depth3 필드를 bigint 비교 (Hibernate '?' 파서 충돌 없는 방식)
      * - id 목록 바인딩은 HOP-2(id IN (:curriculumIds))와 동일한 List<Long> + IN 관례 사용
      * - curriculum_id 는 정규식(^[0-9]+$) 통과분만 Long 파싱
      */
@@ -188,10 +188,10 @@ public class FoTrainingService {
                         + " WHERE data_slug = :slug"
                         + " AND is_deleted = false"
                         + " AND ("
-                        + "   EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'" + POWER_LIST_KEY + "') v"
-                        + "           WHERE v ~ '^[0-9]+$' AND v::bigint IN (:catIds))"
-                        + "   OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'" + AUTOMATION_LIST_KEY + "') v"
-                        + "           WHERE v ~ '^[0-9]+$' AND v::bigint IN (:catIds))"
+                        + "   EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(data_json->'" + POWER_LIST_KEY + "', '[]'::jsonb)) el"
+                        + "           WHERE (el->>'depth2') ~ '^[0-9]+$' AND (el->>'depth2')::bigint IN (:catIds))"
+                        + "   OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(data_json->'" + AUTOMATION_LIST_KEY + "', '[]'::jsonb)) el"
+                        + "           WHERE (el->>'depth3') ~ '^[0-9]+$' AND (el->>'depth3')::bigint IN (:catIds))"
                         + " )"
                         + " AND (data_json->'curriculum_detail1'->>'curriculum_id') ~ '^[0-9]+$'");
         if (siteId != null) {

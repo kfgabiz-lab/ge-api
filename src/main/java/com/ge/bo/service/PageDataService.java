@@ -711,15 +711,19 @@ public class PageDataService {
         }
         if (hasCategories) {
             String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
-            whereClause += " AND EXISTS ("
-                + " SELECT 1 FROM page_data j"
+            whereClause += " AND ("
+                + " SELECT (j.data_json->'product'->>'parentId')::bigint"
+                + " FROM page_data j"
                 + " WHERE j.data_slug = 'category-data'"
                 + "  AND j.is_deleted = false"
                 + "  AND j.data_json->'product'->>'depth' = '3'"
                 + "  AND (j.data_json->'product'->>'id')::bigint = pd.id"
-                + "  AND (j.data_json->'product'->>'parentId')::bigint IN (:categoryIds)"
                 + junctionSiteCond
-                + " )";
+                + " ORDER BY"
+                + "  CASE WHEN j.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j.data_json->>'sortOrder')::int END ASC NULLS LAST,"
+                + "  j.id ASC"
+                + " LIMIT 1"
+                + " ) IN (:categoryIds)";
         }
 
         String countSql = "SELECT COUNT(*)" + fromClause + whereClause;
@@ -818,14 +822,23 @@ public class PageDataService {
 
         String productSiteCond = siteId != null ? " AND (p.site_id = :siteId OR p.site_id IS NULL)" : "";
         String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
-        String sql = "SELECT (j.data_json->'product'->>'parentId')::bigint AS category_l2_id,"
-            + "       count(DISTINCT p.id)::int AS cnt"
-            + " FROM page_data p"
-            + " JOIN page_data j ON j.data_slug = 'category-data'"
+        String categoryJoin = " LEFT JOIN LATERAL ("
+            + "  SELECT (j.data_json->'product'->>'parentId')::bigint AS lv2_id"
+            + "  FROM page_data j"
+            + "  WHERE j.data_slug = 'category-data'"
             + "   AND j.is_deleted = false"
             + "   AND j.data_json->'product'->>'depth' = '3'"
             + "   AND (j.data_json->'product'->>'id')::bigint = p.id"
             + junctionSiteCond
+            + "  ORDER BY"
+            + "   CASE WHEN j.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j.data_json->>'sortOrder')::int END ASC NULLS LAST,"
+            + "   j.id ASC"
+            + "  LIMIT 1"
+            + " ) pc ON true";
+        String sql = "SELECT pc.lv2_id AS category_l2_id,"
+            + "       count(*)::int AS cnt"
+            + " FROM page_data p"
+            + categoryJoin
             + " WHERE p.data_slug = 'product-data'"
             + "   AND p.is_deleted = false"
             + "   AND p.data_json->'product'->>'is_visible' = '001'"
@@ -834,7 +847,8 @@ public class PageDataService {
             sql += "  AND ( p.data_json->'product'->>'product_name'        ILIKE :kw ESCAPE '\\'"
                 + "     OR p.data_json->'product'->>'product_description' ILIKE :kw ESCAPE '\\' )";
         }
-        sql += " GROUP BY (j.data_json->'product'->>'parentId')::bigint";
+        sql += "   AND pc.lv2_id IS NOT NULL"
+            + " GROUP BY pc.lv2_id";
 
         Query query = entityManager.createNativeQuery(sql);
         if (hasKeyword) {
@@ -1211,6 +1225,7 @@ public class PageDataService {
     }
 
     Map<String, Object> cleanDataJson = stripFetchedFields(request.getDataJson());
+    cleanDataJson = applySnapshotPathFields(slug, null, cleanDataJson, cleanDataJson);
     String dataJsonStr = serializeDataJson(cleanDataJson);
     String currentUser = getCurrentUserId();
     LocalDateTime now = LocalDateTime.now(siteTimeZoneResolver.resolve(siteId));
@@ -1271,6 +1286,7 @@ public class PageDataService {
     baseDataJson = stripFetchedFields(baseDataJson);
     Map<String, Object> requestDataJson = stripFetchedFields(request.getDataJson());
     Map<String, Object> mergedDataJson = deepMerge(baseDataJson, requestDataJson);
+    mergedDataJson = applySnapshotPathFields(slug, baseDataJson, requestDataJson, mergedDataJson);
 
     if (request.getValidationRuleIds() != null && !request.getValidationRuleIds().isEmpty()) {
       checkValidationRules(slug, request.getValidationRuleIds(), mergedDataJson, id, siteId);
@@ -1313,6 +1329,215 @@ public class PageDataService {
         result.put(key, patchValue);
       }
     });
+    return result;
+  }
+
+  private Map<String, Object> applySnapshotPathFields(
+      String slug, Map<String, Object> baseDataJson, Map<String, Object> incomingDataJson, Map<String, Object> targetDataJson) {
+    Map<String, SlugRelation> snapshotFields;
+    try {
+      snapshotFields = resolveSnapshotPathFields(slug);
+    } catch (Exception e) {
+      log.warn("카테고리 경로 스냅샷 대상 필드 조회 실패, 기존 저장 방식으로 폴백: slug={}, err={}", slug, e.getMessage());
+      return targetDataJson;
+    }
+    if (snapshotFields.isEmpty()) return targetDataJson;
+
+    Map<String, Object> result = new LinkedHashMap<>(targetDataJson);
+    for (Map.Entry<String, SlugRelation> entry : snapshotFields.entrySet()) {
+      String fieldKey = entry.getKey();
+      if (!incomingDataJson.containsKey(fieldKey)) continue;
+      try {
+        SlugRelation pathRel = entry.getValue();
+        LinkedHashSet<Long> requestedIds = extractProductIdsFromFieldValue(incomingDataJson.get(fieldKey));
+        Map<Long, List<Map<String, Object>>> previousByProductId = baseDataJson != null
+            ? groupSnapshotEntriesByProductId(baseDataJson.get(fieldKey))
+            : Map.of();
+
+        List<Long> idsToResolve = new ArrayList<>();
+        for (Long productId : requestedIds) {
+          if (!previousByProductId.containsKey(productId)) idsToResolve.add(productId);
+        }
+        Map<Long, List<Map<String, Object>>> resolved = resolveCategoryPathSnapshot(pathRel, idsToResolve);
+
+        List<Map<String, Object>> merged = new ArrayList<>();
+        for (Long productId : requestedIds) {
+          List<Map<String, Object>> entries = previousByProductId.get(productId);
+          if (entries == null) entries = resolved.get(productId);
+          if (entries == null) entries = List.of(buildSnapshotEntry(productId, null, null, null));
+          merged.addAll(entries);
+        }
+        result.put(fieldKey, merged);
+      } catch (Exception e) {
+        log.warn("카테고리 경로 스냅샷 처리 실패, 기존 저장 방식으로 폴백: slug={}, field={}, err={}", slug, fieldKey, e.getMessage());
+      }
+    }
+    return result;
+  }
+
+  private Map<String, SlugRelation> resolveSnapshotPathFields(String slug) {
+    Map<String, SlugRelation> result = new LinkedHashMap<>();
+    List<SlugRelation> fetchRelations = slugRelationRepository.findByMasterSlugAndRelationDir(slug, "FETCH");
+    for (SlugRelation rel : fetchRelations) {
+      if (rel.getSnapshotPathRelationId() == null) continue;
+      slugRelationRepository.findById(rel.getSnapshotPathRelationId())
+          .ifPresent(pathRel -> result.put(rel.getMasterKey(), pathRel));
+    }
+    return result;
+  }
+
+  @SuppressWarnings("unchecked")
+  private LinkedHashSet<Long> extractProductIdsFromFieldValue(Object rawValue) {
+    LinkedHashSet<Long> ids = new LinkedHashSet<>();
+    if (!(rawValue instanceof List<?> list)) return ids;
+    for (Object item : list) {
+      Long id;
+      if (item instanceof Map) {
+        Map<String, Object> itemMap = (Map<String, Object>) item;
+        Object pid = itemMap.containsKey("productId") ? itemMap.get("productId") : itemMap.get("id");
+        id = toLongOrNull(pid);
+      } else {
+        id = toLongOrNull(item);
+      }
+      if (id != null) ids.add(id);
+    }
+    return ids;
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<Long, List<Map<String, Object>>> groupSnapshotEntriesByProductId(Object rawValue) {
+    Map<Long, List<Map<String, Object>>> grouped = new LinkedHashMap<>();
+    if (!(rawValue instanceof List<?> list)) return grouped;
+    for (Object item : list) {
+      if (!(item instanceof Map)) continue;
+      Map<String, Object> itemMap = (Map<String, Object>) item;
+      Object pid = itemMap.containsKey("productId") ? itemMap.get("productId") : itemMap.get("id");
+      Long productId = toLongOrNull(pid);
+      if (productId == null) continue;
+      grouped.computeIfAbsent(productId, k -> new ArrayList<>()).add(itemMap);
+    }
+    return grouped;
+  }
+
+  private Long toLongOrNull(Object value) {
+    if (value == null) return null;
+    if (value instanceof Number number) return number.longValue();
+    try {
+      return Long.parseLong(value.toString().trim());
+    } catch (Exception e) {
+      return null;
+    }
+  }
+
+  private Map<String, Object> buildSnapshotEntry(Long productId, Long depth1, Long depth2, Long depth3) {
+    Map<String, Object> entry = new LinkedHashMap<>();
+    entry.put("id", productId);
+    entry.put("productId", productId);
+    entry.put("depth1", depth1);
+    entry.put("depth2", depth2);
+    entry.put("depth3", depth3);
+    return entry;
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<Long, List<Map<String, Object>>> resolveCategoryPathSnapshot(SlugRelation pathRel, Collection<Long> productIds) {
+    Map<Long, List<Map<String, Object>>> result = new LinkedHashMap<>();
+    if (productIds == null || productIds.isEmpty()) return result;
+
+    List<String> productIdStrs = productIds.stream().map(String::valueOf).toList();
+    String[] slaveKeySegs = pathRel.getSlaveKey().split("\\.");
+
+    StringBuilder sql = new StringBuilder(
+        "SELECT id, data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
+    sql.append(" AND ").append(buildJsonPath(slaveKeySegs)).append(" IN (:productIdStrs)");
+    Map<String, String> filterParams = new LinkedHashMap<>();
+    if (StringUtils.hasText(pathRel.getSlaveFilter())) {
+      appendSlaveFilter(sql, pathRel.getSlaveFilter(), filterParams);
+    }
+
+    Query depth3Query = entityManager.createNativeQuery(sql.toString());
+    depth3Query.setParameter("slaveSlug", pathRel.getSlaveSlug());
+    depth3Query.setParameter("productIdStrs", productIdStrs);
+    filterParams.forEach(depth3Query::setParameter);
+
+    List<Object[]> depth3Rows = depth3Query.getResultList();
+
+    Map<Long, List<Long>> depth3IdsByProductId = new LinkedHashMap<>();
+    Map<Long, Map<String, Object>> depth3DataById = new LinkedHashMap<>();
+    Set<Long> depth2Ids = new LinkedHashSet<>();
+
+    for (Object[] row : depth3Rows) {
+      Long depth3Id = ((Number) row[0]).longValue();
+      Map<String, Object> dataJson;
+      try {
+        dataJson = objectMapper.readValue(
+            row[1].toString(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+      } catch (Exception e) {
+        continue;
+      }
+      depth3DataById.put(depth3Id, dataJson);
+
+      String productIdStr = extractField(dataJson, "product.id");
+      Long productId = productIdStr != null ? toLongOrNull(productIdStr.trim()) : null;
+      if (productId == null) continue;
+      depth3IdsByProductId.computeIfAbsent(productId, k -> new ArrayList<>()).add(depth3Id);
+
+      String depth2IdStr = extractField(dataJson, "product.parentId");
+      Long depth2Id = depth2IdStr != null ? toLongOrNull(depth2IdStr.trim()) : null;
+      if (depth2Id != null) depth2Ids.add(depth2Id);
+    }
+
+    Map<Long, Map<String, Object>> depth2DataById = fetchDataJsonByIds(pathRel.getSlaveSlug(), depth2Ids);
+
+    for (Long productId : productIds) {
+      List<Long> matchedDepth3Ids = depth3IdsByProductId.get(productId);
+      if (matchedDepth3Ids == null || matchedDepth3Ids.isEmpty()) {
+        result.put(productId, new ArrayList<>(List.of(buildSnapshotEntry(productId, null, null, null))));
+        continue;
+      }
+      List<Map<String, Object>> entries = new ArrayList<>();
+      for (Long depth3Id : matchedDepth3Ids) {
+        Map<String, Object> depth3Data = depth3DataById.get(depth3Id);
+        String depth2IdStr = extractField(depth3Data, "product.parentId");
+        Long depth2Id = depth2IdStr != null ? toLongOrNull(depth2IdStr.trim()) : null;
+
+        Long depth1Id = null;
+        if (depth2Id != null) {
+          Map<String, Object> depth2Data = depth2DataById.get(depth2Id);
+          if (depth2Data == null) {
+            depth2Id = null;
+          } else {
+            String depth1IdStr = extractField(depth2Data, "category.parentId");
+            depth1Id = depth1IdStr != null ? toLongOrNull(depth1IdStr.trim()) : null;
+          }
+        }
+        entries.add(buildSnapshotEntry(productId, depth1Id, depth2Id, depth3Id));
+      }
+      result.put(productId, entries);
+    }
+
+    return result;
+  }
+
+  private Map<Long, Map<String, Object>> fetchDataJsonByIds(String dataSlug, Collection<Long> ids) {
+    Map<Long, Map<String, Object>> result = new LinkedHashMap<>();
+    if (ids == null || ids.isEmpty()) return result;
+    Query query = entityManager.createNativeQuery(
+        "SELECT id, data_json::text FROM page_data WHERE data_slug = :slug AND is_deleted = false AND id IN (:ids)");
+    query.setParameter("slug", dataSlug);
+    query.setParameter("ids", ids);
+    @SuppressWarnings("unchecked")
+    List<Object[]> rows = query.getResultList();
+    for (Object[] row : rows) {
+      Long id = ((Number) row[0]).longValue();
+      try {
+        Map<String, Object> dataJson = objectMapper.readValue(
+            row[1].toString(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        result.put(id, dataJson);
+      } catch (Exception e) {
+        log.warn("카테고리 경로 스냅샷 조회 중 JSON 파싱 실패: id={}, err={}", id, e.getMessage());
+      }
+    }
     return result;
   }
 
@@ -2675,6 +2900,16 @@ public class PageDataService {
     return path.toString();
   }
 
+  private String buildArrayContainsCondition(String masterKey, Set<String> linkValues) {
+    String container = buildJsonbContainerPath(masterKey);
+    return linkValues.stream()
+        .filter(v -> v.matches("-?\\d+"))
+        .map(v -> "(" + container + " @> '[" + v + "]'::jsonb"
+            + " OR " + container + " @> '[{\"productId\":" + v + "}]'::jsonb"
+            + " OR " + container + " @> '[{\"id\":" + v + "}]'::jsonb)")
+        .collect(java.util.stream.Collectors.joining(" OR "));
+  }
+
   private Map<String, String> extractStatusParams(Map<String, String> allParams, String... extraExcludeKeys) {
     Set<String> excludes = new HashSet<>(RESERVED_PARAMS);
     excludes.addAll(Arrays.asList(extraExcludeKeys));
@@ -3012,17 +3247,21 @@ public class PageDataService {
                  JOIN descendant_categories d
                    ON p.data_slug = 'category-data'
                   AND p.is_deleted = false
-                  AND p.data_json->'category'->>'parentId' ~ '^[0-9]+$'
-                  AND (p.data_json->'category'->>'parentId')::bigint = d.id
+                  AND COALESCE(NULLIF(p.data_json->'category'->>'parentId',''), NULLIF(p.data_json->'product'->>'parentId','')) ~ '^[0-9]+$'
+                  AND COALESCE(NULLIF(p.data_json->'category'->>'parentId',''), NULLIF(p.data_json->'product'->>'parentId',''))::bigint = d.id
             )
             SELECT id FROM page_data
              WHERE data_slug = 'currDtlMgmt-data'
                AND is_deleted = false
                AND (
-                    EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'power_list') v
-                             WHERE v ~ '^[0-9]+$' AND v::bigint IN (SELECT id FROM descendant_categories))
-                 OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(data_json->'automation_list') v
-                             WHERE v ~ '^[0-9]+$' AND v::bigint IN (SELECT id FROM descendant_categories))
+                    EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(data_json->'power_list','[]'::jsonb)) el
+                             WHERE ((el->>'depth1') ~ '^[0-9]+$' AND (el->>'depth1')::bigint IN (SELECT id FROM descendant_categories))
+                                OR ((el->>'depth2') ~ '^[0-9]+$' AND (el->>'depth2')::bigint IN (SELECT id FROM descendant_categories))
+                                OR ((el->>'depth3') ~ '^[0-9]+$' AND (el->>'depth3')::bigint IN (SELECT id FROM descendant_categories)))
+                 OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(data_json->'automation_list','[]'::jsonb)) el
+                             WHERE ((el->>'depth1') ~ '^[0-9]+$' AND (el->>'depth1')::bigint IN (SELECT id FROM descendant_categories))
+                                OR ((el->>'depth2') ~ '^[0-9]+$' AND (el->>'depth2')::bigint IN (SELECT id FROM descendant_categories))
+                                OR ((el->>'depth3') ~ '^[0-9]+$' AND (el->>'depth3')::bigint IN (SELECT id FROM descendant_categories)))
                )
             """;
         Query q = entityManager.createNativeQuery(sql);
@@ -3104,11 +3343,7 @@ public class PageDataService {
 
             if (isArrayContains) {
                 if (!rel.getMasterKey().matches("[a-zA-Z0-9_.]+")) continue;
-                String container = buildJsonbContainerPath(rel.getMasterKey());
-                String containsCond = linkValues.stream()
-                    .filter(v -> v.matches("-?\\d+"))
-                    .map(v -> container + " @> '[" + v + "]'::jsonb")
-                    .collect(java.util.stream.Collectors.joining(" OR "));
+                String containsCond = buildArrayContainsCondition(rel.getMasterKey(), linkValues);
                 if (containsCond.isBlank()) runMasterQuery = false;
                 else masterSql.append(" AND (").append(containsCond).append(")");
             } else {
@@ -3191,11 +3426,7 @@ public class PageDataService {
 
             if (isArrayContains) {
                 if (!rel.getMasterKey().matches("[a-zA-Z0-9_.]+")) continue;
-                String container = buildJsonbContainerPath(rel.getMasterKey());
-                String containsCond = linkValues.stream()
-                    .filter(v -> v.matches("-?\\d+"))
-                    .map(v -> container + " @> '[" + v + "]'::jsonb")
-                    .collect(java.util.stream.Collectors.joining(" OR "));
+                String containsCond = buildArrayContainsCondition(rel.getMasterKey(), linkValues);
                 if (containsCond.isBlank()) runMasterQuery = false;
                 else masterSql.append(" AND (").append(containsCond).append(")");
             } else {
@@ -4121,11 +4352,22 @@ public class PageDataService {
             current = ((Map<String, Object>) current).get(seg);
         }
         if (current instanceof List<?> list) {
-            return list.stream()
-                .filter(Objects::nonNull)
-                .map(Object::toString)
-                .filter(s -> !s.isBlank())
-                .toList();
+            Set<String> ordered = new LinkedHashSet<>();
+            for (Object item : list) {
+                if (item == null) continue;
+                String value;
+                if (item instanceof Map) {
+                    Map<String, Object> m = (Map<String, Object>) item;
+                    Object v = m.containsKey("productId") ? m.get("productId") : m.get("id");
+                    value = v == null ? null : String.valueOf(v);
+                } else {
+                    value = item.toString();
+                }
+                if (value != null && !value.isBlank()) {
+                    ordered.add(value);
+                }
+            }
+            return List.copyOf(ordered);
         }
         if (current != null) return List.of(current.toString());
         return List.of();
