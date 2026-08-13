@@ -1,6 +1,6 @@
 package com.ge.bo.controller;
 
-import com.ge.bo.dto.DownloadCenterCategoryCountResponse;
+import com.ge.bo.dto.DownloadCenterCategoryCountsResponse;
 import com.ge.bo.dto.DownloadCenterDocTypeCountResponse;
 import com.ge.bo.dto.DownloadCenterContentPageResponse;
 import com.ge.bo.dto.FoDocumentSearchResponse;
@@ -59,28 +59,50 @@ public class FoDownloadCenterController {
     }
 
     /**
-     * LV2 카테고리별 콘텐츠 건수(필터 아코디언 숫자)
-     * GET /api/v1/fo/download-center/category-counts
+     * LV1/LV2 카테고리별 콘텐츠 건수(필터 아코디언 숫자)
+     * GET /api/v1/fo/download-center/category-counts?q={키워드}&categories={LV2코드,콤마}&parentCategories={LV1코드,콤마}&docTypes={유형코드,콤마}&productCodes={LV3제품코드,콤마}
+     * - 문서 1건은 항상 대표 카테고리(LV1/LV2) 1개로만 집계된다(다중 카테고리 소속이어도 대표 1개로 통일).
+     * - 파라미터 의미는 /contents 와 동일(미지정 시 전체 기준). 응답의 l1Counts 합계/l2Counts 합계는
+     *   해당 필터 기준 total 과 항상 일치한다.
+     * - 응답 구조: { l1Counts: [{categoryL1Id, count}], l2Counts: [{categoryL1Id, categoryL2Id, count}] }
      */
     @GetMapping("/category-counts")
-    public ResponseEntity<List<DownloadCenterCategoryCountResponse>> getCategoryCounts() {
-        return ResponseEntity.ok(downloadCenterService.getCategoryCounts());
+    public ResponseEntity<DownloadCenterCategoryCountsResponse> getCategoryCounts(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String categories,
+            @RequestParam(required = false) String parentCategories,
+            @RequestParam(required = false) String docTypes,
+            @RequestParam(required = false) String productCodes) {
+        List<String> categoryL2Ids = parseCsv(categories);
+        List<String> categoryL1Ids = parseCsv(parentCategories);
+        List<String> docTypeList = parseCsv(docTypes);
+        List<String> productCodeList = parseCsv(productCodes);
+        return ResponseEntity.ok(
+            downloadCenterService.getCategoryCounts(q, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList));
     }
 
     /**
      * 문서유형(docType)별 콘텐츠 건수(필터 패널 문서유형 옆 숫자)
-     * GET /api/v1/fo/download-center/doctype-counts?productCodes={LV3제품코드,콤마}
+     * GET /api/v1/fo/download-center/doctype-counts?q={키워드}&categories={LV2코드,콤마}&parentCategories={LV1코드,콤마}&docTypes={유형코드,콤마}&productCodes={LV3제품코드,콤마}
      * - 6개 문서유형(C/M/D/S/R/O) 전체를 항상 반환(매칭 없으면 count=0).
      * - OS/Firmware 는 대응 doc_type 이 없어 미포함(FE 정적 표시).
+     * - 파라미터 의미는 /contents 와 동일(미지정 시 전체 기준). categories/parentCategories 는 대표 카테고리 기준.
      * - productCodes: LV3 제품코드(contents_category.category_l3_id, 예: L02-01-01) 콤마구분.
-     *   미지정 시 Download Center 전체 기준(기존 동작). 지정 시 해당 제품에 연계된 콘텐츠만 유형별 집계
-     *   → 제품상세 Downloads 섹션의 Document Type 필터 유형별 검색결과 수.
+     *   지정 시 해당 제품에 연계된 콘텐츠만 유형별 집계 → 제품상세 Downloads 섹션의 Document Type 필터 유형별 검색결과 수.
      */
     @GetMapping("/doctype-counts")
     public ResponseEntity<List<DownloadCenterDocTypeCountResponse>> getDocTypeCounts(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String categories,
+            @RequestParam(required = false) String parentCategories,
+            @RequestParam(required = false) String docTypes,
             @RequestParam(required = false) String productCodes) {
+        List<String> categoryL2Ids = parseCsv(categories);
+        List<String> categoryL1Ids = parseCsv(parentCategories);
+        List<String> docTypeList = parseCsv(docTypes);
         List<String> productCodeList = parseCsv(productCodes);
-        return ResponseEntity.ok(downloadCenterService.getDocTypeCounts(productCodeList));
+        return ResponseEntity.ok(
+            downloadCenterService.getDocTypeCounts(q, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList));
     }
 
     /**

@@ -4,10 +4,12 @@ import com.ge.bo.common.search.SearchSqlSupport;
 import com.ge.bo.dto.AzureAiSearchDocument;
 import com.ge.bo.dto.AzureAiSearchResponse;
 import com.ge.bo.dto.DownloadCenterCategoryCountResponse;
+import com.ge.bo.dto.DownloadCenterCategoryCountsResponse;
 import com.ge.bo.dto.DownloadCenterDocTypeCountResponse;
 import com.ge.bo.dto.DownloadCenterContentPageResponse;
 import com.ge.bo.dto.DownloadCenterContentResponse;
 import com.ge.bo.dto.DownloadCenterFileResponse;
+import com.ge.bo.dto.DownloadCenterL1CategoryCountResponse;
 import com.ge.bo.dto.DownloadCenterVersionResponse;
 import com.ge.bo.dto.FoCodeResponse;
 import com.ge.bo.dto.FoDocumentSearchResponse;
@@ -66,6 +68,21 @@ public class DownloadCenterService {
       + "     OR (cc3.category_l3_id IS NULL AND cc3.category_l2_id IS NULL AND cc3.category_l1_id IN (:productL1Codes))"
       + "   ))";
 
+    /** 문서 1건이 여러 카테고리(contents_category)에 걸쳐 있어도 카드 표시/카운트/필터가 항상 같은 값을
+     *  가리키도록, 문서당 대표 카테고리(LV1/LV2) 1개를 고정 선정하는 LATERAL 서브쿼리.
+     *  nahp_level_seq(소스 NAHP 가 부여한 문서 내 카테고리 우선순위, 0/1부터 시작)를 1순위로 삼아
+     *  가장 우선순위가 높은(값이 작은) 카테고리를 대표로 선정하고, 값이 같거나 없는 경우를 대비해
+     *  category_l1_id/category_l2_id/id 순으로 결정적으로 정렬한다. */
+    private static final String REPRESENTATIVE_CATEGORY_JOIN =
+        " LEFT JOIN LATERAL ("
+      + "   SELECT cc.category_l1_id, cc.category_l2_id FROM contents_category cc"
+      + "   WHERE cc.contents_id = m.id"
+      + "     AND cc.nahp_display_flag = true AND cc.is_deleted = false"
+      + "   ORDER BY cc.nahp_level_seq ASC NULLS LAST,"
+      + "            cc.category_l1_id ASC, cc.category_l2_id ASC NULLS LAST, cc.id ASC"
+      + "   LIMIT 1"
+      + " ) rc ON true";
+
     /** LV3 제품코드 목록에서 LV2 상위 코드(첫 두 세그먼트, 예: L01-15-01 → L01-15)를 도출한다. */
     private static List<String> deriveProductL2Codes(List<String> productCodes) {
         return productCodes.stream().map(DownloadCenterService::toL2Code).distinct().toList();
@@ -88,14 +105,23 @@ public class DownloadCenterService {
         return secondDash < 0 ? l3Code : l3Code.substring(0, secondDash);
     }
 
+    /** getContents/getCategoryCounts/getDocTypeCounts 가 공유하는 WHERE 절 빌더 결과.
+     *  needsCategoryJoin 이 true 인 경우에만 REPRESENTATIVE_CATEGORY_JOIN 을 FROM 절에 붙이면 된다. */
+    private record FilterClause(
+            String where, boolean hasQ, boolean hasDocTypes,
+            boolean hasCats, boolean hasParentCats, boolean hasProductCodes) {
+        boolean needsCategoryJoin() {
+            return hasCats || hasParentCats;
+        }
+    }
 
-    @Transactional(readOnly = true)
-    public DownloadCenterContentPageResponse getContents(
+    /** q(제목검색)/categories(LV2)/parentCategories(LV1-only)/docTypes/productCodes 필터를
+     *  MASTER_GATE 에 이어붙인 WHERE 절을 만든다. categories/parentCategories 는 대표 카테고리(rc) 기준으로
+     *  판정하므로, 반환된 FilterClause.needsCategoryJoin() 이 true 이면 호출부에서 REPRESENTATIVE_CATEGORY_JOIN 을
+     *  FROM contents_master m 뒤에 추가해야 한다. */
+    private static FilterClause buildFilterClause(
             String q, List<String> categories, List<String> parentCategories,
-            List<String> docTypes, List<String> productCodes,
-            String sort, int page, int size) {
-        int safeSize = size <= 0 ? 12 : size;
-        int safePage = Math.max(page, 0);
+            List<String> docTypes, List<String> productCodes) {
         boolean hasQ = q != null && !q.isBlank();
         boolean hasCats = categories != null && !categories.isEmpty();
         boolean hasParentCats = parentCategories != null && !parentCategories.isEmpty();
@@ -111,15 +137,10 @@ public class DownloadCenterService {
         }
         List<String> categoryClauses = new ArrayList<>();
         if (hasCats) {
-            categoryClauses.add("EXISTS (SELECT 1 FROM contents_category cc"
-                + " WHERE cc.contents_id = m.id AND cc.category_l2_id IN (:cats)"
-                + "   AND cc.nahp_display_flag = true AND cc.is_deleted = false)");
+            categoryClauses.add("rc.category_l2_id IN (:cats)");
         }
         if (hasParentCats) {
-            categoryClauses.add("EXISTS (SELECT 1 FROM contents_category cc1"
-                + " WHERE cc1.contents_id = m.id AND cc1.category_l1_id IN (:parentCats)"
-                + "   AND cc1.category_l2_id IS NULL"
-                + "   AND cc1.nahp_display_flag = true AND cc1.is_deleted = false)");
+            categoryClauses.add("(rc.category_l1_id IN (:parentCats) AND rc.category_l2_id IS NULL)");
         }
         if (!categoryClauses.isEmpty()) {
             where.append(" AND (").append(String.join(" OR ", categoryClauses)).append(")");
@@ -127,34 +148,47 @@ public class DownloadCenterService {
         if (hasProductCodes) {
             where.append(" AND").append(PRODUCT_CODE_EXISTS_CLAUSE);
         }
+        return new FilterClause(where.toString(), hasQ, hasDocTypes, hasCats, hasParentCats, hasProductCodes);
+    }
+
+    private static void applyFilterParams(
+            Query query, FilterClause fc,
+            String q, List<String> categories, List<String> parentCategories,
+            List<String> docTypes, List<String> productCodes) {
+        if (fc.hasQ()) query.setParameter("q", "%" + q.trim() + "%");
+        if (fc.hasDocTypes()) query.setParameter("docTypes", docTypes);
+        if (fc.hasCats()) query.setParameter("cats", categories);
+        if (fc.hasParentCats()) query.setParameter("parentCats", parentCategories);
+        if (fc.hasProductCodes()) {
+            query.setParameter("productCodes", productCodes);
+            query.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
+            query.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public DownloadCenterContentPageResponse getContents(
+            String q, List<String> categories, List<String> parentCategories,
+            List<String> docTypes, List<String> productCodes,
+            String sort, int page, int size) {
+        int safeSize = size <= 0 ? 12 : size;
+        int safePage = Math.max(page, 0);
+
+        FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes);
+        String categoryJoin = fc.needsCategoryJoin() ? REPRESENTATIVE_CATEGORY_JOIN : "";
 
         Query countQuery = entityManager.createNativeQuery(
-            "SELECT count(*) FROM contents_master m" + where);
-        if (hasQ) countQuery.setParameter("q", "%" + q.trim() + "%");
-        if (hasDocTypes) countQuery.setParameter("docTypes", docTypes);
-        if (hasCats) countQuery.setParameter("cats", categories);
-        if (hasParentCats) countQuery.setParameter("parentCats", parentCategories);
-        if (hasProductCodes) {
-            countQuery.setParameter("productCodes", productCodes);
-            countQuery.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
-            countQuery.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
-        }
+            "SELECT count(*) FROM contents_master m" + categoryJoin + fc.where());
+        applyFilterParams(countQuery, fc, q, categories, parentCategories, docTypes, productCodes);
         long total = ((Number) countQuery.getSingleResult()).longValue();
 
         Query idQuery = entityManager.createNativeQuery(
             "SELECT m.id FROM contents_master m"
             + (isDocTypeSort(sort) ? DOC_TYPE_CODE_JOIN : "")
-            + where + orderByClause(sort)
+            + categoryJoin
+            + fc.where() + orderByClause(sort)
             + " LIMIT :size OFFSET :offset");
-        if (hasQ) idQuery.setParameter("q", "%" + q.trim() + "%");
-        if (hasDocTypes) idQuery.setParameter("docTypes", docTypes);
-        if (hasCats) idQuery.setParameter("cats", categories);
-        if (hasParentCats) idQuery.setParameter("parentCats", parentCategories);
-        if (hasProductCodes) {
-            idQuery.setParameter("productCodes", productCodes);
-            idQuery.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
-            idQuery.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
-        }
+        applyFilterParams(idQuery, fc, q, categories, parentCategories, docTypes, productCodes);
         idQuery.setParameter("size", safeSize);
         idQuery.setParameter("offset", safePage * safeSize);
 
@@ -409,7 +443,7 @@ public class DownloadCenterService {
         String sql = "SELECT m.id, m.doc_type,"
             + "  COALESCE(m.nahp_title, m.doc_title)          AS title,"
             + "  to_char(m.source_updated_at, 'YYYY-MM-DD')   AS content_date,"
-            + "  c.category_l1_id, c.category_l2_id,"
+            + "  rc.category_l1_id, rc.category_l2_id,"
             + "  v.id            AS version_id, v.version_name, v.sort_key,"
             + "  f.id            AS file_id, f.file_name, f.file_ext, f.file_size,"
             + "  f.source_system, f.file_path, f.source_file_path"
@@ -418,11 +452,7 @@ public class DownloadCenterService {
             + "   AND v.version_expose = true AND v.is_deleted = false"
             + " JOIN contents_file f ON f.contents_version_id = v.id"
             + "   AND f.file_expose = true AND f.is_deleted = false"
-            + " LEFT JOIN LATERAL ("
-            + "   SELECT cc.category_l1_id, cc.category_l2_id FROM contents_category cc"
-            + "   WHERE cc.contents_id = m.id"
-            + "     AND cc.nahp_display_flag = true AND cc.is_deleted = false LIMIT 1"
-            + " ) c ON true"
+            + REPRESENTATIVE_CATEGORY_JOIN
             + " WHERE m.id IN (:pageIds)"
             + " ORDER BY m.id, v.sort_key DESC, f.id";
 
@@ -481,45 +511,61 @@ public class DownloadCenterService {
     }
 
     @Transactional(readOnly = true)
-    public List<DownloadCenterCategoryCountResponse> getCategoryCounts() {
-        String sql = "SELECT c.category_l1_id, c.category_l2_id, count(DISTINCT m.id)::int"
-            + " FROM contents_master m"
-            + " JOIN contents_category c ON c.contents_id = m.id"
-            + "   AND c.nahp_display_flag = true AND c.is_deleted = false"
-            + " WHERE" + MASTER_GATE
-            + " GROUP BY c.category_l1_id, c.category_l2_id";
+    public DownloadCenterCategoryCountsResponse getCategoryCounts(
+            String q, List<String> categories, List<String> parentCategories,
+            List<String> docTypes, List<String> productCodes) {
+        FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes);
 
-        Query query = entityManager.createNativeQuery(sql);
+        String l2Sql = "SELECT rc.category_l1_id, rc.category_l2_id, count(*)::int"
+            + " FROM contents_master m"
+            + REPRESENTATIVE_CATEGORY_JOIN
+            + fc.where()
+            + " GROUP BY rc.category_l1_id, rc.category_l2_id";
+        Query l2Query = entityManager.createNativeQuery(l2Sql);
+        applyFilterParams(l2Query, fc, q, categories, parentCategories, docTypes, productCodes);
         @SuppressWarnings("unchecked")
-        List<Object[]> rows = query.getResultList();
-        List<DownloadCenterCategoryCountResponse> result = new ArrayList<>();
-        for (Object[] r : rows) {
-            result.add(new DownloadCenterCategoryCountResponse(
+        List<Object[]> l2Rows = l2Query.getResultList();
+        List<DownloadCenterCategoryCountResponse> l2Counts = new ArrayList<>();
+        for (Object[] r : l2Rows) {
+            l2Counts.add(new DownloadCenterCategoryCountResponse(
                 r[0] != null ? r[0].toString() : null,
                 r[1] != null ? r[1].toString() : null,
                 r[2] != null ? ((Number) r[2]).intValue() : 0));
         }
-        return result;
+
+        String l1Sql = "SELECT rc.category_l1_id, count(*)::int"
+            + " FROM contents_master m"
+            + REPRESENTATIVE_CATEGORY_JOIN
+            + fc.where()
+            + " GROUP BY rc.category_l1_id";
+        Query l1Query = entityManager.createNativeQuery(l1Sql);
+        applyFilterParams(l1Query, fc, q, categories, parentCategories, docTypes, productCodes);
+        @SuppressWarnings("unchecked")
+        List<Object[]> l1Rows = l1Query.getResultList();
+        List<DownloadCenterL1CategoryCountResponse> l1Counts = new ArrayList<>();
+        for (Object[] r : l1Rows) {
+            l1Counts.add(new DownloadCenterL1CategoryCountResponse(
+                r[0] != null ? r[0].toString() : null,
+                r[1] != null ? ((Number) r[1]).intValue() : 0));
+        }
+
+        return new DownloadCenterCategoryCountsResponse(l1Counts, l2Counts);
     }
 
     @Transactional(readOnly = true)
-    public List<DownloadCenterDocTypeCountResponse> getDocTypeCounts(List<String> productCodes) {
-        boolean hasProductCodes = productCodes != null && !productCodes.isEmpty();
-
-        String productCodeClause = hasProductCodes ? " AND" + PRODUCT_CODE_EXISTS_CLAUSE : "";
+    public List<DownloadCenterDocTypeCountResponse> getDocTypeCounts(
+            String q, List<String> categories, List<String> parentCategories,
+            List<String> docTypes, List<String> productCodes) {
+        FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes);
 
         String sql = "SELECT m.doc_type, count(*)::int"
             + " FROM contents_master m"
-            + " WHERE" + MASTER_GATE
-            + productCodeClause
+            + (fc.needsCategoryJoin() ? REPRESENTATIVE_CATEGORY_JOIN : "")
+            + fc.where()
             + " GROUP BY m.doc_type";
 
         Query query = entityManager.createNativeQuery(sql);
-        if (hasProductCodes) {
-            query.setParameter("productCodes", productCodes);
-            query.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
-            query.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
-        }
+        applyFilterParams(query, fc, q, categories, parentCategories, docTypes, productCodes);
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
 
