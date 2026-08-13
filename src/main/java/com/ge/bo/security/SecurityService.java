@@ -1,26 +1,25 @@
 package com.ge.bo.security;
 
+import com.ge.bo.entity.Menu;
 import com.ge.bo.repository.AdminRepository;
+import com.ge.bo.repository.MenuRepository;
+import com.ge.bo.repository.RoleMenuRepository;
 import com.ge.bo.repository.RoleRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 
-/**
- * role.is_system 기반 시스템관리자 판별 서비스
- * @PreAuthorize 표현식에서 @securityService.isSystemAdmin(authentication)으로 사용
- */
+import java.util.List;
+
 @Component("securityService")
 @RequiredArgsConstructor
 public class SecurityService {
 
   private final RoleRepository roleRepository;
   private final AdminRepository adminRepository;
+  private final RoleMenuRepository roleMenuRepository;
+  private final MenuRepository menuRepository;
 
-    /**
-     * 현재 인증 사용자가 시스템관리자인지 판별
-     * SecurityContext authority에서 role code 추출 → role.is_system 조회
-     */
   public boolean isSystemAdmin(Authentication authentication) {
     if (authentication == null || !authentication.isAuthenticated()) {
       return false;
@@ -39,10 +38,24 @@ public class SecurityService {
                 .orElse(false);
   }
 
-    /**
-     * 현재 인증 사용자가 대상 관리자 본인인지 판별
-     * JwtAuthenticationFilter가 principal로 email을 넣으므로 authentication.getName()은 email이다
-     */
+  public boolean hasMenu(Authentication authentication, Long menuId) {
+    if (authentication == null || !authentication.isAuthenticated()) {
+      return false;
+    }
+
+    String roleCode = authentication.getAuthorities().stream()
+                .findFirst()
+                .map(a -> {
+                  String auth = a.getAuthority();
+                  return auth.startsWith("ROLE_") ? auth.substring(5) : auth;
+                })
+                .orElse("");
+
+    return roleRepository.findByCode(roleCode)
+                .map(role -> roleMenuRepository.existsByRoleIdAndMenuId(role.getId(), menuId))
+                .orElse(false);
+  }
+
   public boolean isSelf(Authentication authentication, Long adminUserId) {
     if (authentication == null || !authentication.isAuthenticated() || adminUserId == null) {
       return false;
@@ -50,5 +63,24 @@ public class SecurityService {
     return adminRepository.findById(adminUserId)
         .map(a -> a.getEmail() != null && a.getEmail().equals(authentication.getName()))
         .orElse(false);
+  }
+
+  public boolean canAccessWidgetMenu(Authentication authentication, String slug, Long menuId) {
+    if (authentication == null || !authentication.isAuthenticated()) {
+      return false;
+    }
+
+    String targetUrl = "/admin/widget/" + slug;
+    List<Menu> candidates = menuRepository.findByUrl(targetUrl);
+    if (candidates.isEmpty()) {
+      return true;
+    }
+
+    List<Long> candidateIds = candidates.stream().map(Menu::getId).toList();
+    if (menuId != null && candidateIds.contains(menuId) && hasMenu(authentication, menuId)) {
+      return true;
+    }
+
+    return candidateIds.stream().anyMatch(id -> hasMenu(authentication, id));
   }
 }

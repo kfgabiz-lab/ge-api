@@ -41,6 +41,9 @@ public class MenuService {
 
   private static final Pattern XSS_PATTERN = Pattern.compile("[<>\"']");
 
+  private static final Set<Long> SUPER_ADMIN_ONLY_MENU_IDS = Set.of(
+      212L, 31L, 70L, 29L, 74L, 33L, 92L, 214L, 215L, 226L);
+
     /* ══════════════════════════════════════ */
     /*  조회                                  */
     /* ══════════════════════════════════════ */
@@ -323,8 +326,11 @@ public class MenuService {
   @Transactional
     public void updateRoleMenuMapping(Long menuId, Long roleId, boolean hasAccess) {
     findMenuOrThrow(menuId);
-    if (!roleRepository.existsById(roleId)) {
-      throw ErrorCode.ROLE_NOT_FOUND.toException();
+    Role role = roleRepository.findById(roleId)
+                .orElseThrow(ErrorCode.ROLE_NOT_FOUND::toException);
+
+    if (SUPER_ADMIN_ONLY_MENU_IDS.contains(menuId) && !"SUPER_ADMIN".equals(role.getCode())) {
+      throw ErrorCode.MENU_ROLE_PROTECTED.toException();
     }
 
     boolean exists = roleMenuRepository.existsByRoleIdAndMenuId(roleId, menuId);

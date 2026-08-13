@@ -10,6 +10,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.OffsetDateTime;
@@ -21,6 +22,7 @@ import java.time.OffsetDateTime;
 @RestController
 @RequestMapping("/api/v1/error-logs")
 @RequiredArgsConstructor
+@PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
 public class ErrorLogController {
 
     private final ErrorLogService errorLogService;

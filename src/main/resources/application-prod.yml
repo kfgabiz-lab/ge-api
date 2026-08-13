@@ -56,7 +56,7 @@ cors:
 
 # 파일 업로드 루트 경로
 file:
-  upload-root: "Z:/uploads"
+  upload-root: "//strglsekcprdnahpfu.file.core.windows.net/fslseprdnahp01/uploads"
 
 # 페이지 템플릿 TSX 파일 출력 경로
 page-template:
