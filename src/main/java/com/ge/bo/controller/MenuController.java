@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -24,6 +25,7 @@ public class MenuController {
   private final MenuService menuService;
 
   @GetMapping
+    @PreAuthorize("#forNav or @securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
     public ResponseEntity<List<MenuResponse>> getMenuTree(
             @RequestParam String type,
             @RequestParam(defaultValue = "false") boolean forNav,
@@ -32,11 +34,13 @@ public class MenuController {
   }
 
   @GetMapping("/{id}")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
     public ResponseEntity<MenuResponse> getMenu(@PathVariable Long id) {
     return ResponseEntity.ok(menuService.getMenu(id));
   }
 
   @PostMapping
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
     public ResponseEntity<MenuResponse> createMenu(
             @Valid @RequestBody MenuRequest request,
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
@@ -45,17 +49,20 @@ public class MenuController {
   }
 
   @PutMapping("/{id}")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
     public ResponseEntity<MenuResponse> updateMenu(@PathVariable Long id, @Valid @RequestBody MenuRequest request) {
     return ResponseEntity.ok(menuService.updateMenu(id, request));
   }
 
   @DeleteMapping("/{id}")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
     public ResponseEntity<Void> deleteMenu(@PathVariable Long id) {
     menuService.deleteMenu(id);
     return ResponseEntity.noContent().build();
   }
 
   @PatchMapping("/{id}/sort")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
     public ResponseEntity<Void> updateSortOrder(@PathVariable Long id, @RequestBody Map<String, Integer> body) {
     Integer sortOrder = body.get("sortOrder");
     if (sortOrder == null || sortOrder < 1 || sortOrder > 999) {
@@ -66,17 +73,20 @@ public class MenuController {
   }
 
   @PatchMapping("/sort-batch")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
     public ResponseEntity<Void> updateSortBatch(@RequestBody List<MenuSortBatchItem> items) {
     menuService.updateSortBatch(items);
     return ResponseEntity.ok().build();
   }
 
   @GetMapping("/{id}/roles")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
     public ResponseEntity<List<RoleMenuResponse>> getRoleMenuMappings(@PathVariable Long id) {
     return ResponseEntity.ok(menuService.getRoleMenuMappings(id));
   }
 
   @PutMapping("/{menuId}/roles/{roleId}")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
     public ResponseEntity<Void> updateRoleMenuMapping(
             @PathVariable Long menuId,
             @PathVariable Long roleId,

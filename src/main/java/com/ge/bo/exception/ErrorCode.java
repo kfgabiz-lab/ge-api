@@ -30,6 +30,7 @@ public enum ErrorCode {
 
     /* 역할 */
     ROLE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "해당 역할을 찾을 수 없습니다."),
+    MENU_ROLE_PROTECTED(HttpStatus.BAD_REQUEST, "MENU_ROLE_PROTECTED", "해당 메뉴는 최고 관리자 역할에만 매핑할 수 있습니다."),
 
     /* 공통코드 */
     CODE_GROUP_NOT_FOUND(HttpStatus.NOT_FOUND, "CODE_GROUP_NOT_FOUND", "해당 코드 그룹을 찾을 수 없습니다."),

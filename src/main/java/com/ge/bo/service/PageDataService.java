@@ -71,7 +71,7 @@ public class PageDataService {
   @PersistenceContext
     private EntityManager entityManager;
 
-  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude", "fetchRelationIds", "previewToken");
+  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude", "fetchRelationIds", "previewToken", "drsKeys");
 
   /**
    * FO 공개 API(FoPageDataController)에서 게시상태를 클라이언트 파라미터가 아니라 서버가 직접 강제하는 slug.
@@ -235,7 +235,7 @@ public class PageDataService {
       if (siteId != null) {
         countQuery.setParameter("siteId", siteId);
       }
-      bindSearchParams(countQuery, searchParams);
+      bindSearchParams(countQuery, searchParams, siteId);
       bindTodayIfPresent(countQuery, countSql, siteId);
       bindNowIfPresent(countQuery, countSql, siteId);
       totalElements = ((Number) countQuery.getSingleResult()).longValue();
@@ -280,7 +280,7 @@ public class PageDataService {
     if (siteId != null) {
       dataQuery.setParameter("siteId", siteId);
     }
-    bindSearchParams(dataQuery, searchParams);
+    bindSearchParams(dataQuery, searchParams, siteId);
     bindTodayIfPresent(dataQuery, dataSql, siteId);
     bindNowIfPresent(dataQuery, dataSql, siteId);
 
@@ -296,6 +296,7 @@ public class PageDataService {
     applyExclude(content, allParams.get("exclude"));
 
     content = applyFetch(slug, content, siteId, parseFetchRelationIds(allParams));
+    content = applyDateRangeStatus(content, allParams.get("drsKeys"), siteId);
 
     if (unpaged) {
       int actualCount = content.size();
@@ -377,7 +378,7 @@ public class PageDataService {
       if (siteId != null) {
         countQuery.setParameter("siteId", siteId);
       }
-      bindSearchParams(countQuery, searchParams);
+      bindSearchParams(countQuery, searchParams, siteId);
       bindTodayIfPresent(countQuery, countSql, siteId);
       bindNowIfPresent(countQuery, countSql, siteId);
       totalElements = ((Number) countQuery.getSingleResult()).longValue();
@@ -422,7 +423,7 @@ public class PageDataService {
     if (siteId != null) {
       dataQuery.setParameter("siteId", siteId);
     }
-    bindSearchParams(dataQuery, searchParams);
+    bindSearchParams(dataQuery, searchParams, siteId);
     bindTodayIfPresent(dataQuery, dataSql, siteId);
     bindNowIfPresent(dataQuery, dataSql, siteId);
 
@@ -437,6 +438,7 @@ public class PageDataService {
 
     applyExclude(content, allParams.get("exclude"));
     content = applyFetch(slug, content, siteId, parseFetchRelationIds(allParams));
+    content = applyDateRangeStatus(content, allParams.get("drsKeys"), siteId);
 
     if (unpaged) {
       int actualCount = content.size();
@@ -487,7 +489,7 @@ public class PageDataService {
     if (siteId != null) {
       dataQuery.setParameter("siteId", siteId);
     }
-    bindSearchParams(dataQuery, statusParams);
+    bindSearchParams(dataQuery, statusParams, siteId);
     bindTodayIfPresent(dataQuery, dataSql, siteId);
     bindNowIfPresent(dataQuery, dataSql, siteId);
 
@@ -1214,7 +1216,7 @@ public class PageDataService {
     if (dataJson == null) return dataJson;
     Map<String, Object> cleaned = new LinkedHashMap<>();
     dataJson.forEach((key, value) -> {
-      if (!key.startsWith("_fetchedRel")) cleaned.put(key, value);
+      if (!key.startsWith("_fetchedRel") && !key.startsWith("_drs_")) cleaned.put(key, value);
     });
     return richTextSanitizer.sanitizeDataJson(cleaned);
   }
@@ -1712,7 +1714,7 @@ public class PageDataService {
     if (siteId != null) {
       query.setParameter("siteId", siteId);
     }
-    bindSearchParams(query, searchParams);
+    bindSearchParams(query, searchParams, siteId);
     bindTodayIfPresent(query, sql, siteId);
     bindNowIfPresent(query, sql, siteId);
 
@@ -1751,7 +1753,7 @@ public class PageDataService {
     if (siteId != null) {
       dataQuery.setParameter("siteId", siteId);
     }
-    bindSearchParams(dataQuery, searchParams);
+    bindSearchParams(dataQuery, searchParams, siteId);
     bindTodayIfPresent(dataQuery, dataSql, siteId);
     bindNowIfPresent(dataQuery, dataSql, siteId);
 
@@ -2071,6 +2073,10 @@ public class PageDataService {
     return LocalDate.now(resolveZone(siteId)).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
   }
 
+  private String resolveTodayIsoDate(Long siteId) {
+    return LocalDate.now(resolveZone(siteId)).format(DateTimeFormatter.ISO_LOCAL_DATE);
+  }
+
   private void bindTodayIfPresent(Query query, String sql, Long siteId) {
     if (sql.contains(":today")) {
       query.setParameter("today", resolveTodayParam(siteId));
@@ -2095,6 +2101,113 @@ public class PageDataService {
   private String toNowPaddedExpr(String rawJsonPathExpr) {
     String digits = "regexp_replace(" + rawJsonPathExpr + ", '[^0-9]', '', 'g')";
     return "(CASE WHEN char_length(" + digits + ") = 8 THEN " + digits + " || '000000' ELSE " + digits + " END)";
+  }
+
+  /**
+   * drs_ 검색필터 / dateRangeStatus 뱃지 공통 SQL 경계값 정규화.
+   * 저장값(숫자만 추출)의 자릿수(6/8/12/그외)에 따라 :nowValue(14자리 yyyyMMddHHmmss)와 비교 가능한
+   * 14자리 문자열로 패딩한다. isUpper=false면 하한(from), isUpper=true면 상한(to).
+   * 값이 비어 있으면 NULL(무매칭 — WHERE 조건에서 자동으로 걸러짐).
+   */
+  private String toRangeBoundExpr(String rawJsonPathExpr, boolean isUpper) {
+    String digits = "regexp_replace(" + rawJsonPathExpr + ", '[^0-9]', '', 'g')";
+    String len6Pad = isUpper ? "'31235959'" : "'01000000'";
+    String len8Pad = isUpper ? "'235959'" : "'000000'";
+    String len12Pad = isUpper ? "'59'" : "'00'";
+    String padChar = isUpper ? "'9'" : "'0'";
+    return "(CASE"
+        + " WHEN " + digits + " = '' THEN NULL"
+        + " WHEN char_length(" + digits + ") = 6 THEN " + digits + " || " + len6Pad
+        + " WHEN char_length(" + digits + ") = 8 THEN " + digits + " || " + len8Pad
+        + " WHEN char_length(" + digits + ") = 12 THEN " + digits + " || " + len12Pad
+        + " ELSE left(rpad(" + digits + ", 14, " + padChar + "), 14)"
+        + " END)";
+  }
+
+  /** toRangeBoundExpr의 Java 측 동등 구현(응답 후처리용 뱃지 계산에서 사용) */
+  private static String padRangeBound(String raw, boolean isUpper) {
+    if (raw == null) return null;
+    String digits = raw.replaceAll("[^0-9]", "");
+    if (digits.isEmpty()) return null;
+    return switch (digits.length()) {
+      case 6 -> digits + (isUpper ? "31235959" : "01000000");
+      case 8 -> digits + (isUpper ? "235959" : "000000");
+      case 12 -> digits + (isUpper ? "59" : "00");
+      default -> digits.length() >= 14
+          ? digits.substring(0, 14)
+          : digits + (isUpper ? "9" : "0").repeat(14 - digits.length());
+    };
+  }
+
+  /** from/to(14자리 패딩값)와 now(14자리)를 비교해 dateRangeStatus 뱃지 값을 판정한다. */
+  private static String resolveRangeStatus(String from, String to, String now) {
+    if (from != null && now.compareTo(from) < 0) return "before";
+    if (from != null && to != null && now.compareTo(from) >= 0 && now.compareTo(to) <= 0) return "in_range";
+    if (to != null && now.compareTo(to) > 0) return "after";
+    return null;
+  }
+
+  /**
+   * dataJson에서 "{rangeKey}_from" / "{rangeKey}_to" 원본값을 찾는다.
+   * root에 있으면 root 우선, 없으면 1-depth 중첩 섹션에서 탐색한다(2-depth까지는 가지 않음 — drs_ 검색 SQL과 동일한 범위).
+   */
+  @SuppressWarnings("unchecked")
+  private String[] findRangeBounds(Map<String, Object> dataJson, String rangeKey) {
+    if (dataJson == null) return new String[]{null, null};
+    String fromKey = rangeKey + "_from";
+    String toKey = rangeKey + "_to";
+
+    Object rootFrom = dataJson.get(fromKey);
+    Object rootTo = dataJson.get(toKey);
+    if (rootFrom != null || rootTo != null) {
+      return new String[]{
+          rootFrom != null ? rootFrom.toString() : null,
+          rootTo != null ? rootTo.toString() : null
+      };
+    }
+
+    for (Object value : dataJson.values()) {
+      if (!(value instanceof Map)) continue;
+      Map<String, Object> section = (Map<String, Object>) value;
+      Object sectionFrom = section.get(fromKey);
+      Object sectionTo = section.get(toKey);
+      if (sectionFrom != null || sectionTo != null) {
+        return new String[]{
+            sectionFrom != null ? sectionFrom.toString() : null,
+            sectionTo != null ? sectionTo.toString() : null
+        };
+      }
+    }
+    return new String[]{null, null};
+  }
+
+  /**
+   * 목록 응답에 dateRangeStatus 뱃지를 서버가 계산해 얹어준다(opt-in, FE 요청 파라미터 drsKeys가 있을 때만 동작).
+   * drsKeys는 콤마로 구분된 rangeKey 목록이며, 각 rangeKey마다 dataJson에 "_drs_{rangeKey}" 키로
+   * "before"/"in_range"/"after"/null 값을 추가한다. applyFetch와는 무관한 별도 후처리 단계다.
+   */
+  private List<PageDataResponse> applyDateRangeStatus(List<PageDataResponse> content, String drsKeysParam, Long siteId) {
+    if (drsKeysParam == null || drsKeysParam.isBlank()) return content;
+
+    List<String> rangeKeys = Arrays.stream(drsKeysParam.split(","))
+        .map(String::trim)
+        .filter(k -> k.matches("[a-zA-Z0-9_]+"))
+        .toList();
+    if (rangeKeys.isEmpty()) return content;
+
+    String now = resolveNowParam(siteId);
+    List<PageDataResponse> result = new ArrayList<>(content.size());
+    for (PageDataResponse item : content) {
+      Map<String, Object> enriched = new LinkedHashMap<>(item.getDataJson());
+      for (String rangeKey : rangeKeys) {
+        String[] bounds = findRangeBounds(item.getDataJson(), rangeKey);
+        String from = padRangeBound(bounds[0], false);
+        String to = padRangeBound(bounds[1], true);
+        enriched.put("_drs_" + rangeKey, resolveRangeStatus(from, to, now));
+      }
+      result.add(item.withDataJson(enriched));
+    }
+    return result;
   }
 
   private boolean matchesCondition(Map<String, Object> dataJson, String condition, Long siteId) {
@@ -2251,48 +2364,48 @@ public class PageDataService {
           String[] toSegs   = segs.clone(); toSegs[toSegs.length - 1]     = toSegs[toSegs.length - 1]     + "_to";
           fromPart = buildJsonPath(fromSegs);
           toPart   = buildJsonPath(toSegs);
-          String fromSub = "substring(regexp_replace(" + fromPart + ", '[^0-9]', '', 'g'), 1, 8)";
-          String toSub   = "substring(regexp_replace(" + toPart   + ", '[^0-9]', '', 'g'), 1, 8)";
-          String today   = ":today";
+          String fromBound = toRangeBoundExpr(fromPart, false);
+          String toBound   = toRangeBoundExpr(toPart, true);
+          String now       = ":nowValue";
           switch (value) {
             case "before":
-              whereClause.append(" AND ").append(fromSub).append(" > ").append(today);
+              whereClause.append(" AND ").append(fromBound).append(" > ").append(now);
               break;
             case "in_range":
-              whereClause.append(" AND ").append(fromSub).append(" <= ").append(today)
-                         .append(" AND ").append(toSub).append(" >= ").append(today);
+              whereClause.append(" AND ").append(fromBound).append(" <= ").append(now)
+                         .append(" AND ").append(toBound).append(" >= ").append(now);
               break;
             case "after":
-              whereClause.append(" AND ").append(toSub).append(" < ").append(today);
+              whereClause.append(" AND ").append(toBound).append(" < ").append(now);
               break;
             default: break;
           }
         } else {
           if (!rangeKey.matches("[a-zA-Z0-9_]+")) return;
-          String fromRoot   = "substring(regexp_replace(data_json->>'" + rangeKey + "_from', '[^0-9]', '', 'g'), 1, 8)";
-          String toRoot     = "substring(regexp_replace(data_json->>'" + rangeKey + "_to', '[^0-9]', '', 'g'), 1, 8)";
-          String fromNested = "substring(regexp_replace(kv.value->>'" + rangeKey + "_from', '[^0-9]', '', 'g'), 1, 8)";
-          String toNested   = "substring(regexp_replace(kv.value->>'" + rangeKey + "_to', '[^0-9]', '', 'g'), 1, 8)";
-          String today      = ":today";
+          String fromRoot   = toRangeBoundExpr("data_json->>'" + rangeKey + "_from'", false);
+          String toRoot     = toRangeBoundExpr("data_json->>'" + rangeKey + "_to'", true);
+          String fromNested = toRangeBoundExpr("kv.value->>'" + rangeKey + "_from'", false);
+          String toNested   = toRangeBoundExpr("kv.value->>'" + rangeKey + "_to'", true);
+          String now        = ":nowValue";
           String nested     = " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ";
           switch (value) {
             case "before":
               whereClause.append(" AND (")
-                  .append(fromRoot).append(" > ").append(today)
-                  .append(nested).append(fromNested).append(" > ").append(today).append(")")
+                  .append(fromRoot).append(" > ").append(now)
+                  .append(nested).append(fromNested).append(" > ").append(now).append(")")
                   .append(")");
               break;
             case "in_range":
               whereClause.append(" AND (")
-                  .append(fromRoot).append(" <= ").append(today).append(" AND ").append(toRoot).append(" >= ").append(today)
+                  .append(fromRoot).append(" <= ").append(now).append(" AND ").append(toRoot).append(" >= ").append(now)
                   .append(nested)
-                  .append(fromNested).append(" <= ").append(today).append(" AND ").append(toNested).append(" >= ").append(today).append(")")
+                  .append(fromNested).append(" <= ").append(now).append(" AND ").append(toNested).append(" >= ").append(now).append(")")
                   .append(")");
               break;
             case "after":
               whereClause.append(" AND (")
-                  .append(toRoot).append(" < ").append(today)
-                  .append(nested).append(toNested).append(" < ").append(today).append(")")
+                  .append(toRoot).append(" < ").append(now)
+                  .append(nested).append(toNested).append(" < ").append(now).append(")")
                   .append(")");
               break;
             default: break;
@@ -2571,10 +2684,8 @@ public class PageDataService {
           String[] toSegs   = segs.clone(); toSegs[toSegs.length - 1]     = toSegs[toSegs.length - 1]     + "_to";
           String fromPart = buildJsonPath(fromSegs);
           String toPart   = buildJsonPath(toSegs);
-          String fromDigits = "regexp_replace(" + fromPart + ", '[^0-9]', '', 'g')";
-          String toDigits   = "regexp_replace(" + toPart   + ", '[^0-9]', '', 'g')";
-          String fromCmp = "(CASE WHEN char_length(" + fromDigits + ") = 8 THEN " + fromDigits + " || '000000' ELSE " + fromDigits + " END)";
-          String toCmp   = "(CASE WHEN char_length(" + toDigits   + ") = 8 THEN " + toDigits   + " || '235959' ELSE " + toDigits   + " END)";
+          String fromCmp = toRangeBoundExpr(fromPart, false);
+          String toCmp   = toRangeBoundExpr(toPart, true);
           String now = ":nowValue";
           switch (value) {
             case "before":
@@ -2591,14 +2702,10 @@ public class PageDataService {
           }
         } else {
           if (!rangeKey.matches("[a-zA-Z0-9_]+")) return;
-          String fromRootDigits   = "regexp_replace(data_json->>'" + rangeKey + "_from', '[^0-9]', '', 'g')";
-          String toRootDigits     = "regexp_replace(data_json->>'" + rangeKey + "_to', '[^0-9]', '', 'g')";
-          String fromNestedDigits = "regexp_replace(kv.value->>'" + rangeKey + "_from', '[^0-9]', '', 'g')";
-          String toNestedDigits   = "regexp_replace(kv.value->>'" + rangeKey + "_to', '[^0-9]', '', 'g')";
-          String fromRootCmp   = "(CASE WHEN char_length(" + fromRootDigits   + ") = 8 THEN " + fromRootDigits   + " || '000000' ELSE " + fromRootDigits   + " END)";
-          String toRootCmp     = "(CASE WHEN char_length(" + toRootDigits     + ") = 8 THEN " + toRootDigits     + " || '235959' ELSE " + toRootDigits     + " END)";
-          String fromNestedCmp = "(CASE WHEN char_length(" + fromNestedDigits + ") = 8 THEN " + fromNestedDigits + " || '000000' ELSE " + fromNestedDigits + " END)";
-          String toNestedCmp   = "(CASE WHEN char_length(" + toNestedDigits   + ") = 8 THEN " + toNestedDigits   + " || '235959' ELSE " + toNestedDigits   + " END)";
+          String fromRootCmp   = toRangeBoundExpr("data_json->>'" + rangeKey + "_from'", false);
+          String toRootCmp     = toRangeBoundExpr("data_json->>'" + rangeKey + "_to'", true);
+          String fromNestedCmp = toRangeBoundExpr("kv.value->>'" + rangeKey + "_from'", false);
+          String toNestedCmp   = toRangeBoundExpr("kv.value->>'" + rangeKey + "_to'", true);
           String now    = ":nowValue";
           String nested = " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ";
           switch (value) {
@@ -2960,7 +3067,7 @@ public class PageDataService {
     if (siteId != null) {
       query.setParameter("siteId", siteId);
     }
-    bindSearchParams(query, statusParams);
+    bindSearchParams(query, statusParams, siteId);
     bindTodayIfPresent(query, sql, siteId);
     bindNowIfPresent(query, sql, siteId);
 
@@ -3012,7 +3119,7 @@ public class PageDataService {
     return s;
   }
 
-  private void bindSearchParams(Query query, Map<String, String> searchParams) {
+  private void bindSearchParams(Query query, Map<String, String> searchParams, Long siteId) {
     searchParams.forEach((key, value) -> {
       if (key.equals("filterExpr")) {
         setConditionParams(query, value);
@@ -3120,7 +3227,8 @@ public class PageDataService {
       if (key.endsWith("_from") || key.endsWith("_gte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String baseKey = key.endsWith("_from") ? key.substring(0, key.length() - 5) : key.substring(0, key.length() - 4);
-        String normalized = normalizeDateFrom(value);
+        String resolvedValue = "today()".equals(value) ? resolveTodayIsoDate(siteId) : value;
+        String normalized = normalizeDateFrom(resolvedValue);
         String bindValue = toAuditDateColumn(baseKey) != null ? toIsoTimestamp(normalized) : normalized;
         query.setParameter("p_" + key, bindValue);
         return;
@@ -3129,7 +3237,8 @@ public class PageDataService {
       if (key.endsWith("_to") || key.endsWith("_lte")) {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String baseKey = key.endsWith("_to") ? key.substring(0, key.length() - 3) : key.substring(0, key.length() - 4);
-        String normalized = normalizeDateTo(value);
+        String resolvedValue = "today()".equals(value) ? resolveTodayIsoDate(siteId) : value;
+        String normalized = normalizeDateTo(resolvedValue);
         String bindValue = toAuditDateColumn(baseKey) != null ? toIsoTimestamp(normalized) : normalized;
         query.setParameter("p_" + key, bindValue);
         return;

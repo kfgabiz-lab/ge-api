@@ -32,6 +32,7 @@ public class RoleService {
             org.springframework.data.domain.Sort.Order.desc("createdAt"),
             org.springframework.data.domain.Sort.Order.desc("id")))
         .stream()
+        .filter(r -> !r.isSystem())
         .map(this::toResponse)
         .collect(Collectors.toList());
   }
@@ -100,6 +101,13 @@ public class RoleService {
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "역할을 찾을 수 없습니다."));
 
+    if (role.isSystem()) {
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "SYSTEM_ROLE", "시스템 기본 역할은 수정할 수 없습니다.");
+    }
+    if ("SUPER_ADMIN".equals(role.getCode())) {
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "SUPER_ADMIN_ROLE", "최고 관리자 역할은 수정할 수 없습니다.");
+    }
+
     role.setDisplayName(request.getDisplayName());
     role.setDescription(request.getDescription());
     role.setColor(request.getColor());
@@ -120,6 +128,9 @@ public class RoleService {
 
     if (role.isSystem()) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "SYSTEM_ROLE", "시스템 기본 역할은 삭제할 수 없습니다.");
+    }
+    if ("SUPER_ADMIN".equals(role.getCode())) {
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "SUPER_ADMIN_ROLE", "최고 관리자 역할은 삭제할 수 없습니다.");
     }
 
     long memberCount = adminRepository.countByRole(role.getCode());

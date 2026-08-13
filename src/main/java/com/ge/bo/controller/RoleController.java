@@ -3,6 +3,7 @@ package com.ge.bo.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import com.ge.bo.dto.RoleDto;
@@ -16,6 +17,7 @@ import com.ge.bo.annotation.ApiLinkedEntity;
 @RequestMapping("/api/v1/roles")
 @RequiredArgsConstructor
 @ApiLinkedEntity("Role")
+@PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
 public class RoleController {
 
   private final RoleService roleService;
