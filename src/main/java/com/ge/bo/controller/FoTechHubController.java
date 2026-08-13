@@ -43,13 +43,23 @@ public class FoTechHubController {
     }
 
     @GetMapping("/category-counts")
-    public ResponseEntity<List<TechHubCategoryCountResponse>> getCategoryCounts() {
-        return ResponseEntity.ok(techHubService.getCategoryCounts());
+    public ResponseEntity<List<TechHubCategoryCountResponse>> getCategoryCounts(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String categories,
+            @RequestParam(required = false) String certs) {
+        List<String> categoryL2Ids = parseCsv(categories);
+        List<String> certCodes = parseCsv(certs);
+        return ResponseEntity.ok(techHubService.getCategoryCounts(q, categoryL2Ids, certCodes));
     }
 
     @GetMapping("/cert-counts")
-    public ResponseEntity<List<TechHubCertCountResponse>> getCertCounts() {
-        return ResponseEntity.ok(techHubService.getCertCounts());
+    public ResponseEntity<List<TechHubCertCountResponse>> getCertCounts(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String categories,
+            @RequestParam(required = false) String certs) {
+        List<String> categoryL2Ids = parseCsv(categories);
+        List<String> certCodes = parseCsv(certs);
+        return ResponseEntity.ok(techHubService.getCertCounts(q, categoryL2Ids, certCodes));
     }
 
     private List<String> parseCsv(String csv) {
