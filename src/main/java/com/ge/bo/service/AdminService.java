@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.ge.bo.common.util.RoleCodeUtils;
 import com.ge.bo.dto.AdminDto;
 import com.ge.bo.entity.AdminUser;
 import com.ge.bo.entity.Role;
@@ -14,7 +15,6 @@ import com.ge.bo.repository.RoleRepository;
 import org.springframework.http.HttpStatus;
 
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -24,7 +24,6 @@ public class AdminService {
   private final AdminRepository adminRepository;
   private final RoleRepository roleRepository;
 
-  private static final Set<String> RESERVED_ROLE_CODES = Set.of("SYSTEM_ADMIN", "SUPER_ADMIN");
   private static final String SYSTEM_ADMIN_CODE = "SYSTEM_ADMIN";
 
   /**
@@ -73,7 +72,7 @@ public class AdminService {
     if (request.getRole() != null
         && (!roleRepository.existsByCode(request.getRole())
             || isSystemRole(request.getRole())
-            || RESERVED_ROLE_CODES.contains(request.getRole()))) {
+            || RoleCodeUtils.containsReservedCode(request.getRole()))) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_ROLE", "유효하지 않은 역할 코드입니다.");
     }
 

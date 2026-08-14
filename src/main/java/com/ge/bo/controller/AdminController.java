@@ -110,7 +110,7 @@ public class AdminController {
    * @return 변경 후 매핑된 홈페이지 응답 DTO 목록
    */
   @PutMapping("/{id}/sites")
-  @PreAuthorize("@securityService.isSelf(authentication, #id) or @securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
   public ResponseEntity<List<SiteDto.Response>> updateAdminSites(
       @PathVariable Long id,
       @Valid @RequestBody SiteDto.SiteMappingRequest request) {

@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.ge.bo.common.util.RoleCodeUtils;
 import com.ge.bo.dto.RoleDto;
 import com.ge.bo.entity.Role;
 import com.ge.bo.exception.BusinessException;
@@ -72,6 +73,11 @@ public class RoleService {
    */
   @Transactional
   public RoleDto.Response createRole(RoleDto.CreateRequest request) {
+    if (RoleCodeUtils.containsReservedCode(request.getCode())) {
+      throw new BusinessException(
+          HttpStatus.BAD_REQUEST, "RESERVED_ROLE_CODE", "예약된 역할 코드가 포함된 코드는 사용할 수 없습니다.");
+    }
+
     if (roleRepository.existsByCode(request.getCode())) {
       throw new BusinessException(
           HttpStatus.BAD_REQUEST, "DUPLICATE_ROLE_CODE", "이미 사용 중인 역할 코드입니다.");
