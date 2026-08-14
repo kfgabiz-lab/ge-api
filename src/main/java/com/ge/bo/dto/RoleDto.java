@@ -28,8 +28,6 @@ public class RoleDto {
     @NotBlank(message = "색상을 선택해주세요.")
         @Pattern(regexp = "^#[0-9a-fA-F]{6}$", message = "올바른 색상 형식이 아닙니다.")
         private String color;
-
-    private boolean isSystem;
   }
 
   @Getter

@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * blog/articles/press(page_data) ↔ integration_contents(외부연동 테이블) 동기화
+ * blog/articles/press/events(page_data) ↔ integration_contents(외부연동 테이블) 동기화
  */
 @Slf4j
 @Service
@@ -58,10 +58,11 @@ public class IntegrationContentsSyncService {
     }
 
     Object nested = dataJson.get(SLUG_JSON_KEY.get(slug));
-    if (!(nested instanceof Map<?, ?> fields)
-        || fields.get("title") == null
-        || fields.get("content") == null) {
+    if (!(nested instanceof Map<?, ?> fields) || fields.get("title") == null) {
       throw ErrorCode.INTEGRATION_CONTENTS_FIELD_MISSING.toException();
+    }
+    if (fields.get("content") == null) {
+      return;
     }
 
     String contentId = String.valueOf(pageDataId);

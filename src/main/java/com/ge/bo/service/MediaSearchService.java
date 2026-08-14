@@ -40,11 +40,11 @@ public class MediaSearchService {
     private static final Pattern YOUTUBE_ID =
         Pattern.compile("(?:youtube\\.com/(?:watch\\?(?:.*&)?v=|embed/|shorts/|v/)|youtu\\.be/)([A-Za-z0-9_-]{11})");
 
-    private static final int SNIPPET_MAX_CHARS = 200;
+    private static final int SNIPPET_MAX_CHARS = 320;
 
     private static final int SNIPPET_EARLY_TRUNCATE_CHARS = 4000;
 
-    private static final List<String> SOURCE_KEYS = List.of("TECH_HUB", "BLOG", "PRESS", "ARTICLE");
+    private static final List<String> SOURCE_KEYS = List.of("TECH_HUB", "BLOG", "PRESS", "ARTICLE", "EVENT");
 
     private static final DateTimeFormatter SORT_DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
@@ -85,7 +85,8 @@ public class MediaSearchService {
             + "   SELECT count(*) FILTER (WHERE source_type='TECH_HUB') AS c_tech_hub,"
             + "          count(*) FILTER (WHERE source_type='BLOG')     AS c_blog,"
             + "          count(*) FILTER (WHERE source_type='PRESS')    AS c_press,"
-            + "          count(*) FILTER (WHERE source_type='ARTICLE')  AS c_article"
+            + "          count(*) FILTER (WHERE source_type='ARTICLE')  AS c_article,"
+            + "          count(*) FILTER (WHERE source_type='EVENT')    AS c_event"
             + "   FROM base"
             + " ),"
             + " pg AS ("
@@ -94,7 +95,7 @@ public class MediaSearchService {
             + "   ORDER BY b.score DESC, b.sort_ts DESC NULLS LAST, b.source_type, b.row_id DESC"
             + "   LIMIT :size OFFSET :offset"
             + " )"
-            + " SELECT a.c_tech_hub, a.c_blog, a.c_press, a.c_article,"
+            + " SELECT a.c_tech_hub, a.c_blog, a.c_press, a.c_article, a.c_event,"
             + "        p.source_type, p.id, p.title, " + buildFinalSnippetExpr() + " AS snippet,"
             + "        p.video_url, p.file_id, p.sort_ts"
             + " FROM agg a"
@@ -115,20 +116,21 @@ public class MediaSearchService {
             sourceCounts.put("BLOG", toLong(head[1]));
             sourceCounts.put("PRESS", toLong(head[2]));
             sourceCounts.put("ARTICLE", toLong(head[3]));
+            sourceCounts.put("EVENT", toLong(head[4]));
         }
 
         ZoneId zone = siteTimeZoneResolver.resolve(siteId);
         List<MediaSearchItemResponse> content = new ArrayList<>();
         for (Object[] r : rows) {
-            if (r[4] == null) continue;
+            if (r[5] == null) continue;
 
-            String sourceType = r[4].toString();
-            Long id = r[5] != null ? ((Number) r[5]).longValue() : null;
-            String title = r[6] != null ? r[6].toString() : null;
-            String snippet = r[7] != null ? r[7].toString() : null;
-            String videoUrl = r[8] != null ? r[8].toString() : null;
-            Long fileId = r[9] != null ? ((Number) r[9]).longValue() : null;
-            String sortDate = formatSortDate(r[10], zone);
+            String sourceType = r[5].toString();
+            Long id = r[6] != null ? ((Number) r[6]).longValue() : null;
+            String title = r[7] != null ? r[7].toString() : null;
+            String snippet = r[8] != null ? r[8].toString() : null;
+            String videoUrl = r[9] != null ? r[9].toString() : null;
+            Long fileId = r[10] != null ? ((Number) r[10]).longValue() : null;
+            String sortDate = formatSortDate(r[11], zone);
 
             String imageUrl = "TECH_HUB".equals(sourceType)
                     ? youtubeThumbnail(videoUrl)
@@ -185,7 +187,7 @@ public class MediaSearchService {
 
         StringBuilder sb = new StringBuilder();
         sb.append("SELECT CASE ic.type WHEN 'B' THEN 'BLOG' WHEN 'P' THEN 'PRESS'")
-          .append("                    WHEN 'A' THEN 'ARTICLE' END::text AS source_type,")
+          .append("                    WHEN 'A' THEN 'ARTICLE' WHEN 'E' THEN 'EVENT' END::text AS source_type,")
           .append("  ic.id AS row_id,")
           .append("  NULLIF(regexp_replace(ic.content_id,'[^0-9]','','g'),'')::bigint AS id,")
           .append("  ic.title::text AS title,")
@@ -204,7 +206,7 @@ public class MediaSearchService {
             sb.append("  0::int AS score");
         }
         sb.append(" FROM integration_contents ic")
-          .append(" WHERE ic.is_visible = true AND ic.type IN ('B','P','A')");
+          .append(" WHERE ic.is_visible = true AND ic.type IN ('B','P','A','E')");
         if (hasSite) {
             sb.append(" AND (ic.site_id = :siteId OR ic.site_id IS NULL)");
         }
@@ -240,7 +242,7 @@ public class MediaSearchService {
     }
 
     private Set<String> parseSources(String sources) {
-        Set<String> all = new LinkedHashSet<>(List.of("TECH_HUB", "BLOG", "PRESS", "ARTICLE"));
+        Set<String> all = new LinkedHashSet<>(SOURCE_KEYS);
         if (sources == null || sources.isBlank()) {
             return all;
         }
@@ -273,6 +275,7 @@ public class MediaSearchService {
             case "BLOG" -> "/company/blog/detail/" + id;
             case "PRESS" -> "/company/press/detail/" + id;
             case "ARTICLE" -> "/company/articles/detail/" + id;
+            case "EVENT" -> "/company/events/detail/" + id;
             default -> null;
         };
     }

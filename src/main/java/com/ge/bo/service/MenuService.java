@@ -44,6 +44,8 @@ public class MenuService {
   private static final Set<Long> SUPER_ADMIN_ONLY_MENU_IDS = Set.of(
       212L, 31L, 70L, 29L, 74L, 33L, 92L, 214L, 215L, 226L);
 
+  private static final String SYSTEM_ADMIN_CODE = "SYSTEM_ADMIN";
+
     /* ══════════════════════════════════════ */
     /*  조회                                  */
     /* ══════════════════════════════════════ */
@@ -308,10 +310,8 @@ public class MenuService {
   @Transactional(readOnly = true)
     public List<RoleMenuResponse> getRoleMenuMappings(Long menuId) {
     findMenuOrThrow(menuId);
-        /* is_system=true 역할은 제외 — 일반 사용자에게 시스템관리자 역할 존재 자체를 숨김 */
-    List<Role> roles = roleRepository.findAllByOrderByIdAsc().stream()
-                .filter(r -> !r.isSystem())
-                .collect(java.util.stream.Collectors.toList());
+    List<Role> roles = roleRepository.findByCodeNot(SYSTEM_ADMIN_CODE,
+        org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Order.asc("id")));
     Set<Long> mappedRoleIds = roleMenuRepository.findByMenuId(menuId)
                 .stream().map(RoleMenu::getRoleId).collect(Collectors.toSet());
 

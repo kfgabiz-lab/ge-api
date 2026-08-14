@@ -48,7 +48,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -71,7 +73,7 @@ public class PageDataService {
   @PersistenceContext
     private EntityManager entityManager;
 
-  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "unpaged", "exclude", "fetchRelationIds", "previewToken", "drsKeys");
+  private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "sortExpr", "unpaged", "exclude", "fetchRelationIds", "previewToken", "drsKeys");
 
   /**
    * FO 공개 API(FoPageDataController)에서 게시상태를 클라이언트 파라미터가 아니라 서버가 직접 강제하는 slug.
@@ -93,11 +95,30 @@ public class PageDataService {
       Map.of(
           "wheretobuy-agency-data", "agency",
           "currMgmt-data", "curriculum",
-          "currDtlMgmt-data", "curriculum_detail3");
+          "currDtlMgmt-data", "curriculum_detail3",
+          "banner-data", "banner");
 
   private String visibilityGateSql(String slug) {
     String section = FO_VISIBILITY_GATED_SLUGS.get(slug);
     return section == null ? "" : " AND data_json->'" + section + "'->>'is_visible' = '001'";
+  }
+
+  /**
+   * FO 공개 API에서 노출기간(post_period_from~to)을 클라이언트 파라미터(drs_post_period)가 아니라
+   * 서버가 직접 강제하는 slug → JSON 섹션명 매핑. hero-data/banner-data처럼 is_visible 없이
+   * 기간으로만 노출여부를 결정하는 데이터가 대상.
+   */
+  private static final Map<String, String> FO_PERIOD_GATED_SLUGS =
+      Map.of(
+          "hero-data", "hero",
+          "banner-data", "banner");
+
+  private String periodGateSql(String slug) {
+    String section = FO_PERIOD_GATED_SLUGS.get(slug);
+    if (section == null) return "";
+    String fromExpr = toRangeBoundExpr("data_json->'" + section + "'->>'post_period_from'", false);
+    String toExpr = toRangeBoundExpr("data_json->'" + section + "'->>'post_period_to'", true);
+    return " AND " + fromExpr + " <= :nowValue AND " + toExpr + " >= :nowValue";
   }
 
   private static final String PRODUCT_DATA_SLUG_COND = "#slug == 'product-data'";
@@ -192,6 +213,7 @@ public class PageDataService {
     }
     if (enforcePublishGate) {
       whereClause.append(visibilityGateSql(slug));
+      whereClause.append(periodGateSql(slug));
     }
 
     if ("currDtlMgmt-data".equals(slug) && relFilterParams.containsKey("rel_4")) {
@@ -251,26 +273,8 @@ public class PageDataService {
       }
     }
 
-    String orderBy = " ORDER BY created_at DESC";
-    String sortParam = allParams.get("sort");
-    if (sortParam != null && !sortParam.isBlank()) {
-      String[] parts = sortParam.split(",", 2);
-      String sortCol = parts[0].trim();
-      String sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
-      if (sortCol.contains(".")) {
-        String[] segs = sortCol.split("\\.");
-        if (isValidSegments(segs)) {
-          orderBy = " ORDER BY " + buildJsonPath(segs) + " " + sortDir;
-        }
-      } else if (sortCol.matches("[a-zA-Z0-9_]+")) {
-        String auditCol = toAuditColumn(sortCol);
-        if (auditCol != null) {
-          orderBy = " ORDER BY " + auditCol + " " + sortDir;
-        } else {
-          orderBy = " ORDER BY data_json->>'" + sortCol + "' " + sortDir;
-        }
-      }
-    }
+    OrderByClause orderByClause = buildOrderByClauseWithExpr(allParams.get("sort"), allParams.get("sortExpr"), !enforcePublishGate);
+    String orderBy = orderByClause.sql();
 
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
                 + " created_by, created_at, updated_by, updated_at, \"count\" "
@@ -290,6 +294,7 @@ public class PageDataService {
     bindTodayIfPresent(dataQuery, dataSql, siteId);
     bindNowIfPresent(dataQuery, dataSql, siteId);
     existsBindParams.forEach(dataQuery::setParameter);
+    orderByClause.params().forEach(dataQuery::setParameter);
 
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
@@ -304,6 +309,7 @@ public class PageDataService {
 
     content = applyFetch(slug, content, siteId, parseFetchRelationIds(allParams));
     content = applyDateRangeStatus(content, allParams.get("drsKeys"), siteId);
+    content = applyRegistrationState(slug, content, siteId, enforcePublishGate);
 
     if (unpaged) {
       int actualCount = content.size();
@@ -351,6 +357,11 @@ public class PageDataService {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
     appendWhereConditionsDatetime(whereClause, searchParams);
+    if (FO_PUBLISH_GATED_SLUGS.contains(slug)) {
+      whereClause.append(FO_PUBLISH_GATE_SQL);
+    }
+    whereClause.append(visibilityGateSql(slug));
+    whereClause.append(periodGateSql(slug));
 
     if (!relFilterParams.isEmpty()) {
       Set<Long> filterIds = resolveFilterRelationIds(relFilterParams);
@@ -401,26 +412,7 @@ public class PageDataService {
       }
     }
 
-    String orderBy = " ORDER BY created_at DESC";
-    String sortParam = allParams.get("sort");
-    if (sortParam != null && !sortParam.isBlank()) {
-      String[] parts = sortParam.split(",", 2);
-      String sortCol = parts[0].trim();
-      String sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
-      if (sortCol.contains(".")) {
-        String[] segs = sortCol.split("\\.");
-        if (isValidSegments(segs)) {
-          orderBy = " ORDER BY " + buildJsonPath(segs) + " " + sortDir;
-        }
-      } else if (sortCol.matches("[a-zA-Z0-9_]+")) {
-        String auditCol = toAuditColumn(sortCol);
-        if (auditCol != null) {
-          orderBy = " ORDER BY " + auditCol + " " + sortDir;
-        } else {
-          orderBy = " ORDER BY data_json->>'" + sortCol + "' " + sortDir;
-        }
-      }
-    }
+    String orderBy = buildOrderByClause(allParams.get("sort"));
 
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
                 + " created_by, created_at, updated_by, updated_at, \"count\" "
@@ -453,6 +445,7 @@ public class PageDataService {
     applyExclude(content, allParams.get("exclude"));
     content = applyFetch(slug, content, siteId, parseFetchRelationIds(allParams));
     content = applyDateRangeStatus(content, allParams.get("drsKeys"), siteId);
+    content = applyRegistrationState(slug, content, siteId, true);
 
     if (unpaged) {
       int actualCount = content.size();
@@ -602,6 +595,7 @@ public class PageDataService {
         + "           THEN c.data_json->'category'->>'is_visible' = '001'"
         + "           ELSE true"
         + "      END"
+        + "  AND (NOT jsonb_exists(c.data_json, 'product') OR p.id IS NOT NULL)"
         + "  AND (c.site_id = :siteId OR c.site_id IS NULL)"
         + " ORDER BY"
         + "  CASE WHEN jsonb_exists(c.data_json, 'category') THEN c.data_json->'category'->>'depth' ELSE c.data_json->'product'->>'depth' END ASC,"
@@ -1223,7 +1217,7 @@ public class PageDataService {
     if (dataJson == null) return dataJson;
     Map<String, Object> cleaned = new LinkedHashMap<>();
     dataJson.forEach((key, value) -> {
-      if (!key.startsWith("_fetchedRel") && !key.startsWith("_drs_")) cleaned.put(key, value);
+      if (!key.startsWith("_fetchedRel") && !key.startsWith("_drs_") && !key.startsWith("_registration")) cleaned.put(key, value);
     });
     return richTextSanitizer.sanitizeDataJson(cleaned);
   }
@@ -1366,23 +1360,27 @@ public class PageDataService {
       if (!incomingDataJson.containsKey(fieldKey)) continue;
       try {
         SlugRelation pathRel = entry.getValue();
+        /* 선택 단위 = 카테고리 매핑(depth3) 고유 id — 같은 제품이 여러 카테고리에 매핑돼도 매핑별로 독립 선택/보존된다.
+           FE가 category-data(depth3 leaf) 행의 고유 id를 그대로 제출하므로 여기서 추출되는 값도 productId가 아니라
+           매핑 자신의 id다(카테고리 매핑이 없는 예외적인 경우만 productId 그대로 폴백 — buildSnapshotEntry와 동일 관례,
+           저장되는 entry 형태 자체(id/productId/depth1/depth2/depth3)는 이전과 동일하게 유지된다) */
         LinkedHashSet<Long> requestedIds = extractProductIdsFromFieldValue(incomingDataJson.get(fieldKey));
-        Map<Long, List<Map<String, Object>>> previousByProductId = baseDataJson != null
+        Map<Long, Map<String, Object>> previousById = baseDataJson != null
             ? groupSnapshotEntriesByProductId(baseDataJson.get(fieldKey))
             : Map.of();
 
         List<Long> idsToResolve = new ArrayList<>();
-        for (Long productId : requestedIds) {
-          if (!previousByProductId.containsKey(productId)) idsToResolve.add(productId);
+        for (Long id : requestedIds) {
+          if (!previousById.containsKey(id)) idsToResolve.add(id);
         }
-        Map<Long, List<Map<String, Object>>> resolved = resolveCategoryPathSnapshot(pathRel, idsToResolve);
+        Map<Long, Map<String, Object>> resolved = resolveCategoryPathSnapshotByMappingIds(pathRel, idsToResolve);
 
         List<Map<String, Object>> merged = new ArrayList<>();
-        for (Long productId : requestedIds) {
-          List<Map<String, Object>> entries = previousByProductId.get(productId);
-          if (entries == null) entries = resolved.get(productId);
-          if (entries == null) entries = List.of(buildSnapshotEntry(productId, null, null, null));
-          merged.addAll(entries);
+        for (Long id : requestedIds) {
+          Map<String, Object> item = previousById.get(id);
+          if (item == null) item = resolved.get(id);
+          if (item == null) item = buildSnapshotEntry(id, null, null, null);
+          merged.add(item);
         }
         result.put(fieldKey, merged);
       } catch (Exception e) {
@@ -1421,17 +1419,25 @@ public class PageDataService {
     return ids;
   }
 
+  /**
+   * 이전 저장값을 매핑(depth3) 고유 id 기준으로 그룹핑 — 재저장 시 변경 없는 매핑을 그대로 보존하기 위한 조회용.
+   * depth3(카테고리 매핑 id)가 없는 예외 케이스(카테고리 미매핑 제품)만 productId/id로 폴백한다.
+   * depth3는 category-data 행의 고유 id라 매핑당 정확히 1건만 존재한다(리스트가 아닌 단건 Map으로 그룹핑).
+   */
   @SuppressWarnings("unchecked")
-  private Map<Long, List<Map<String, Object>>> groupSnapshotEntriesByProductId(Object rawValue) {
-    Map<Long, List<Map<String, Object>>> grouped = new LinkedHashMap<>();
+  private Map<Long, Map<String, Object>> groupSnapshotEntriesByProductId(Object rawValue) {
+    Map<Long, Map<String, Object>> grouped = new LinkedHashMap<>();
     if (!(rawValue instanceof List<?> list)) return grouped;
     for (Object item : list) {
       if (!(item instanceof Map)) continue;
       Map<String, Object> itemMap = (Map<String, Object>) item;
-      Object pid = itemMap.containsKey("productId") ? itemMap.get("productId") : itemMap.get("id");
-      Long productId = toLongOrNull(pid);
-      if (productId == null) continue;
-      grouped.computeIfAbsent(productId, k -> new ArrayList<>()).add(itemMap);
+      Long key = toLongOrNull(itemMap.get("depth3"));
+      if (key == null) {
+        Object pid = itemMap.containsKey("productId") ? itemMap.get("productId") : itemMap.get("id");
+        key = toLongOrNull(pid);
+      }
+      if (key == null) continue;
+      grouped.put(key, itemMap);
     }
     return grouped;
   }
@@ -1456,81 +1462,47 @@ public class PageDataService {
     return entry;
   }
 
-  @SuppressWarnings("unchecked")
-  private Map<Long, List<Map<String, Object>>> resolveCategoryPathSnapshot(SlugRelation pathRel, Collection<Long> productIds) {
-    Map<Long, List<Map<String, Object>>> result = new LinkedHashMap<>();
-    if (productIds == null || productIds.isEmpty()) return result;
+  /**
+   * 카테고리 매핑(depth3) id를 직접 조회해 productId/depth1/depth2를 역산한다.
+   * FE가 이미 category-data(depth3 leaf) 행의 고유 id를 선택값으로 제출하므로, product.id 기준 fan-out 조회
+   * 없이 그 id 자체를 바로 조회하면 된다(예전 product 기준 fan-out 방식보다 단순함 — 매핑당 정확히 1행 조회).
+   */
+  private Map<Long, Map<String, Object>> resolveCategoryPathSnapshotByMappingIds(
+      SlugRelation pathRel, Collection<Long> mappingIds) {
+    Map<Long, Map<String, Object>> result = new LinkedHashMap<>();
+    if (mappingIds == null || mappingIds.isEmpty()) return result;
 
-    List<String> productIdStrs = productIds.stream().map(String::valueOf).toList();
-    String[] slaveKeySegs = pathRel.getSlaveKey().split("\\.");
+    Map<Long, Map<String, Object>> depth3DataById = fetchDataJsonByIds(pathRel.getSlaveSlug(), mappingIds);
 
-    StringBuilder sql = new StringBuilder(
-        "SELECT id, data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
-    sql.append(" AND ").append(buildJsonPath(slaveKeySegs)).append(" IN (:productIdStrs)");
-    Map<String, String> filterParams = new LinkedHashMap<>();
-    if (StringUtils.hasText(pathRel.getSlaveFilter())) {
-      appendSlaveFilter(sql, pathRel.getSlaveFilter(), filterParams);
-    }
-
-    Query depth3Query = entityManager.createNativeQuery(sql.toString());
-    depth3Query.setParameter("slaveSlug", pathRel.getSlaveSlug());
-    depth3Query.setParameter("productIdStrs", productIdStrs);
-    filterParams.forEach(depth3Query::setParameter);
-
-    List<Object[]> depth3Rows = depth3Query.getResultList();
-
-    Map<Long, List<Long>> depth3IdsByProductId = new LinkedHashMap<>();
-    Map<Long, Map<String, Object>> depth3DataById = new LinkedHashMap<>();
     Set<Long> depth2Ids = new LinkedHashSet<>();
-
-    for (Object[] row : depth3Rows) {
-      Long depth3Id = ((Number) row[0]).longValue();
-      Map<String, Object> dataJson;
-      try {
-        dataJson = objectMapper.readValue(
-            row[1].toString(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-      } catch (Exception e) {
-        continue;
-      }
-      depth3DataById.put(depth3Id, dataJson);
-
-      String productIdStr = extractField(dataJson, "product.id");
-      Long productId = productIdStr != null ? toLongOrNull(productIdStr.trim()) : null;
-      if (productId == null) continue;
-      depth3IdsByProductId.computeIfAbsent(productId, k -> new ArrayList<>()).add(depth3Id);
-
-      String depth2IdStr = extractField(dataJson, "product.parentId");
+    for (Map<String, Object> depth3Data : depth3DataById.values()) {
+      String depth2IdStr = extractField(depth3Data, "product.parentId");
       Long depth2Id = depth2IdStr != null ? toLongOrNull(depth2IdStr.trim()) : null;
       if (depth2Id != null) depth2Ids.add(depth2Id);
     }
-
     Map<Long, Map<String, Object>> depth2DataById = fetchDataJsonByIds(pathRel.getSlaveSlug(), depth2Ids);
 
-    for (Long productId : productIds) {
-      List<Long> matchedDepth3Ids = depth3IdsByProductId.get(productId);
-      if (matchedDepth3Ids == null || matchedDepth3Ids.isEmpty()) {
-        result.put(productId, new ArrayList<>(List.of(buildSnapshotEntry(productId, null, null, null))));
-        continue;
-      }
-      List<Map<String, Object>> entries = new ArrayList<>();
-      for (Long depth3Id : matchedDepth3Ids) {
-        Map<String, Object> depth3Data = depth3DataById.get(depth3Id);
-        String depth2IdStr = extractField(depth3Data, "product.parentId");
-        Long depth2Id = depth2IdStr != null ? toLongOrNull(depth2IdStr.trim()) : null;
+    for (Long mappingId : mappingIds) {
+      Map<String, Object> depth3Data = depth3DataById.get(mappingId);
+      if (depth3Data == null) continue; /* 매핑 행이 삭제된 경우 — 호출부의 productId 폴백으로 처리됨 */
+      String productIdStr = extractField(depth3Data, "product.id");
+      Long productId = productIdStr != null ? toLongOrNull(productIdStr.trim()) : null;
+      if (productId == null) continue;
 
-        Long depth1Id = null;
-        if (depth2Id != null) {
-          Map<String, Object> depth2Data = depth2DataById.get(depth2Id);
-          if (depth2Data == null) {
-            depth2Id = null;
-          } else {
-            String depth1IdStr = extractField(depth2Data, "category.parentId");
-            depth1Id = depth1IdStr != null ? toLongOrNull(depth1IdStr.trim()) : null;
-          }
+      String depth2IdStr = extractField(depth3Data, "product.parentId");
+      Long depth2Id = depth2IdStr != null ? toLongOrNull(depth2IdStr.trim()) : null;
+
+      Long depth1Id = null;
+      if (depth2Id != null) {
+        Map<String, Object> depth2Data = depth2DataById.get(depth2Id);
+        if (depth2Data == null) {
+          depth2Id = null;
+        } else {
+          String depth1IdStr = extractField(depth2Data, "category.parentId");
+          depth1Id = depth1IdStr != null ? toLongOrNull(depth1IdStr.trim()) : null;
         }
-        entries.add(buildSnapshotEntry(productId, depth1Id, depth2Id, depth3Id));
       }
-      result.put(productId, entries);
+      result.put(mappingId, buildSnapshotEntry(productId, depth1Id, depth2Id, mappingId));
     }
 
     return result;
@@ -2223,6 +2195,55 @@ public class PageDataService {
     return result;
   }
 
+  @SuppressWarnings("unchecked")
+  private List<PageDataResponse> applyRegistrationState(String slug, List<PageDataResponse> content, Long siteId, boolean enforcePublishGate) {
+    if (!enforcePublishGate || !"currDtlMgmt-data".equals(slug)) return content;
+
+    LocalDate today = LocalDate.now(resolveZone(siteId));
+    List<PageDataResponse> result = new ArrayList<>(content.size());
+    for (PageDataResponse item : content) {
+      Map<String, Object> enriched = new LinkedHashMap<>(item.getDataJson());
+      Object detail2Obj = enriched.get("curriculum_detail2");
+      Map<String, Object> detail2 = detail2Obj instanceof Map ? (Map<String, Object>) detail2Obj : Collections.emptyMap();
+      Object fromVal = detail2.get("register_period_from");
+      Object toVal = detail2.get("register_period_to");
+      String registerPeriodFrom = fromVal != null ? fromVal.toString() : null;
+      String registerPeriodTo = toVal != null ? toVal.toString() : null;
+
+      Integer daysLeft = registrationDaysLeft(registerPeriodTo, today);
+      Boolean notYetOpen = registrationNotYetOpen(registerPeriodFrom, today);
+
+      enriched.put("_registrationDaysLeft", daysLeft);
+      enriched.put("_registrationClosed", daysLeft != null && daysLeft < 0);
+      enriched.put("_registrationClosesToday", daysLeft != null && daysLeft == 0);
+      enriched.put("_registrationNotYetOpen", notYetOpen);
+
+      result.add(item.withDataJson(enriched));
+    }
+    return result;
+  }
+
+  private static LocalDate parseYmdOrNull(String value) {
+    if (value == null || value.length() < 10) return null;
+    try {
+      return LocalDate.parse(value.substring(0, 10));
+    } catch (Exception e) {
+      return null;
+    }
+  }
+
+  private static Integer registrationDaysLeft(String registerPeriodTo, LocalDate today) {
+    LocalDate to = parseYmdOrNull(registerPeriodTo);
+    if (to == null) return null;
+    return (int) ChronoUnit.DAYS.between(today, to);
+  }
+
+  private static Boolean registrationNotYetOpen(String registerPeriodFrom, LocalDate today) {
+    LocalDate from = parseYmdOrNull(registerPeriodFrom);
+    if (from == null) return null;
+    return today.isBefore(from);
+  }
+
   private boolean matchesCondition(Map<String, Object> dataJson, String condition, Long siteId) {
     String today = LocalDate.now(resolveZone(siteId)).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
     for (CondToken t : parseConditionExpr(condition)) {
@@ -2486,29 +2507,7 @@ public class PageDataService {
         List<CondToken> tokens = parseConditionExpr(ternary[0]);
         if (tokens.isEmpty()) return;
 
-        String today = ":today";
-        String now = ":nowValue";
-        List<String> topParts = new ArrayList<>();
-        List<String> nestedParts = new ArrayList<>();
-        int idx = 0;
-        for (CondToken t : tokens) {
-          String pName = "p_cond_" + fk + "_" + idx;
-          String sqlOp = "!=".equals(t.op()) ? "<>" : t.op();
-          if (t.isToday()) {
-            topParts.add("substring(regexp_replace(data_json->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
-            nestedParts.add("substring(regexp_replace(kv.value->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
-          } else if (t.isNow()) {
-            topParts.add(toNowPaddedExpr("data_json->>'" + t.key() + "'") + " " + sqlOp + " " + now);
-            nestedParts.add(toNowPaddedExpr("kv.value->>'" + t.key() + "'") + " " + sqlOp + " " + now);
-          } else {
-            topParts.add("data_json->>'" + t.key() + "' " + sqlOp + " :" + pName);
-            nestedParts.add("kv.value->>'" + t.key() + "' " + sqlOp + " :" + pName);
-          }
-          idx++;
-        }
-        String condExpr = "((" + String.join(" AND ", topParts) + ")"
-            + " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ("
-            + String.join(" AND ", nestedParts) + ")))";
+        String condExpr = buildCondTokenSql(tokens, "p_cond_" + fk);
         if (matched) {
           whereClause.append(" AND ").append(condExpr);
         } else {
@@ -2811,29 +2810,7 @@ public class PageDataService {
         List<CondToken> tokens = parseConditionExpr(ternary[0]);
         if (tokens.isEmpty()) return;
 
-        String today = ":today";
-        String now = ":nowValue";
-        List<String> topParts = new ArrayList<>();
-        List<String> nestedParts = new ArrayList<>();
-        int idx = 0;
-        for (CondToken t : tokens) {
-          String pName = "p_cond_" + fk + "_" + idx;
-          String sqlOp = "!=".equals(t.op()) ? "<>" : t.op();
-          if (t.isToday()) {
-            topParts.add("substring(regexp_replace(data_json->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
-            nestedParts.add("substring(regexp_replace(kv.value->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
-          } else if (t.isNow()) {
-            topParts.add(toNowPaddedExpr("data_json->>'" + t.key() + "'") + " " + sqlOp + " " + now);
-            nestedParts.add(toNowPaddedExpr("kv.value->>'" + t.key() + "'") + " " + sqlOp + " " + now);
-          } else {
-            topParts.add("data_json->>'" + t.key() + "' " + sqlOp + " :" + pName);
-            nestedParts.add("kv.value->>'" + t.key() + "' " + sqlOp + " :" + pName);
-          }
-          idx++;
-        }
-        String condExpr = "((" + String.join(" AND ", topParts) + ")"
-            + " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ("
-            + String.join(" AND ", nestedParts) + ")))";
+        String condExpr = buildCondTokenSql(tokens, "p_cond_" + fk);
         if (matched) {
           whereClause.append(" AND ").append(condExpr);
         } else {
@@ -3028,6 +3005,189 @@ public class PageDataService {
     return path.toString();
   }
 
+  private String buildOrderByClause(String sortParam) {
+    String orderBy = " ORDER BY created_at DESC";
+    if (sortParam == null || sortParam.isBlank()) {
+      return orderBy;
+    }
+    String[] parts = sortParam.split(",", 2);
+    String sortCol = parts[0].trim();
+    String sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
+    if (sortCol.contains(".")) {
+      String[] segs = sortCol.split("\\.");
+      if (isValidSegments(segs)) {
+        orderBy = " ORDER BY " + buildJsonPath(segs) + " " + sortDir;
+      }
+    } else if (sortCol.matches("[a-zA-Z0-9_]+")) {
+      String auditCol = toAuditColumn(sortCol);
+      if (auditCol != null) {
+        orderBy = " ORDER BY " + auditCol + " " + sortDir;
+      } else {
+        orderBy = " ORDER BY " + buildNestedOrderByExpr(sortCol) + " " + sortDir;
+      }
+    }
+    return orderBy;
+  }
+
+  /** 정렬용 record — sql은 ORDER BY 절 전체(" ORDER BY ..." 포함), params는 dataQuery에만 바인딩(countQuery는 ORDER BY 없어 불필요) */
+  private record OrderByClause(String sql, Map<String, Object> params) {}
+
+  private static final int SORT_EXPR_MAX_LENGTH = 500;
+  private static final int SORT_EXPR_MAX_FIELD_REFS = 10;
+
+  /**
+   * sortExpr(FE evalColumnDataExpr와 동일 문법의 계산식)이 있으면 그걸 SQL로 변환해 정렬하고,
+   * 없거나 파싱 실패 시 기존 buildOrderByClause(sort 컬럼명 기반)로 폴백한다.
+   * allowSortExpr=false(FO 게시게이트 경로)면 sortExpr는 아예 읽지 않는다.
+   */
+  private OrderByClause buildOrderByClauseWithExpr(String sortParam, String sortExpr, boolean allowSortExpr) {
+    if (allowSortExpr && sortExpr != null && !sortExpr.isBlank()) {
+      String sortDir = "ASC";
+      if (sortParam != null && !sortParam.isBlank()) {
+        String[] parts = sortParam.split(",", 2);
+        sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
+      }
+      Map<String, Object> exprParams = new LinkedHashMap<>();
+      String exprSql = buildExpressionOrderByExpr(sortExpr, exprParams, new AtomicInteger(0));
+      if (exprSql != null) {
+        return new OrderByClause(" ORDER BY " + exprSql + " " + sortDir, exprParams);
+      }
+    }
+    return new OrderByClause(buildOrderByClause(sortParam), Map.of());
+  }
+
+  /**
+   * 계산식(condition?trueExpr:falseExpr / token1+token2+...)을 ORDER BY용 SQL 조각으로 변환.
+   * 파싱 실패·길이초과·필드참조 과다는 예외 없이 null을 반환해 호출부가 기본 정렬로 폴백하게 한다.
+   */
+  private String buildExpressionOrderByExpr(String expr, Map<String, Object> outParams, AtomicInteger paramSeq) {
+    try {
+      String sql = buildExpressionOrderByExprRec(expr, outParams, paramSeq, new AtomicInteger(0));
+      if (sql == null) {
+        outParams.clear();
+      }
+      return sql;
+    } catch (RuntimeException e) {
+      outParams.clear();
+      return null;
+    }
+  }
+
+  private String buildExpressionOrderByExprRec(String expr, Map<String, Object> outParams, AtomicInteger paramSeq, AtomicInteger fieldRefCount) {
+    if (expr == null) return null;
+    String trimmed = expr.trim();
+    if (trimmed.isEmpty() || trimmed.length() > SORT_EXPR_MAX_LENGTH) return null;
+
+    String[] ternary = splitTopLevelTernary(trimmed);
+    if (ternary != null) {
+      List<CondToken> tokens = parseConditionExpr(ternary[0]);
+      if (tokens.isEmpty()) return null;
+
+      String condPrefix = "p_sortcond_" + paramSeq.getAndIncrement();
+      String condSql = buildCondTokenSql(tokens, condPrefix);
+      int idx = 0;
+      for (CondToken t : tokens) {
+        if (!t.isToday() && !t.isNow()) {
+          outParams.put(condPrefix + "_" + idx, t.value());
+        }
+        idx++;
+      }
+
+      String trueSql = buildExpressionOrderByExprRec(ternary[1], outParams, paramSeq, fieldRefCount);
+      String falseSql = buildExpressionOrderByExprRec(ternary[2], outParams, paramSeq, fieldRefCount);
+      if (trueSql == null || falseSql == null) return null;
+      return "CASE WHEN (" + condSql + ") THEN (" + trueSql + ") ELSE (" + falseSql + ") END";
+    }
+
+    List<String> tokens = parseSortExprConcatTokens(trimmed);
+    if (tokens.isEmpty()) return null;
+
+    List<String> parts = new ArrayList<>();
+    for (String token : tokens) {
+      if (isSortExprLiteralToken(token)) {
+        String pName = "p_sort_" + paramSeq.getAndIncrement();
+        outParams.put(pName, stripQuotes(token));
+        parts.add("CAST(:" + pName + " AS text)");
+      } else {
+        if (!token.matches("[a-zA-Z0-9_]+")) return null;
+        if (fieldRefCount.incrementAndGet() > SORT_EXPR_MAX_FIELD_REFS) return null;
+        parts.add(buildNestedOrderByExpr(token));
+      }
+    }
+    return parts.size() == 1 ? parts.get(0) : String.join(" || ", parts);
+  }
+
+  /** 최상위(중첩 무시) ?/: 위치 탐색 — depth 카운팅으로 중첩 ternary의 :를 건너뛴다(splitTernaryExpr과 달리 따옴표 안 벗김) */
+  private String[] splitTopLevelTernary(String expr) {
+    int depth = 0;
+    int qIdx = -1;
+    int cIdx = -1;
+    boolean inSingleQuote = false;
+    boolean inDoubleQuote = false;
+    for (int i = 0; i < expr.length(); i++) {
+      char ch = expr.charAt(i);
+      if (ch == '\'' && !inDoubleQuote) { inSingleQuote = !inSingleQuote; continue; }
+      if (ch == '"' && !inSingleQuote) { inDoubleQuote = !inDoubleQuote; continue; }
+      if (inSingleQuote || inDoubleQuote) continue;
+      if (ch == '?') {
+        if (qIdx < 0) qIdx = i;
+        depth++;
+      } else if (ch == ':' && qIdx >= 0) {
+        depth--;
+        if (depth == 0) { cIdx = i; break; }
+      }
+    }
+    if (qIdx < 0 || cIdx < 0) return null;
+    return new String[]{expr.substring(0, qIdx).trim(), expr.substring(qIdx + 1, cIdx).trim(), expr.substring(cIdx + 1).trim()};
+  }
+
+  /** +로 토큰 분리(따옴표 안의 +는 무시) — FE parseConcatTokens와 동일 규칙 */
+  private List<String> parseSortExprConcatTokens(String expr) {
+    List<String> tokens = new ArrayList<>();
+    StringBuilder cur = new StringBuilder();
+    boolean inSingleQuote = false;
+    boolean inDoubleQuote = false;
+    for (int i = 0; i < expr.length(); i++) {
+      char ch = expr.charAt(i);
+      if (ch == '\'' && !inDoubleQuote) { inSingleQuote = !inSingleQuote; cur.append(ch); continue; }
+      if (ch == '"' && !inSingleQuote) { inDoubleQuote = !inDoubleQuote; cur.append(ch); continue; }
+      if (!inSingleQuote && !inDoubleQuote && ch == '+') {
+        tokens.add(cur.toString().trim());
+        cur.setLength(0);
+        continue;
+      }
+      cur.append(ch);
+    }
+    String last = cur.toString().trim();
+    if (!last.isEmpty() || tokens.isEmpty()) tokens.add(last);
+    return tokens;
+  }
+
+  private boolean isSortExprLiteralToken(String token) {
+    if (token == null) return false;
+    String t = token.trim();
+    if (t.length() < 2) return false;
+    char q = t.charAt(0);
+    if ((q != '\'' && q != '"') || t.charAt(t.length() - 1) != q) return false;
+    return t.indexOf(q, 1) == t.length() - 1;
+  }
+
+  private String buildNestedOrderByExpr(String key) {
+    if (key == null || !key.matches("[a-zA-Z0-9_]+")) {
+      return "NULL";
+    }
+    return "COALESCE(data_json->>'" + key + "', "
+        + "(SELECT kv1.value->>'" + key + "' FROM jsonb_each(data_json) kv1 "
+        + "WHERE jsonb_typeof(kv1.value) = 'object' AND jsonb_exists(kv1.value, '" + key + "') "
+        + "ORDER BY kv1.key LIMIT 1), "
+        + "(SELECT kv2.value->>'" + key + "' "
+        + "FROM (SELECT kv1.key AS k1, kv1.value AS v1 FROM jsonb_each(data_json) kv1 "
+        + "WHERE jsonb_typeof(kv1.value) = 'object') sub1, "
+        + "LATERAL jsonb_each(sub1.v1) kv2 "
+        + "WHERE jsonb_typeof(kv2.value) = 'object' AND jsonb_exists(kv2.value, '" + key + "') "
+        + "ORDER BY sub1.k1, kv2.key LIMIT 1))";
+  }
+
   private void appendExistsRelationConditions(StringBuilder whereClause, Map<String, String> existsRelParams,
                                               Map<String, String> bindParams, Long siteId) {
     if (existsRelParams == null || existsRelParams.isEmpty()) return;
@@ -3181,6 +3341,37 @@ public class PageDataService {
       tokens.add(new CondToken(m.group(1), m.group(2), (isToday || isNow) ? null : stripQuotes(val), isToday, isNow));
     }
     return tokens;
+  }
+
+  /**
+   * CondToken 리스트 → WHERE 조건 SQL 조각. appendWhereConditions/appendWhereConditionsDatetime/
+   * buildExpressionOrderByExprRec(정렬용 CASE WHEN 조건)이 공유하는 헬퍼 — 중복 제거 목적.
+   * paramSeq_idx 순으로 파라미터명을 채번하므로 호출부는 동일 규칙으로 값 바인딩해야 한다.
+   */
+  private String buildCondTokenSql(List<CondToken> tokens, String paramPrefix) {
+    String today = ":today";
+    String now = ":nowValue";
+    List<String> topParts = new ArrayList<>();
+    List<String> nestedParts = new ArrayList<>();
+    int idx = 0;
+    for (CondToken t : tokens) {
+      String pName = paramPrefix + "_" + idx;
+      String sqlOp = "!=".equals(t.op()) ? "<>" : t.op();
+      if (t.isToday()) {
+        topParts.add("substring(regexp_replace(data_json->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
+        nestedParts.add("substring(regexp_replace(kv.value->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
+      } else if (t.isNow()) {
+        topParts.add(toNowPaddedExpr("data_json->>'" + t.key() + "'") + " " + sqlOp + " " + now);
+        nestedParts.add(toNowPaddedExpr("kv.value->>'" + t.key() + "'") + " " + sqlOp + " " + now);
+      } else {
+        topParts.add("data_json->>'" + t.key() + "' " + sqlOp + " :" + pName);
+        nestedParts.add("kv.value->>'" + t.key() + "' " + sqlOp + " :" + pName);
+      }
+      idx++;
+    }
+    return "((" + String.join(" AND ", topParts) + ")"
+        + " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv WHERE jsonb_typeof(kv.value) = 'object' AND ("
+        + String.join(" AND ", nestedParts) + ")))";
   }
 
   private String[] splitTernaryExpr(String dataExpr) {
@@ -3352,6 +3543,7 @@ public class PageDataService {
       case "updatedAt" -> "updated_at";
       case "createdBy" -> "created_by";
       case "updatedBy" -> "updated_by";
+      case "count" -> "\"count\"";
       default -> null;
     };
   }
@@ -3723,6 +3915,9 @@ public class PageDataService {
 
         Map<Long, Map<String, Object>> tableFetchCache = new HashMap<>();
         Map<Long, Map<String, Object>> categoryFetchCache = new HashMap<>();
+        /* 같은 제품이 카테고리 여러 곳에 매핑된 경우, 라벨 텍스트(categoryFetchCache)만으로는 매핑을 구분 못 하므로
+           매핑(depth3) 고유 id를 relationId별로 병렬 보관 — MultiSelectRenderer가 행(row) 단위로 구분해 쓴다 */
+        Map<Long, Map<String, Object>> categoryFetchMappingIdCache = new HashMap<>();
         Map<String, Map<String, List<Map<String, Object>>>> groupedFetchCache = new HashMap<>();
         for (SlugRelation rel : fetchRelations) {
             boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
@@ -3734,7 +3929,7 @@ public class PageDataService {
                         .filter(v -> v != null && !v.isBlank())
                         .distinct()
                         .toList();
-                    categoryFetchCache.put(rel.getId(), batchResolveCategoryFetch(rel, arrayValues, siteId));
+                    categoryFetchCache.put(rel.getId(), batchResolveCategoryFetch(rel, arrayValues, siteId).labels());
                 }
                 continue;
             }
@@ -3747,7 +3942,9 @@ public class PageDataService {
 
             if (isCategory) {
                 if (StringUtils.hasText(rel.getFetchFields())) {
-                    categoryFetchCache.put(rel.getId(), batchResolveCategoryFetch(rel, masterValues, siteId));
+                    CategoryFetchResult categoryResult = batchResolveCategoryFetch(rel, masterValues, siteId);
+                    categoryFetchCache.put(rel.getId(), categoryResult.labels());
+                    categoryFetchMappingIdCache.put(rel.getId(), categoryResult.mappingIds());
                 }
                 continue;
             }
@@ -3768,6 +3965,7 @@ public class PageDataService {
                 boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
 
                 Object fetchedValue;
+                Object categoryMappingId = null;
                 if (isArrayContains) {
                     List<String> masterValues = extractFieldAsList(item.getDataJson(), rel.getMasterKey());
                     if (masterValues.isEmpty()) continue;
@@ -3788,6 +3986,11 @@ public class PageDataService {
                         fetchedValue = categoryFetchCache.containsKey(rel.getId())
                             ? categoryFetchCache.get(rel.getId()).get(masterValue)
                             : resolveCategoryFetch(rel, masterValue);
+                        /* 라벨 텍스트와 별개로, 같은 제품이 카테고리 여러 곳에 매핑된 경우 FE가 행별로 구분해
+                           선택할 수 있도록 매핑(depth3) 고유 id를 추가 키로 함께 내려준다 (기존 _fetchedRel{id} 값/형식 불변) */
+                        categoryMappingId = categoryFetchMappingIdCache
+                            .getOrDefault(rel.getId(), Collections.emptyMap())
+                            .get(masterValue);
                     } else {
                         fetchedValue = tableFetchCache.getOrDefault(rel.getId(), Collections.emptyMap()).get(masterValue);
                     }
@@ -3799,6 +4002,9 @@ public class PageDataService {
                         String sep = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
                         enriched.put(buildFetchKey(rel.getId()) + "_sep", sep);
                     }
+                }
+                if (categoryMappingId != null) {
+                    enriched.put(buildFetchKey(rel.getId()) + "_mappingId", categoryMappingId);
                 }
             }
             return enriched.size() > item.getDataJson().size() ? item.withDataJson(enriched) : item;
@@ -3860,8 +4066,11 @@ public class PageDataService {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> batchResolveCategoryFetch(SlugRelation rel, List<String> masterValues, Long siteId) {
-        if (masterValues.isEmpty()) return Collections.emptyMap();
+    /** labels = 화면 표시용 경로 텍스트(기존 동작 그대로), mappingIds = 같은 순서로 대응하는 매핑(depth3) 고유 id */
+    private record CategoryFetchResult(Map<String, Object> labels, Map<String, Object> mappingIds) {}
+
+    private CategoryFetchResult batchResolveCategoryFetch(SlugRelation rel, List<String> masterValues, Long siteId) {
+        if (masterValues.isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
 
         int targetDepth = rel.getCategoryDepth() != null ? rel.getCategoryDepth() : 1;
         int fromDepth = rel.getCategoryDepthFrom() != null ? rel.getCategoryDepthFrom() : targetDepth;
@@ -3882,10 +4091,10 @@ public class PageDataService {
         filterParams.forEach(q1::setParameter);
 
         List<Object> r1 = q1.getResultList();
-        if (r1.isEmpty()) return Collections.emptyMap();
+        if (r1.isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
 
         Map<String, List<Map<String, Object>>> grouped = groupSlaveRecordsByKey(r1, rel.getSlaveKey());
-        if (grouped.isEmpty()) return Collections.emptyMap();
+        if (grouped.isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
 
         List<String> rowIds = new ArrayList<>();
         Map<String, Map<String, Object>> leafRecords = new LinkedHashMap<>();
@@ -4014,6 +4223,8 @@ public class PageDataService {
         }
 
         Map<String, List<String>> resultsByMaster = new LinkedHashMap<>();
+        /* 라벨과 같은 루프·같은 조건으로 쌓아 인덱스를 1:1로 맞춘다 (leafRecords가 곧 매핑(depth3) 자신) */
+        Map<String, List<String>> mappingIdsByMaster = new LinkedHashMap<>();
         for (String rowId : rowIds) {
             List<String> fullPath = pathAccumulator.get(rowId);
             if (isCategoryChainBroken(leafRecords.get(rowId), fullPath.size(), includeLeaf)) continue;
@@ -4026,6 +4237,8 @@ public class PageDataService {
             if (!rangeNames.isEmpty()) {
                 resultsByMaster.computeIfAbsent(rowMasterValue.get(rowId), k -> new ArrayList<>())
                     .add(String.join(" > ", rangeNames));
+                mappingIdsByMaster.computeIfAbsent(rowMasterValue.get(rowId), k -> new ArrayList<>())
+                    .add(extractField(leafRecords.get(rowId), "id"));
             }
         }
 
@@ -4035,7 +4248,14 @@ public class PageDataService {
             if (results.isEmpty()) continue;
             resultMap.put(entry.getKey(), results.size() == 1 ? results.get(0) : results);
         }
-        return resultMap;
+
+        Map<String, Object> mappingIdMap = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : mappingIdsByMaster.entrySet()) {
+            List<String> ids = entry.getValue();
+            if (ids.isEmpty()) continue;
+            mappingIdMap.put(entry.getKey(), ids.size() == 1 ? ids.get(0) : ids);
+        }
+        return new CategoryFetchResult(resultMap, mappingIdMap);
     }
 
     private List<String> collectCategoryNames(Map<String, Object> resolved, List<String> masterValues) {
@@ -4200,7 +4420,7 @@ public class PageDataService {
             return;
         }
 
-        Map<String, Object> resolved = batchResolveCategoryFetch(rel, allValues.stream().distinct().toList(), null);
+        Map<String, Object> resolved = batchResolveCategoryFetch(rel, allValues.stream().distinct().toList(), null).labels();
         if (resolved.isEmpty()) return;
 
         String separator = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
