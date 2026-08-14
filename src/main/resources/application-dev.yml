@@ -82,6 +82,9 @@ ls:
   isApiLogin: true
   file-storage: local   # local, blob
   redis-enabled: true
+  totp:
+    isUser: "LSE Admin"
+    enabled: false    # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
   lse:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
