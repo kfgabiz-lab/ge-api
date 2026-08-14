@@ -602,6 +602,7 @@ public class PageDataService {
         + "           THEN c.data_json->'category'->>'is_visible' = '001'"
         + "           ELSE true"
         + "      END"
+        + "  AND (NOT jsonb_exists(c.data_json, 'product') OR p.id IS NOT NULL)"
         + "  AND (c.site_id = :siteId OR c.site_id IS NULL)"
         + " ORDER BY"
         + "  CASE WHEN jsonb_exists(c.data_json, 'category') THEN c.data_json->'category'->>'depth' ELSE c.data_json->'product'->>'depth' END ASC,"
@@ -1366,23 +1367,27 @@ public class PageDataService {
       if (!incomingDataJson.containsKey(fieldKey)) continue;
       try {
         SlugRelation pathRel = entry.getValue();
+        /* 선택 단위 = 카테고리 매핑(depth3) 고유 id — 같은 제품이 여러 카테고리에 매핑돼도 매핑별로 독립 선택/보존된다.
+           FE가 category-data(depth3 leaf) 행의 고유 id를 그대로 제출하므로 여기서 추출되는 값도 productId가 아니라
+           매핑 자신의 id다(카테고리 매핑이 없는 예외적인 경우만 productId 그대로 폴백 — buildSnapshotEntry와 동일 관례,
+           저장되는 entry 형태 자체(id/productId/depth1/depth2/depth3)는 이전과 동일하게 유지된다) */
         LinkedHashSet<Long> requestedIds = extractProductIdsFromFieldValue(incomingDataJson.get(fieldKey));
-        Map<Long, List<Map<String, Object>>> previousByProductId = baseDataJson != null
+        Map<Long, Map<String, Object>> previousById = baseDataJson != null
             ? groupSnapshotEntriesByProductId(baseDataJson.get(fieldKey))
             : Map.of();
 
         List<Long> idsToResolve = new ArrayList<>();
-        for (Long productId : requestedIds) {
-          if (!previousByProductId.containsKey(productId)) idsToResolve.add(productId);
+        for (Long id : requestedIds) {
+          if (!previousById.containsKey(id)) idsToResolve.add(id);
         }
-        Map<Long, List<Map<String, Object>>> resolved = resolveCategoryPathSnapshot(pathRel, idsToResolve);
+        Map<Long, Map<String, Object>> resolved = resolveCategoryPathSnapshotByMappingIds(pathRel, idsToResolve);
 
         List<Map<String, Object>> merged = new ArrayList<>();
-        for (Long productId : requestedIds) {
-          List<Map<String, Object>> entries = previousByProductId.get(productId);
-          if (entries == null) entries = resolved.get(productId);
-          if (entries == null) entries = List.of(buildSnapshotEntry(productId, null, null, null));
-          merged.addAll(entries);
+        for (Long id : requestedIds) {
+          Map<String, Object> item = previousById.get(id);
+          if (item == null) item = resolved.get(id);
+          if (item == null) item = buildSnapshotEntry(id, null, null, null);
+          merged.add(item);
         }
         result.put(fieldKey, merged);
       } catch (Exception e) {
@@ -1421,17 +1426,25 @@ public class PageDataService {
     return ids;
   }
 
+  /**
+   * 이전 저장값을 매핑(depth3) 고유 id 기준으로 그룹핑 — 재저장 시 변경 없는 매핑을 그대로 보존하기 위한 조회용.
+   * depth3(카테고리 매핑 id)가 없는 예외 케이스(카테고리 미매핑 제품)만 productId/id로 폴백한다.
+   * depth3는 category-data 행의 고유 id라 매핑당 정확히 1건만 존재한다(리스트가 아닌 단건 Map으로 그룹핑).
+   */
   @SuppressWarnings("unchecked")
-  private Map<Long, List<Map<String, Object>>> groupSnapshotEntriesByProductId(Object rawValue) {
-    Map<Long, List<Map<String, Object>>> grouped = new LinkedHashMap<>();
+  private Map<Long, Map<String, Object>> groupSnapshotEntriesByProductId(Object rawValue) {
+    Map<Long, Map<String, Object>> grouped = new LinkedHashMap<>();
     if (!(rawValue instanceof List<?> list)) return grouped;
     for (Object item : list) {
       if (!(item instanceof Map)) continue;
       Map<String, Object> itemMap = (Map<String, Object>) item;
-      Object pid = itemMap.containsKey("productId") ? itemMap.get("productId") : itemMap.get("id");
-      Long productId = toLongOrNull(pid);
-      if (productId == null) continue;
-      grouped.computeIfAbsent(productId, k -> new ArrayList<>()).add(itemMap);
+      Long key = toLongOrNull(itemMap.get("depth3"));
+      if (key == null) {
+        Object pid = itemMap.containsKey("productId") ? itemMap.get("productId") : itemMap.get("id");
+        key = toLongOrNull(pid);
+      }
+      if (key == null) continue;
+      grouped.put(key, itemMap);
     }
     return grouped;
   }
@@ -1456,81 +1469,47 @@ public class PageDataService {
     return entry;
   }
 
-  @SuppressWarnings("unchecked")
-  private Map<Long, List<Map<String, Object>>> resolveCategoryPathSnapshot(SlugRelation pathRel, Collection<Long> productIds) {
-    Map<Long, List<Map<String, Object>>> result = new LinkedHashMap<>();
-    if (productIds == null || productIds.isEmpty()) return result;
+  /**
+   * 카테고리 매핑(depth3) id를 직접 조회해 productId/depth1/depth2를 역산한다.
+   * FE가 이미 category-data(depth3 leaf) 행의 고유 id를 선택값으로 제출하므로, product.id 기준 fan-out 조회
+   * 없이 그 id 자체를 바로 조회하면 된다(예전 product 기준 fan-out 방식보다 단순함 — 매핑당 정확히 1행 조회).
+   */
+  private Map<Long, Map<String, Object>> resolveCategoryPathSnapshotByMappingIds(
+      SlugRelation pathRel, Collection<Long> mappingIds) {
+    Map<Long, Map<String, Object>> result = new LinkedHashMap<>();
+    if (mappingIds == null || mappingIds.isEmpty()) return result;
 
-    List<String> productIdStrs = productIds.stream().map(String::valueOf).toList();
-    String[] slaveKeySegs = pathRel.getSlaveKey().split("\\.");
+    Map<Long, Map<String, Object>> depth3DataById = fetchDataJsonByIds(pathRel.getSlaveSlug(), mappingIds);
 
-    StringBuilder sql = new StringBuilder(
-        "SELECT id, data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
-    sql.append(" AND ").append(buildJsonPath(slaveKeySegs)).append(" IN (:productIdStrs)");
-    Map<String, String> filterParams = new LinkedHashMap<>();
-    if (StringUtils.hasText(pathRel.getSlaveFilter())) {
-      appendSlaveFilter(sql, pathRel.getSlaveFilter(), filterParams);
-    }
-
-    Query depth3Query = entityManager.createNativeQuery(sql.toString());
-    depth3Query.setParameter("slaveSlug", pathRel.getSlaveSlug());
-    depth3Query.setParameter("productIdStrs", productIdStrs);
-    filterParams.forEach(depth3Query::setParameter);
-
-    List<Object[]> depth3Rows = depth3Query.getResultList();
-
-    Map<Long, List<Long>> depth3IdsByProductId = new LinkedHashMap<>();
-    Map<Long, Map<String, Object>> depth3DataById = new LinkedHashMap<>();
     Set<Long> depth2Ids = new LinkedHashSet<>();
-
-    for (Object[] row : depth3Rows) {
-      Long depth3Id = ((Number) row[0]).longValue();
-      Map<String, Object> dataJson;
-      try {
-        dataJson = objectMapper.readValue(
-            row[1].toString(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-      } catch (Exception e) {
-        continue;
-      }
-      depth3DataById.put(depth3Id, dataJson);
-
-      String productIdStr = extractField(dataJson, "product.id");
-      Long productId = productIdStr != null ? toLongOrNull(productIdStr.trim()) : null;
-      if (productId == null) continue;
-      depth3IdsByProductId.computeIfAbsent(productId, k -> new ArrayList<>()).add(depth3Id);
-
-      String depth2IdStr = extractField(dataJson, "product.parentId");
+    for (Map<String, Object> depth3Data : depth3DataById.values()) {
+      String depth2IdStr = extractField(depth3Data, "product.parentId");
       Long depth2Id = depth2IdStr != null ? toLongOrNull(depth2IdStr.trim()) : null;
       if (depth2Id != null) depth2Ids.add(depth2Id);
     }
-
     Map<Long, Map<String, Object>> depth2DataById = fetchDataJsonByIds(pathRel.getSlaveSlug(), depth2Ids);
 
-    for (Long productId : productIds) {
-      List<Long> matchedDepth3Ids = depth3IdsByProductId.get(productId);
-      if (matchedDepth3Ids == null || matchedDepth3Ids.isEmpty()) {
-        result.put(productId, new ArrayList<>(List.of(buildSnapshotEntry(productId, null, null, null))));
-        continue;
-      }
-      List<Map<String, Object>> entries = new ArrayList<>();
-      for (Long depth3Id : matchedDepth3Ids) {
-        Map<String, Object> depth3Data = depth3DataById.get(depth3Id);
-        String depth2IdStr = extractField(depth3Data, "product.parentId");
-        Long depth2Id = depth2IdStr != null ? toLongOrNull(depth2IdStr.trim()) : null;
+    for (Long mappingId : mappingIds) {
+      Map<String, Object> depth3Data = depth3DataById.get(mappingId);
+      if (depth3Data == null) continue; /* 매핑 행이 삭제된 경우 — 호출부의 productId 폴백으로 처리됨 */
+      String productIdStr = extractField(depth3Data, "product.id");
+      Long productId = productIdStr != null ? toLongOrNull(productIdStr.trim()) : null;
+      if (productId == null) continue;
 
-        Long depth1Id = null;
-        if (depth2Id != null) {
-          Map<String, Object> depth2Data = depth2DataById.get(depth2Id);
-          if (depth2Data == null) {
-            depth2Id = null;
-          } else {
-            String depth1IdStr = extractField(depth2Data, "category.parentId");
-            depth1Id = depth1IdStr != null ? toLongOrNull(depth1IdStr.trim()) : null;
-          }
+      String depth2IdStr = extractField(depth3Data, "product.parentId");
+      Long depth2Id = depth2IdStr != null ? toLongOrNull(depth2IdStr.trim()) : null;
+
+      Long depth1Id = null;
+      if (depth2Id != null) {
+        Map<String, Object> depth2Data = depth2DataById.get(depth2Id);
+        if (depth2Data == null) {
+          depth2Id = null;
+        } else {
+          String depth1IdStr = extractField(depth2Data, "category.parentId");
+          depth1Id = depth1IdStr != null ? toLongOrNull(depth1IdStr.trim()) : null;
         }
-        entries.add(buildSnapshotEntry(productId, depth1Id, depth2Id, depth3Id));
       }
-      result.put(productId, entries);
+      result.put(mappingId, buildSnapshotEntry(productId, depth1Id, depth2Id, mappingId));
     }
 
     return result;
@@ -3723,6 +3702,9 @@ public class PageDataService {
 
         Map<Long, Map<String, Object>> tableFetchCache = new HashMap<>();
         Map<Long, Map<String, Object>> categoryFetchCache = new HashMap<>();
+        /* 같은 제품이 카테고리 여러 곳에 매핑된 경우, 라벨 텍스트(categoryFetchCache)만으로는 매핑을 구분 못 하므로
+           매핑(depth3) 고유 id를 relationId별로 병렬 보관 — MultiSelectRenderer가 행(row) 단위로 구분해 쓴다 */
+        Map<Long, Map<String, Object>> categoryFetchMappingIdCache = new HashMap<>();
         Map<String, Map<String, List<Map<String, Object>>>> groupedFetchCache = new HashMap<>();
         for (SlugRelation rel : fetchRelations) {
             boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
@@ -3734,7 +3716,7 @@ public class PageDataService {
                         .filter(v -> v != null && !v.isBlank())
                         .distinct()
                         .toList();
-                    categoryFetchCache.put(rel.getId(), batchResolveCategoryFetch(rel, arrayValues, siteId));
+                    categoryFetchCache.put(rel.getId(), batchResolveCategoryFetch(rel, arrayValues, siteId).labels());
                 }
                 continue;
             }
@@ -3747,7 +3729,9 @@ public class PageDataService {
 
             if (isCategory) {
                 if (StringUtils.hasText(rel.getFetchFields())) {
-                    categoryFetchCache.put(rel.getId(), batchResolveCategoryFetch(rel, masterValues, siteId));
+                    CategoryFetchResult categoryResult = batchResolveCategoryFetch(rel, masterValues, siteId);
+                    categoryFetchCache.put(rel.getId(), categoryResult.labels());
+                    categoryFetchMappingIdCache.put(rel.getId(), categoryResult.mappingIds());
                 }
                 continue;
             }
@@ -3768,6 +3752,7 @@ public class PageDataService {
                 boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
 
                 Object fetchedValue;
+                Object categoryMappingId = null;
                 if (isArrayContains) {
                     List<String> masterValues = extractFieldAsList(item.getDataJson(), rel.getMasterKey());
                     if (masterValues.isEmpty()) continue;
@@ -3788,6 +3773,11 @@ public class PageDataService {
                         fetchedValue = categoryFetchCache.containsKey(rel.getId())
                             ? categoryFetchCache.get(rel.getId()).get(masterValue)
                             : resolveCategoryFetch(rel, masterValue);
+                        /* 라벨 텍스트와 별개로, 같은 제품이 카테고리 여러 곳에 매핑된 경우 FE가 행별로 구분해
+                           선택할 수 있도록 매핑(depth3) 고유 id를 추가 키로 함께 내려준다 (기존 _fetchedRel{id} 값/형식 불변) */
+                        categoryMappingId = categoryFetchMappingIdCache
+                            .getOrDefault(rel.getId(), Collections.emptyMap())
+                            .get(masterValue);
                     } else {
                         fetchedValue = tableFetchCache.getOrDefault(rel.getId(), Collections.emptyMap()).get(masterValue);
                     }
@@ -3799,6 +3789,9 @@ public class PageDataService {
                         String sep = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
                         enriched.put(buildFetchKey(rel.getId()) + "_sep", sep);
                     }
+                }
+                if (categoryMappingId != null) {
+                    enriched.put(buildFetchKey(rel.getId()) + "_mappingId", categoryMappingId);
                 }
             }
             return enriched.size() > item.getDataJson().size() ? item.withDataJson(enriched) : item;
@@ -3860,8 +3853,11 @@ public class PageDataService {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> batchResolveCategoryFetch(SlugRelation rel, List<String> masterValues, Long siteId) {
-        if (masterValues.isEmpty()) return Collections.emptyMap();
+    /** labels = 화면 표시용 경로 텍스트(기존 동작 그대로), mappingIds = 같은 순서로 대응하는 매핑(depth3) 고유 id */
+    private record CategoryFetchResult(Map<String, Object> labels, Map<String, Object> mappingIds) {}
+
+    private CategoryFetchResult batchResolveCategoryFetch(SlugRelation rel, List<String> masterValues, Long siteId) {
+        if (masterValues.isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
 
         int targetDepth = rel.getCategoryDepth() != null ? rel.getCategoryDepth() : 1;
         int fromDepth = rel.getCategoryDepthFrom() != null ? rel.getCategoryDepthFrom() : targetDepth;
@@ -3882,10 +3878,10 @@ public class PageDataService {
         filterParams.forEach(q1::setParameter);
 
         List<Object> r1 = q1.getResultList();
-        if (r1.isEmpty()) return Collections.emptyMap();
+        if (r1.isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
 
         Map<String, List<Map<String, Object>>> grouped = groupSlaveRecordsByKey(r1, rel.getSlaveKey());
-        if (grouped.isEmpty()) return Collections.emptyMap();
+        if (grouped.isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
 
         List<String> rowIds = new ArrayList<>();
         Map<String, Map<String, Object>> leafRecords = new LinkedHashMap<>();
@@ -4014,6 +4010,8 @@ public class PageDataService {
         }
 
         Map<String, List<String>> resultsByMaster = new LinkedHashMap<>();
+        /* 라벨과 같은 루프·같은 조건으로 쌓아 인덱스를 1:1로 맞춘다 (leafRecords가 곧 매핑(depth3) 자신) */
+        Map<String, List<String>> mappingIdsByMaster = new LinkedHashMap<>();
         for (String rowId : rowIds) {
             List<String> fullPath = pathAccumulator.get(rowId);
             if (isCategoryChainBroken(leafRecords.get(rowId), fullPath.size(), includeLeaf)) continue;
@@ -4026,6 +4024,8 @@ public class PageDataService {
             if (!rangeNames.isEmpty()) {
                 resultsByMaster.computeIfAbsent(rowMasterValue.get(rowId), k -> new ArrayList<>())
                     .add(String.join(" > ", rangeNames));
+                mappingIdsByMaster.computeIfAbsent(rowMasterValue.get(rowId), k -> new ArrayList<>())
+                    .add(extractField(leafRecords.get(rowId), "id"));
             }
         }
 
@@ -4035,7 +4035,14 @@ public class PageDataService {
             if (results.isEmpty()) continue;
             resultMap.put(entry.getKey(), results.size() == 1 ? results.get(0) : results);
         }
-        return resultMap;
+
+        Map<String, Object> mappingIdMap = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : mappingIdsByMaster.entrySet()) {
+            List<String> ids = entry.getValue();
+            if (ids.isEmpty()) continue;
+            mappingIdMap.put(entry.getKey(), ids.size() == 1 ? ids.get(0) : ids);
+        }
+        return new CategoryFetchResult(resultMap, mappingIdMap);
     }
 
     private List<String> collectCategoryNames(Map<String, Object> resolved, List<String> masterValues) {
@@ -4200,7 +4207,7 @@ public class PageDataService {
             return;
         }
 
-        Map<String, Object> resolved = batchResolveCategoryFetch(rel, allValues.stream().distinct().toList(), null);
+        Map<String, Object> resolved = batchResolveCategoryFetch(rel, allValues.stream().distinct().toList(), null).labels();
         if (resolved.isEmpty()) return;
 
         String separator = StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",";
