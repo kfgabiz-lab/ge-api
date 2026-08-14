@@ -24,6 +24,9 @@ public class AdminService {
   private final AdminRepository adminRepository;
   private final RoleRepository roleRepository;
 
+  private static final Set<String> RESERVED_ROLE_CODES = Set.of("SYSTEM_ADMIN", "SUPER_ADMIN");
+  private static final String SYSTEM_ADMIN_CODE = "SYSTEM_ADMIN";
+
   /**
    * 관리자 단건 조회 (is_system=true 역할 계정은 존재하지 않는 것처럼 처리)
    *
@@ -32,12 +35,9 @@ public class AdminService {
    */
   @Transactional(readOnly = true)
   public AdminDto.Response getAdminById(Long id) {
-    AdminUser adminUser = adminRepository.findById(id)
+    AdminUser adminUser = adminRepository.findByIdAndRoleNot(id, SYSTEM_ADMIN_CODE)
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "관리자를 찾을 수 없습니다."));
-    if (isSystemRole(adminUser.getRole())) {
-      throw new BusinessException(HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "관리자를 찾을 수 없습니다.");
-    }
     return convertToResponse(adminUser);
   }
 
@@ -48,19 +48,11 @@ public class AdminService {
    */
   @Transactional(readOnly = true)
   public List<AdminDto.Response> getAllAdmins() {
-    /* is_system=true 역할 코드 Set을 한 번만 조회 후 필터 — N+1 방지 */
-    Set<String> systemRoleCodes = roleRepository.findAllByOrderByIdAsc().stream()
-        .filter(Role::isSystem)
-        .map(Role::getCode)
-        .collect(Collectors.toSet());
-
-    List<AdminUser> admins = adminRepository.findAll(
+    List<AdminUser> admins = adminRepository.findByRoleNot(SYSTEM_ADMIN_CODE,
         org.springframework.data.domain.Sort.by(
             org.springframework.data.domain.Sort.Order.desc("createdAt"),
             org.springframework.data.domain.Sort.Order.desc("id")));
-    /* is_system=true 역할 계정은 목록에서 완전 제외 */
     return admins.stream()
-        .filter(a -> !systemRoleCodes.contains(a.getRole()))
         .map(this::convertToResponse)
         .collect(Collectors.toList());
   }
@@ -74,12 +66,14 @@ public class AdminService {
    */
   @Transactional
   public AdminDto.Response updateAdmin(Long id, AdminDto.UpdateRequest request) {
-    AdminUser adminUser = adminRepository.findById(id)
+    AdminUser adminUser = adminRepository.findByIdAndRoleNot(id, SYSTEM_ADMIN_CODE)
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "해당 관리자를 찾을 수 없습니다."));
 
     if (request.getRole() != null
-        && (!roleRepository.existsByCode(request.getRole()) || isSystemRole(request.getRole()))) {
+        && (!roleRepository.existsByCode(request.getRole())
+            || isSystemRole(request.getRole())
+            || RESERVED_ROLE_CODES.contains(request.getRole()))) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_ROLE", "유효하지 않은 역할 코드입니다.");
     }
 
@@ -102,7 +96,7 @@ public class AdminService {
    */
   @Transactional
   public AdminDto.Response toggleStatus(Long id, boolean isActive) {
-    AdminUser adminUser = adminRepository.findById(id)
+    AdminUser adminUser = adminRepository.findByIdAndRoleNot(id, SYSTEM_ADMIN_CODE)
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "해당 관리자를 찾을 수 없습니다."));
 
@@ -120,7 +114,10 @@ public class AdminService {
    */
   @Transactional
   public void deleteAdmin(Long id) {
-    adminRepository.deleteById(id);
+    AdminUser adminUser = adminRepository.findByIdAndRoleNot(id, SYSTEM_ADMIN_CODE)
+        .orElseThrow(() -> new BusinessException(
+            HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "해당 관리자를 찾을 수 없습니다."));
+    adminRepository.delete(adminUser);
   }
 
   /**

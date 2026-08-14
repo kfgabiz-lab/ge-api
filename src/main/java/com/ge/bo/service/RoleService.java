@@ -21,6 +21,8 @@ public class RoleService {
   private final RoleRepository roleRepository;
   private final AdminRepository adminRepository;
 
+  private static final String SYSTEM_ADMIN_CODE = "SYSTEM_ADMIN";
+
   /**
    * 역할 목록 조회 (전체) — RoleController 클래스 레벨 @PreAuthorize로 시스템관리자만 도달
    *
@@ -28,11 +30,10 @@ public class RoleService {
    */
   @Transactional(readOnly = true)
   public List<RoleDto.Response> getAllRoles() {
-    return roleRepository.findAll(org.springframework.data.domain.Sort.by(
+    return roleRepository.findByCodeNot(SYSTEM_ADMIN_CODE, org.springframework.data.domain.Sort.by(
             org.springframework.data.domain.Sort.Order.desc("createdAt"),
             org.springframework.data.domain.Sort.Order.desc("id")))
         .stream()
-        .filter(r -> !r.isSystem())
         .map(this::toResponse)
         .collect(Collectors.toList());
   }
@@ -44,8 +45,7 @@ public class RoleService {
    */
   @Transactional(readOnly = true)
   public List<RoleDto.Response> getAssignableRoles() {
-    return roleRepository.findAll().stream()
-        .filter(r -> !r.isSystem())
+    return roleRepository.findByCodeNot(SYSTEM_ADMIN_CODE).stream()
         .map(this::toResponse)
         .collect(Collectors.toList());
   }
@@ -58,7 +58,7 @@ public class RoleService {
    */
   @Transactional(readOnly = true)
   public RoleDto.Response getRoleById(Long id) {
-    Role role = roleRepository.findById(id)
+    Role role = roleRepository.findByIdAndCodeNot(id, SYSTEM_ADMIN_CODE)
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "역할을 찾을 수 없습니다."));
     return toResponse(role);
@@ -97,7 +97,7 @@ public class RoleService {
    */
   @Transactional
   public RoleDto.Response updateRole(Long id, RoleDto.UpdateRequest request) {
-    Role role = roleRepository.findById(id)
+    Role role = roleRepository.findByIdAndCodeNot(id, SYSTEM_ADMIN_CODE)
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "역할을 찾을 수 없습니다."));
 
@@ -122,7 +122,7 @@ public class RoleService {
    */
   @Transactional
   public void deleteRole(Long id) {
-    Role role = roleRepository.findById(id)
+    Role role = roleRepository.findByIdAndCodeNot(id, SYSTEM_ADMIN_CODE)
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "역할을 찾을 수 없습니다."));
 
