@@ -79,7 +79,7 @@ logging:
 
 
 ls:
-  isApiLogin: true
+  isApiLogin: false
   file-storage: local   # local, blob
   redis-enabled: true
   totp:
