@@ -13,7 +13,7 @@ import lombok.*;
 public class LoginRequest {
   @NotBlank(message = "아이디를 입력해주세요.")
   @Size(max = 30, message = "아이디는 30자 이내로 입력해주세요.")
-  @Pattern(regexp = "^[a-zA-Z0-9]+$", message = "아이디는 영문/숫자만 입력 가능합니다.")
+  @Pattern(regexp = "^[a-zA-Z0-9.]+$", message = "아이디는 영문/숫자만 입력 가능합니다.")
   private String email;
 
   @NotBlank(message = "비밀번호를 입력해주세요.")
