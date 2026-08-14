@@ -95,7 +95,8 @@ public class PageDataService {
       Map.of(
           "wheretobuy-agency-data", "agency",
           "currMgmt-data", "curriculum",
-          "currDtlMgmt-data", "curriculum_detail3");
+          "currDtlMgmt-data", "curriculum_detail3",
+          "banner-data", "banner");
 
   private String visibilityGateSql(String slug) {
     String section = FO_VISIBILITY_GATED_SLUGS.get(slug);
@@ -337,6 +338,10 @@ public class PageDataService {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
     appendWhereConditionsDatetime(whereClause, searchParams);
+    if (FO_PUBLISH_GATED_SLUGS.contains(slug)) {
+      whereClause.append(FO_PUBLISH_GATE_SQL);
+    }
+    whereClause.append(visibilityGateSql(slug));
 
     if (!relFilterParams.isEmpty()) {
       Set<Long> filterIds = resolveFilterRelationIds(relFilterParams);
