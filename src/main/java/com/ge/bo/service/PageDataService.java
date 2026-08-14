@@ -103,6 +103,24 @@ public class PageDataService {
     return section == null ? "" : " AND data_json->'" + section + "'->>'is_visible' = '001'";
   }
 
+  /**
+   * FO 공개 API에서 노출기간(post_period_from~to)을 클라이언트 파라미터(drs_post_period)가 아니라
+   * 서버가 직접 강제하는 slug → JSON 섹션명 매핑. hero-data/banner-data처럼 is_visible 없이
+   * 기간으로만 노출여부를 결정하는 데이터가 대상.
+   */
+  private static final Map<String, String> FO_PERIOD_GATED_SLUGS =
+      Map.of(
+          "hero-data", "hero",
+          "banner-data", "banner");
+
+  private String periodGateSql(String slug) {
+    String section = FO_PERIOD_GATED_SLUGS.get(slug);
+    if (section == null) return "";
+    String fromExpr = toRangeBoundExpr("data_json->'" + section + "'->>'post_period_from'", false);
+    String toExpr = toRangeBoundExpr("data_json->'" + section + "'->>'post_period_to'", true);
+    return " AND " + fromExpr + " <= :nowValue AND " + toExpr + " >= :nowValue";
+  }
+
   private static final String PRODUCT_DATA_SLUG_COND = "#slug == 'product-data'";
 
   private static final String CONTENTS_DATA_SLUG_COND =
@@ -195,6 +213,7 @@ public class PageDataService {
     }
     if (enforcePublishGate) {
       whereClause.append(visibilityGateSql(slug));
+      whereClause.append(periodGateSql(slug));
     }
 
     if ("currDtlMgmt-data".equals(slug) && relFilterParams.containsKey("rel_4")) {
@@ -342,6 +361,7 @@ public class PageDataService {
       whereClause.append(FO_PUBLISH_GATE_SQL);
     }
     whereClause.append(visibilityGateSql(slug));
+    whereClause.append(periodGateSql(slug));
 
     if (!relFilterParams.isEmpty()) {
       Set<Long> filterIds = resolveFilterRelationIds(relFilterParams);
