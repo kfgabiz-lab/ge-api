@@ -3144,7 +3144,6 @@ public class PageDataService {
     if (t.length() < 2) return false;
     char q = t.charAt(0);
     if ((q != '\'' && q != '"') || t.charAt(t.length() - 1) != q) return false;
-    /* 앞뒤 따옴표 사이에 같은 종류 따옴표가 더 있으면 여러 토큰이 뭉친 것 — 순수 리터럴 아님 */
     return t.indexOf(q, 1) == t.length() - 1;
   }
 
