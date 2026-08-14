@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * blog/articles/press(page_data) ↔ integration_contents(외부연동 테이블) 동기화
+ * blog/articles/press/events(page_data) ↔ integration_contents(외부연동 테이블) 동기화
  */
 @Slf4j
 @Service
@@ -25,14 +25,16 @@ public class IntegrationContentsSyncService {
   private static final Map<String, String> SLUG_TYPE_CODE = Map.of(
       "blog-data", "B",
       "articles-data", "A",
-      "press-data", "P"
+      "press-data", "P",
+      "events-data", "E"
   );
 
     /** slug → data_json 내 title/content가 담긴 중첩 객체 키 — slug에서 '-data'를 제거한 값(articles-data→articles) */
   private static final Map<String, String> SLUG_JSON_KEY = Map.of(
       "blog-data", "blog",
       "articles-data", "articles",
-      "press-data", "press"
+      "press-data", "press",
+      "events-data", "events"
   );
 
     /** 코드값 기준 공개상태 — "001" 공개, 그 외 비공개 */
@@ -56,10 +58,11 @@ public class IntegrationContentsSyncService {
     }
 
     Object nested = dataJson.get(SLUG_JSON_KEY.get(slug));
-    if (!(nested instanceof Map<?, ?> fields)
-        || fields.get("title") == null
-        || fields.get("content") == null) {
+    if (!(nested instanceof Map<?, ?> fields) || fields.get("title") == null) {
       throw ErrorCode.INTEGRATION_CONTENTS_FIELD_MISSING.toException();
+    }
+    if (fields.get("content") == null) {
+      return;
     }
 
     String contentId = String.valueOf(pageDataId);

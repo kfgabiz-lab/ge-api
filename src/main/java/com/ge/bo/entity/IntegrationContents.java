@@ -10,9 +10,9 @@ import java.time.OffsetDateTime;
 
 /**
  * 외부연동용 콘텐츠 엔티티
- * blog/articles/press(page_data) 등록·수정·삭제 시 동기화되는 연동 테이블
+ * blog/articles/press/events(page_data) 등록·수정·삭제 시 동기화되는 연동 테이블
  * - content_id: 원본 page_data.id
- * - type: 'B' Blog, 'A' Article, 'P' Press
+ * - type: 'B' Blog, 'A' Article, 'P' Press, 'E' Event
  * - 삭제는 물리삭제 없이 is_visible=false 처리
  */
 @Entity
