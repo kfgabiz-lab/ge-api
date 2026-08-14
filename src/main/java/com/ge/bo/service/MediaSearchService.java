@@ -40,7 +40,7 @@ public class MediaSearchService {
     private static final Pattern YOUTUBE_ID =
         Pattern.compile("(?:youtube\\.com/(?:watch\\?(?:.*&)?v=|embed/|shorts/|v/)|youtu\\.be/)([A-Za-z0-9_-]{11})");
 
-    private static final int SNIPPET_MAX_CHARS = 200;
+    private static final int SNIPPET_MAX_CHARS = 320;
 
     private static final int SNIPPET_EARLY_TRUNCATE_CHARS = 4000;
 
