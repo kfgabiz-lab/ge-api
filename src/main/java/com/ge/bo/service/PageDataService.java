@@ -273,7 +273,7 @@ public class PageDataService {
       }
     }
 
-    OrderByClause orderByClause = buildOrderByClauseWithExpr(allParams.get("sort"), allParams.get("sortExpr"), !enforcePublishGate);
+    OrderByClause orderByClause = buildOrderByClauseWithExpr(allParams.get("sort"), allParams.get("sortExpr"), !enforcePublishGate, slug, siteId);
     String orderBy = orderByClause.sql();
 
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
@@ -412,7 +412,7 @@ public class PageDataService {
       }
     }
 
-    String orderBy = buildOrderByClause(allParams.get("sort"));
+    String orderBy = buildOrderByClause(allParams.get("sort"), slug, siteId);
 
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
                 + " created_by, created_at, updated_by, updated_at, \"count\" "
@@ -3005,7 +3005,11 @@ public class PageDataService {
     return path.toString();
   }
 
-  private String buildOrderByClause(String sortParam) {
+  private String buildOrderByClause(String sortParam, String slug, Long siteId) {
+    return buildOrderByClause(sortParam, slug, siteId, null);
+  }
+
+  private String buildOrderByClause(String sortParam, String slug, Long siteId, String relationValuePath) {
     String orderBy = " ORDER BY created_at DESC";
     if (sortParam == null || sortParam.isBlank()) {
       return orderBy;
@@ -3013,20 +3017,28 @@ public class PageDataService {
     String[] parts = sortParam.split(",", 2);
     String sortCol = parts[0].trim();
     String sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
-    if (sortCol.contains(".")) {
+    String relationExpr = buildRelationSortExpr(sortCol, slug, siteId, relationValuePath);
+    if (relationExpr != null) {
+      orderBy = " ORDER BY " + buildNumericAwareOrderByExpr(relationExpr, sortDir);
+    } else if (sortCol.contains(".")) {
       String[] segs = sortCol.split("\\.");
       if (isValidSegments(segs)) {
-        orderBy = " ORDER BY " + buildJsonPath(segs) + " " + sortDir;
+        orderBy = " ORDER BY " + buildNumericAwareOrderByExpr(buildJsonPath(segs), sortDir);
       }
     } else if (sortCol.matches("[a-zA-Z0-9_]+")) {
       String auditCol = toAuditColumn(sortCol);
       if (auditCol != null) {
         orderBy = " ORDER BY " + auditCol + " " + sortDir;
       } else {
-        orderBy = " ORDER BY " + buildNestedOrderByExpr(sortCol) + " " + sortDir;
+        orderBy = " ORDER BY " + buildNumericAwareOrderByExpr(buildNestedOrderByExpr(sortCol), sortDir);
       }
     }
     return orderBy;
+  }
+
+  private String buildNumericAwareOrderByExpr(String jsonTextExpr, String sortDir) {
+    return "CASE WHEN " + jsonTextExpr + " ~ '^-?[0-9]+$' THEN (" + jsonTextExpr + ")::numeric END "
+        + sortDir + " NULLS LAST, " + jsonTextExpr + " " + sortDir + " NULLS LAST";
   }
 
   /** 정렬용 record — sql은 ORDER BY 절 전체(" ORDER BY ..." 포함), params는 dataQuery에만 바인딩(countQuery는 ORDER BY 없어 불필요) */
@@ -3040,29 +3052,50 @@ public class PageDataService {
    * 없거나 파싱 실패 시 기존 buildOrderByClause(sort 컬럼명 기반)로 폴백한다.
    * allowSortExpr=false(FO 게시게이트 경로)면 sortExpr는 아예 읽지 않는다.
    */
-  private OrderByClause buildOrderByClauseWithExpr(String sortParam, String sortExpr, boolean allowSortExpr) {
-    if (allowSortExpr && sortExpr != null && !sortExpr.isBlank()) {
+  private OrderByClause buildOrderByClauseWithExpr(String sortParam, String sortExpr, boolean allowSortExpr,
+                                                   String slug, Long siteId) {
+    String relationValuePath = allowSortExpr ? resolveRelationSortValuePath(sortParam, sortExpr) : null;
+    if (allowSortExpr && relationValuePath == null && sortExpr != null && !sortExpr.isBlank()) {
       String sortDir = "ASC";
       if (sortParam != null && !sortParam.isBlank()) {
         String[] parts = sortParam.split(",", 2);
         sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
       }
       Map<String, Object> exprParams = new LinkedHashMap<>();
-      String exprSql = buildExpressionOrderByExpr(sortExpr, exprParams, new AtomicInteger(0));
+      String exprSql = buildExpressionOrderByExpr(sortExpr, exprParams, new AtomicInteger(0), slug, siteId);
       if (exprSql != null) {
-        return new OrderByClause(" ORDER BY " + exprSql + " " + sortDir, exprParams);
+        return new OrderByClause(" ORDER BY " + buildNumericAwareOrderByExpr(exprSql, sortDir), exprParams);
       }
     }
-    return new OrderByClause(buildOrderByClause(sortParam), Map.of());
+    return new OrderByClause(buildOrderByClause(sortParam, slug, siteId, relationValuePath), Map.of());
+  }
+
+  private String resolveRelationSortValuePath(String sortParam, String sortExpr) {
+    if (sortParam == null || sortParam.isBlank() || sortExpr == null || sortExpr.isBlank()) return null;
+    String sortCol = sortParam.split(",", 2)[0].trim();
+    if (!isRelationSortAccessor(sortCol)) return null;
+    String path = sortExpr.trim();
+    return path.matches("[a-zA-Z0-9_]+(\\.[a-zA-Z0-9_]+)*") ? path : null;
+  }
+
+  private boolean isRelationSortAccessor(String sortCol) {
+    if (sortCol == null || sortCol.isBlank()) return false;
+    String[] tokens = sortCol.split(REL_SORT_MULTI_SEPARATOR_REGEX);
+    if (tokens.length == 0 || tokens.length > REL_SORT_MAX_PARTS) return false;
+    for (String token : tokens) {
+      if (!FETCH_SORT_ACCESSOR_PATTERN.matcher(token.trim()).matches()) return false;
+    }
+    return true;
   }
 
   /**
    * 계산식(condition?trueExpr:falseExpr / token1+token2+...)을 ORDER BY용 SQL 조각으로 변환.
    * 파싱 실패·길이초과·필드참조 과다는 예외 없이 null을 반환해 호출부가 기본 정렬로 폴백하게 한다.
    */
-  private String buildExpressionOrderByExpr(String expr, Map<String, Object> outParams, AtomicInteger paramSeq) {
+  private String buildExpressionOrderByExpr(String expr, Map<String, Object> outParams, AtomicInteger paramSeq,
+                                            String slug, Long siteId) {
     try {
-      String sql = buildExpressionOrderByExprRec(expr, outParams, paramSeq, new AtomicInteger(0));
+      String sql = buildExpressionOrderByExprRec(expr, outParams, paramSeq, new AtomicInteger(0), slug, siteId);
       if (sql == null) {
         outParams.clear();
       }
@@ -3073,7 +3106,8 @@ public class PageDataService {
     }
   }
 
-  private String buildExpressionOrderByExprRec(String expr, Map<String, Object> outParams, AtomicInteger paramSeq, AtomicInteger fieldRefCount) {
+  private String buildExpressionOrderByExprRec(String expr, Map<String, Object> outParams, AtomicInteger paramSeq,
+                                               AtomicInteger fieldRefCount, String slug, Long siteId) {
     if (expr == null) return null;
     String trimmed = expr.trim();
     if (trimmed.isEmpty() || trimmed.length() > SORT_EXPR_MAX_LENGTH) return null;
@@ -3093,8 +3127,8 @@ public class PageDataService {
         idx++;
       }
 
-      String trueSql = buildExpressionOrderByExprRec(ternary[1], outParams, paramSeq, fieldRefCount);
-      String falseSql = buildExpressionOrderByExprRec(ternary[2], outParams, paramSeq, fieldRefCount);
+      String trueSql = buildExpressionOrderByExprRec(ternary[1], outParams, paramSeq, fieldRefCount, slug, siteId);
+      String falseSql = buildExpressionOrderByExprRec(ternary[2], outParams, paramSeq, fieldRefCount, slug, siteId);
       if (trueSql == null || falseSql == null) return null;
       return "CASE WHEN (" + condSql + ") THEN (" + trueSql + ") ELSE (" + falseSql + ") END";
     }
@@ -3108,6 +3142,11 @@ public class PageDataService {
         String pName = "p_sort_" + paramSeq.getAndIncrement();
         outParams.put(pName, stripQuotes(token));
         parts.add("CAST(:" + pName + " AS text)");
+      } else if (FETCH_SORT_ACCESSOR_PATTERN.matcher(token).matches()) {
+        if (fieldRefCount.incrementAndGet() > SORT_EXPR_MAX_FIELD_REFS) return null;
+        String relationExpr = buildSingleRelationSortExpr(token, slug, siteId, null);
+        if (relationExpr == null) return null;
+        parts.add(relationExpr);
       } else {
         if (!token.matches("[a-zA-Z0-9_]+")) return null;
         if (fieldRefCount.incrementAndGet() > SORT_EXPR_MAX_FIELD_REFS) return null;
@@ -3173,19 +3212,289 @@ public class PageDataService {
   }
 
   private String buildNestedOrderByExpr(String key) {
+    return buildNestedJsonbLookupExpr("data_json", key);
+  }
+
+  private String buildNestedJsonbLookupExpr(String jsonbExpr, String key) {
     if (key == null || !key.matches("[a-zA-Z0-9_]+")) {
       return "NULL";
     }
-    return "COALESCE(data_json->>'" + key + "', "
-        + "(SELECT kv1.value->>'" + key + "' FROM jsonb_each(data_json) kv1 "
+    return "COALESCE(" + jsonbExpr + "->>'" + key + "', "
+        + "(SELECT kv1.value->>'" + key + "' FROM jsonb_each(" + jsonbExpr + ") kv1 "
         + "WHERE jsonb_typeof(kv1.value) = 'object' AND jsonb_exists(kv1.value, '" + key + "') "
         + "ORDER BY kv1.key LIMIT 1), "
         + "(SELECT kv2.value->>'" + key + "' "
-        + "FROM (SELECT kv1.key AS k1, kv1.value AS v1 FROM jsonb_each(data_json) kv1 "
+        + "FROM (SELECT kv1.key AS k1, kv1.value AS v1 FROM jsonb_each(" + jsonbExpr + ") kv1 "
         + "WHERE jsonb_typeof(kv1.value) = 'object') sub1, "
         + "LATERAL jsonb_each(sub1.v1) kv2 "
         + "WHERE jsonb_typeof(kv2.value) = 'object' AND jsonb_exists(kv2.value, '" + key + "') "
         + "ORDER BY sub1.k1, kv2.key LIMIT 1))";
+  }
+
+  private static final java.util.regex.Pattern FETCH_SORT_ACCESSOR_PATTERN =
+      java.util.regex.Pattern.compile("^_fetchedRel([0-9]{1,18})(?:\\.([a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)*))?$");
+  private static final String REL_SORT_MULTI_SEPARATOR_REGEX = "\\|";
+  private static final String REL_SORT_MULTI_DISPLAY_SEPARATOR = "', '";
+  private static final int REL_SORT_MAX_PARTS = 5;
+  private static final String REL_SORT_SLAVE_ALIAS = "rsrc";
+  private static final int REL_SORT_MAX_CHAIN_DEPTH = 10;
+
+  private String buildRelationSortExpr(String sortCol, String slug, Long siteId, String relationValuePath) {
+    if (sortCol == null || sortCol.isBlank()) return null;
+    String[] tokens = sortCol.split(REL_SORT_MULTI_SEPARATOR_REGEX);
+    if (tokens.length == 0 || tokens.length > REL_SORT_MAX_PARTS) return null;
+
+    List<String> exprs = new ArrayList<>();
+    for (String token : tokens) {
+      String expr = buildSingleRelationSortExpr(token.trim(), slug, siteId, relationValuePath);
+      if (expr == null) return null;
+      exprs.add(expr);
+    }
+    if (exprs.size() == 1) return exprs.get(0);
+
+    String args = exprs.stream()
+        .map(e -> "NULLIF(" + e + ", '')")
+        .collect(java.util.stream.Collectors.joining(", "));
+    return "NULLIF(concat_ws(" + REL_SORT_MULTI_DISPLAY_SEPARATOR + ", " + args + "), '')";
+  }
+
+  private String buildSingleRelationSortExpr(String sortCol, String slug, Long siteId, String relationValuePath) {
+    if (sortCol == null) return null;
+    java.util.regex.Matcher matcher = FETCH_SORT_ACCESSOR_PATTERN.matcher(sortCol);
+    if (!matcher.matches()) return null;
+
+    SlugRelation rel;
+    try {
+      rel = slugRelationRepository.findById(Long.parseLong(matcher.group(1))).orElse(null);
+    } catch (RuntimeException e) {
+      return null;
+    }
+    if (rel == null) return null;
+    if (!"FETCH".equals(rel.getRelationDir())) return null;
+    if (slug != null && !slug.equals(rel.getMasterSlug())) return null;
+
+    boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
+    if (!isArrayContains && !"EQ".equals(rel.getJoinType())) return null;
+
+    String slaveSlug = rel.getSlaveSlug();
+    if (!StringUtils.hasText(slaveSlug) || !slaveSlug.matches("[a-zA-Z0-9_-]+")) return null;
+
+    String[] slaveSegs = splitValidatedPath(rel.getSlaveKey());
+    if (slaveSegs == null) return null;
+
+    String accessorPath = matcher.group(2);
+    boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
+    String valueExpr;
+    if (accessorPath != null) {
+      valueExpr = buildRelationAccessorValueExpr(accessorPath);
+    } else if (isCategory) {
+      valueExpr = isArrayContains ? null : buildCategoryRelationSortValueExpr(rel, slaveSlug);
+    } else {
+      String[] fetchSegs = splitValidatedPath(rel.getFetchFields());
+      valueExpr = fetchSegs != null
+          ? buildJsonPath(REL_SORT_SLAVE_ALIAS, fetchSegs)
+          : (relationValuePath == null ? null : buildRelationAccessorValueExpr(relationValuePath));
+    }
+    if (valueExpr == null) return null;
+
+    String slaveFilterSql = buildRelationSortSlaveFilterSql(rel.getSlaveFilter());
+    if (slaveFilterSql == null) return null;
+
+    String separator = toSqlLiteral(StringUtils.hasText(rel.getFetchSeparator()) ? rel.getFetchSeparator() : ",");
+    if (separator == null) return null;
+
+    boolean applySiteId = !(isCategory && !isArrayContains) && siteId != null;
+    String siteIdSql = applySiteId
+        ? " AND (" + REL_SORT_SLAVE_ALIAS + ".site_id = :siteId OR " + REL_SORT_SLAVE_ALIAS + ".site_id IS NULL)"
+        : "";
+
+    return isArrayContains
+        ? buildArrayContainsRelationSortExpr(rel, slaveSlug, slaveSegs, valueExpr, slaveFilterSql, siteIdSql,
+            REL_SORT_MULTI_DISPLAY_SEPARATOR)
+        : buildEqRelationSortExpr(rel, slaveSlug, slaveSegs, valueExpr, slaveFilterSql, siteIdSql, separator);
+  }
+
+  private String buildRelationMasterKeyExpr(String masterKey) {
+    String[] segs = splitValidatedPath(masterKey);
+    if (segs == null) return null;
+    return segs.length == 1
+        ? buildNestedJsonbLookupExpr("page_data.data_json", segs[0])
+        : buildJsonPath("page_data", segs);
+  }
+
+  private String buildRelationAccessorValueExpr(String accessorPath) {
+    String[] segs = splitValidatedPath(accessorPath);
+    if (segs == null) return null;
+    String slaveJson = REL_SORT_SLAVE_ALIAS + ".data_json";
+    return segs.length == 1
+        ? buildNestedJsonbLookupExpr(slaveJson, segs[0])
+        : buildJsonbExprPath(slaveJson, segs);
+  }
+
+  private String buildEqRelationSortExpr(SlugRelation rel, String slaveSlug, String[] slaveSegs, String valueExpr,
+                                         String slaveFilterSql, String siteIdSql, String separator) {
+    String masterKeyExpr = buildRelationMasterKeyExpr(rel.getMasterKey());
+    if (masterKeyExpr == null) return null;
+
+    String source = "SELECT " + valueExpr + " AS rs_val"
+        + " FROM page_data " + REL_SORT_SLAVE_ALIAS
+        + " WHERE " + REL_SORT_SLAVE_ALIAS + ".data_slug = " + toSqlLiteral(slaveSlug)
+        + " AND " + REL_SORT_SLAVE_ALIAS + ".is_deleted = false"
+        + " AND " + buildJsonPath(REL_SORT_SLAVE_ALIAS, slaveSegs) + " = " + masterKeyExpr
+        + slaveFilterSql
+        + siteIdSql;
+
+    return "(SELECT string_agg(rsv.rs_val, " + separator + " ORDER BY rsv.rs_val)"
+        + " FROM (" + source + ") rsv)";
+  }
+
+  private String buildArrayContainsRelationSortExpr(SlugRelation rel, String slaveSlug, String[] slaveSegs,
+                                                    String valueExpr, String slaveFilterSql, String siteIdSql,
+                                                    String separator) {
+    String masterContainer = buildValidatedJsonbContainerPath("page_data", rel.getMasterKey());
+    if (masterContainer == null) return null;
+
+    String arraySrc = "CASE WHEN jsonb_typeof(" + masterContainer + ") = 'array' THEN " + masterContainer
+        + " ELSE '[]'::jsonb END";
+    String elemKeyExpr = "COALESCE(rsel.elem->>'productId', rsel.elem->>'id', rsel.elem #>> '{}')";
+
+    String distinctKeys = "SELECT rsk.rs_key AS rs_key, MIN(rsk.rs_ord) AS rs_ord FROM ("
+        + "SELECT " + elemKeyExpr + " AS rs_key, rsel.ord AS rs_ord"
+        + " FROM jsonb_array_elements(" + arraySrc + ") WITH ORDINALITY rsel(elem, ord)) rsk"
+        + " WHERE rsk.rs_key ~ '^-?[0-9]+$' GROUP BY rsk.rs_key";
+
+    String source = "SELECT " + valueExpr + " AS rs_val, rsd.rs_ord AS rs_ord"
+        + " FROM (" + distinctKeys + ") rsd"
+        + " JOIN page_data " + REL_SORT_SLAVE_ALIAS
+        + " ON " + REL_SORT_SLAVE_ALIAS + ".data_slug = " + toSqlLiteral(slaveSlug)
+        + " AND " + REL_SORT_SLAVE_ALIAS + ".is_deleted = false"
+        + " AND " + buildJsonPath(REL_SORT_SLAVE_ALIAS, slaveSegs) + " = rsd.rs_key"
+        + slaveFilterSql
+        + siteIdSql;
+
+    return "(SELECT string_agg(rsv.rs_val, " + separator + " ORDER BY rsv.rs_ord, rsv.rs_val)"
+        + " FROM (" + source + ") rsv)";
+  }
+
+  private String buildValidatedJsonbContainerPath(String tableAlias, String keyPath) {
+    String[] segs = splitValidatedPath(keyPath);
+    if (segs == null) return null;
+    StringBuilder path = new StringBuilder();
+    if (StringUtils.hasText(tableAlias)) {
+      path.append(tableAlias).append(".");
+    }
+    path.append("data_json");
+    for (String seg : segs) {
+      path.append("->'").append(seg).append("'");
+    }
+    return path.toString();
+  }
+
+  private String buildCategoryRelationSortValueExpr(SlugRelation rel, String slaveSlug) {
+    if (Boolean.TRUE.equals(rel.getIncludeLeaf())) return null;
+
+    int targetDepth = rel.getCategoryDepth() != null ? rel.getCategoryDepth() : 1;
+    int fromDepth = Math.max(1, rel.getCategoryDepthFrom() != null ? rel.getCategoryDepthFrom() : targetDepth);
+    if (targetDepth < fromDepth || targetDepth > REL_SORT_MAX_CHAIN_DEPTH) return null;
+
+    String nameExpr = buildRelationMultiPathExpr("rs_anc.dj", rel.getFetchFields());
+    if (nameExpr == null) return null;
+
+    String selfDepthExpr = buildRelationMultiPathExpr(REL_SORT_SLAVE_ALIAS + ".data_json", "category.depth,product.depth");
+    if (selfDepthExpr == null) return null;
+
+    String parentIdExpr = "COALESCE(rs_anc.dj->>'parentId',"
+        + " (SELECT rskv.value->>'parentId' FROM jsonb_each(rs_anc.dj) rskv"
+        + " WHERE jsonb_typeof(rskv.value) = 'object' AND jsonb_exists(rskv.value, 'parentId')"
+        + " ORDER BY rskv.key LIMIT 1))";
+
+    return "(WITH RECURSIVE rs_anc(dj, lvl) AS ("
+        + "SELECT " + REL_SORT_SLAVE_ALIAS + ".data_json, 0"
+        + " UNION ALL"
+        + " SELECT rsp.data_json, rs_anc.lvl + 1 FROM rs_anc"
+        + " JOIN page_data rsp ON rsp.data_slug = " + toSqlLiteral(slaveSlug) + " AND rsp.is_deleted = false"
+        + " AND rsp.data_json->>'id' = " + parentIdExpr
+        + " WHERE rs_anc.lvl < " + REL_SORT_MAX_CHAIN_DEPTH + ")"
+        + " SELECT CASE WHEN " + selfDepthExpr + " IS NULL"
+        + " OR " + selfDepthExpr + " !~ '^[0-9]+$'"
+        + " OR (" + selfDepthExpr + ")::int - 1 = MAX(rsa.rs_n)"
+        + " THEN string_agg(rsa.rs_nm, ' > ' ORDER BY rsa.rs_lvl DESC) END"
+        + " FROM (SELECT " + nameExpr + " AS rs_nm, rs_anc.lvl AS rs_lvl, COUNT(*) OVER () AS rs_n"
+        + " FROM rs_anc WHERE rs_anc.lvl >= 1 AND " + nameExpr + " IS NOT NULL) rsa"
+        + " WHERE (rsa.rs_n - rsa.rs_lvl + 1) BETWEEN " + fromDepth + " AND " + targetDepth + ")";
+  }
+
+  private String buildRelationSortSlaveFilterSql(String slaveFilter) {
+    if (!StringUtils.hasText(slaveFilter)) return "";
+    StringBuilder sql = new StringBuilder();
+    for (String cond : slaveFilter.split("&")) {
+      int eqIdx = cond.indexOf('=');
+      int tildeIdx = cond.indexOf('~');
+      boolean ilike = tildeIdx >= 0 && (eqIdx < 0 || tildeIdx < eqIdx);
+
+      String key;
+      String value;
+      if (ilike) {
+        key = cond.substring(0, tildeIdx).trim();
+        value = cond.substring(tildeIdx + 1).trim();
+      } else {
+        String[] kv = cond.split("=", 2);
+        if (kv.length != 2) continue;
+        key = kv[0].trim();
+        value = kv[1].trim();
+      }
+      if (!key.matches("[a-zA-Z0-9_.]+")) continue;
+
+      String literal = toSqlLiteral(ilike ? "%" + value + "%" : value);
+      if (literal == null) return null;
+      String op = ilike ? "ILIKE" : "=";
+
+      if (key.contains(".")) {
+        String[] segs = splitValidatedPath(key);
+        if (segs == null) continue;
+        sql.append(" AND ").append(buildJsonPath(REL_SORT_SLAVE_ALIAS, segs))
+           .append(" ").append(op).append(" ").append(literal);
+      } else {
+        sql.append(" AND (").append(REL_SORT_SLAVE_ALIAS).append(".data_json->>'").append(key).append("' ")
+           .append(op).append(" ").append(literal)
+           .append(" OR EXISTS (SELECT 1 FROM jsonb_each(").append(REL_SORT_SLAVE_ALIAS).append(".data_json) rskv2")
+           .append(" WHERE jsonb_typeof(rskv2.value) = 'object' AND rskv2.value->>'").append(key).append("' ")
+           .append(op).append(" ").append(literal).append("))");
+      }
+    }
+    return sql.toString();
+  }
+
+  private String buildRelationMultiPathExpr(String jsonbExpr, String csvFieldPaths) {
+    if (!StringUtils.hasText(csvFieldPaths)) return null;
+    List<String> parts = new ArrayList<>();
+    for (String rawPath : csvFieldPaths.split(",")) {
+      String[] segs = splitValidatedPath(rawPath);
+      if (segs == null) continue;
+      parts.add(buildJsonbExprPath(jsonbExpr, segs));
+    }
+    if (parts.isEmpty()) return null;
+    return parts.size() == 1 ? parts.get(0) : "COALESCE(" + String.join(", ", parts) + ")";
+  }
+
+  private String buildJsonbExprPath(String jsonbExpr, String[] segments) {
+    StringBuilder path = new StringBuilder(jsonbExpr);
+    for (int i = 0; i < segments.length - 1; i++) {
+      path.append("->'").append(segments[i]).append("'");
+    }
+    path.append("->>'").append(segments[segments.length - 1]).append("'");
+    return path.toString();
+  }
+
+  private String[] splitValidatedPath(String keyPath) {
+    if (!StringUtils.hasText(keyPath)) return null;
+    String[] segs = keyPath.trim().split("\\.");
+    return isValidSegments(segs) ? segs : null;
+  }
+
+  private String toSqlLiteral(String value) {
+    if (value == null || value.indexOf('\\') >= 0 || value.indexOf('\0') >= 0) return null;
+    return "'" + value.replace("'", "''") + "'";
   }
 
   private void appendExistsRelationConditions(StringBuilder whereClause, Map<String, String> existsRelParams,
@@ -4477,6 +4786,8 @@ public class PageDataService {
         if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
             appendSlaveFilter(sql, rel.getSlaveFilter(), filterParams);
         }
+        sql.append(" ORDER BY array_position(ARRAY[").append(idList).append("]::text[], ")
+           .append(buildSlaveKeyTextExpr(rel.getSlaveKey())).append(")");
         sql.append(" LIMIT 200");
 
         Query q = entityManager.createNativeQuery(sql.toString());
@@ -4496,6 +4807,13 @@ public class PageDataService {
             }
         }
         return records.isEmpty() ? null : records;
+    }
+
+    private String buildSlaveKeyTextExpr(String keyPath) {
+        if (keyPath.contains(".")) {
+            return buildJsonPath(keyPath.split("\\."));
+        }
+        return "data_json->>'" + keyPath + "'";
     }
 
     @SuppressWarnings("unchecked")
