@@ -37,7 +37,6 @@ public interface MessageResourceRepository extends JpaRepository<MessageResource
           AND (:en           IS NULL OR :en   = '' OR m.en  LIKE %:en%)
           AND (:active       IS NULL OR m.active       = :active)
           AND (:resourceType IS NULL OR m.resourceType = :resourceType)
-        ORDER BY m.createdAt DESC
         """)
     Page<MessageResource> search(
         @Param("key")          String key,

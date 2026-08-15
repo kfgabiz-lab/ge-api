@@ -8,11 +8,14 @@ import com.ge.bo.repository.MessageResourceRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -21,13 +24,18 @@ public class MessageResourceService {
 
   private final MessageResourceRepository messageResourceRepository;
 
+  private static final Set<String> SORTABLE_PROPERTIES = Set.of(
+            "key", "ko", "en", "active", "resourceType", "createdAt");
+
+  private static final Sort DEFAULT_SORT = Sort.by(Sort.Direction.DESC, "createdAt");
+
     /**
      * 목록 조회 (검색 조건 AND 조합, 페이징)
      * - active 파라미터: "true"/"false" 문자열 → Boolean 변환, "전체"/""/null이면 null로 처리
      */
   @Transactional(readOnly = true)
     public MessageResourceDto.PageResponse getList(
-            String key, String ko, String en, String activeStr, String resourceTypeStr, int page, int size) {
+            String key, String ko, String en, String activeStr, String resourceTypeStr, Pageable pageable) {
 
         /* 사용여부 문자열 → Boolean 변환 */
     Boolean active = null;
@@ -48,7 +56,7 @@ public class MessageResourceService {
     }
 
     Page<MessageResource> result = messageResourceRepository.search(
-                key, ko, en, active, resourceType, PageRequest.of(page, size));
+                key, ko, en, active, resourceType, resolveSafePageable(pageable));
 
     return MessageResourceDto.PageResponse.builder()
                 .content(result.getContent().stream().map(this::toResponse).toList())
@@ -57,6 +65,19 @@ public class MessageResourceService {
                 .currentPage(result.getNumber())
                 .size(result.getSize())
                 .build();
+  }
+
+    /**
+     * 정렬 프로퍼티 화이트리스트 검증
+     * - 허용되지 않은 프로퍼티가 하나라도 포함되면 기본 정렬(createdAt DESC)로 폴백
+     */
+  private Pageable resolveSafePageable(Pageable pageable) {
+    boolean allAllowed = pageable.getSort().stream()
+                .allMatch(order -> SORTABLE_PROPERTIES.contains(order.getProperty()));
+    Sort baseSort = allAllowed ? pageable.getSort() : DEFAULT_SORT;
+    boolean hasIdSort = baseSort.stream().anyMatch(order -> "id".equals(order.getProperty()));
+    Sort safeSort = hasIdSort ? baseSort : baseSort.and(Sort.by(Sort.Direction.ASC, "id"));
+    return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), safeSort);
   }
 
     /**

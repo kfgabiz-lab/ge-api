@@ -4,6 +4,9 @@ import com.ge.bo.dto.MessageResourceDto;
 import com.ge.bo.service.MessageResourceService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -22,9 +25,8 @@ public class MessageResourceController {
             @RequestParam(defaultValue = "")    String en,
             @RequestParam(defaultValue = "")    String active,
             @RequestParam(defaultValue = "")    String resourceType,
-            @RequestParam(defaultValue = "0")   int page,
-            @RequestParam(defaultValue = "20")  int size) {
-    return ResponseEntity.ok(messageResourceService.getList(key, ko, en, active, resourceType, page, size));
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+    return ResponseEntity.ok(messageResourceService.getList(key, ko, en, active, resourceType, pageable));
   }
 
   @PostMapping
