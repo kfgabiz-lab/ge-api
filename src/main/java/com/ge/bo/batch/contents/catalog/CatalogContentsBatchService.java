@@ -78,6 +78,11 @@ public class CatalogContentsBatchService {
             Map<String, List<IfCatalogFileInfo>> fileGroups = reader.loadPendingFileGroups();
             tally.receivedRowCount = headerGroups.values().stream().mapToInt(List::size).sum()
                 + fileGroups.values().stream().mapToInt(List::size).sum();
+            // 이번 배치가 실제로 조회한 원천 행 중 if_date가 가장 최근인 행의 if_trc_id를 배치로그에 남긴다
+            headerGroups.values().stream().flatMap(List::stream)
+                .forEach(row -> tally.considerTrcId(row.ifTrcId(), row.ifDate()));
+            fileGroups.values().stream().flatMap(List::stream)
+                .forEach(row -> tally.considerTrcId(row.getIfTrcId(), row.getIfDate()));
 
             Set<String> allCtlgCodes = new TreeSet<>();
             allCtlgCodes.addAll(headerGroups.keySet());
@@ -95,11 +100,12 @@ public class CatalogContentsBatchService {
 
             markStep(batchLog, "DELETE_CHECK");
             int deletedCount = deleteStaleRows(cleanSuccessContentsIds, writtenContentsIds, batchId, tally);
-            applyLatestVersionOnly(tally);
+            deletedCount += applyLatestVersionOnly(tally);
 
             markStep(batchLog, "REPORT");
             String status = (tally.failedDocCount == 0 && tally.partialDocCount == 0) ? "SUCCESS" : "PARTIAL_SUCCESS";
-            batchLog.complete(status, jsonSupport.toJson(tally.toRowCounts()), jsonSupport.toJson(tally.toReport(deletedCount)));
+            batchLog.complete(status, jsonSupport.toJson(tally.toRowCounts()), jsonSupport.toJson(tally.toReport(deletedCount)),
+                tally.latestTrcId);
             batchLogRepository.save(batchLog);
             log.info("CATALOG 콘텐츠 배치 완료 batchId={} status={} success={} partial={} failed={}",
                 batchId, status, tally.successDocCount, tally.partialDocCount, tally.failedDocCount);
@@ -128,7 +134,7 @@ public class CatalogContentsBatchService {
             // 지금 헤더 없이 파일만 있는 이 행들은 격리해도 헤더가 정상적으로 오면 그때 파일도 새 물리 행으로 함께 재전송되어 다시 처리된다.
             for (IfCatalogFileInfo fileRow : fileRows) {
                 saveFailRow(batchId, "if_r_catalog_file_info", ctlgCode, "ctlg_code=" + ctlgCode + ", data_code=" + fileRow.getDataCode(),
-                    "CONVERT", "HEADER_MISSING", "헤더 IF(if_r_catalog_info)가 아직 도착하지 않아 파일만으로는 문서를 만들 수 없음",
+                    fileRow.getIfTrcId(), "CONVERT", "HEADER_MISSING", "헤더 IF(if_r_catalog_info)가 아직 도착하지 않아 파일만으로는 문서를 만들 수 없음",
                     Map.of("ctlgCode", ctlgCode, "dataCode", String.valueOf(fileRow.getDataCode())));
             }
             reader.markFileResultOnly(ctlgCode, "E");
@@ -142,8 +148,8 @@ public class CatalogContentsBatchService {
             result = converter.convert(ctlgCode, headers, fileRows);
         } catch (RuntimeException e) {
             log.warn("CATALOG 문서 변환 중 예기치 못한 오류 ctlgCode={}", ctlgCode, e);
-            saveFailRow(batchId, "if_r_catalog_info", ctlgCode, "ctlg_code=" + ctlgCode, "CONVERT", "UNEXPECTED_ERROR",
-                e.getMessage(), Map.of("ctlgCode", ctlgCode));
+            saveFailRow(batchId, "if_r_catalog_info", ctlgCode, "ctlg_code=" + ctlgCode, headers.get(0).ifTrcId(),
+                "CONVERT", "UNEXPECTED_ERROR", e.getMessage(), Map.of("ctlgCode", ctlgCode));
             reader.markIfResult(ctlgCode, "E");
             tally.failedDocCount++;
             tally.quarantineCount++;
@@ -152,7 +158,8 @@ public class CatalogContentsBatchService {
 
         if (!result.hasDocument()) {
             for (RowFailure f : result.rowFailures()) {
-                saveFailRow(batchId, f.sourceTable(), ctlgCode, f.sourceRowKey(), "CONVERT", f.failCode(), f.failDetail(), f.rawData());
+                saveFailRow(batchId, f.sourceTable(), ctlgCode, f.sourceRowKey(), headers.get(0).ifTrcId(),
+                    "CONVERT", f.failCode(), f.failDetail(), f.rawData());
             }
             reader.markIfResult(ctlgCode, "E");
             tally.failedDocCount++;
@@ -165,8 +172,8 @@ public class CatalogContentsBatchService {
             counts = writer.writeDocument(result.document(), batchId);
         } catch (RuntimeException e) {
             log.warn("CATALOG 문서 저장 실패 ctlgCode={}", ctlgCode, e);
-            saveFailRow(batchId, "contents_master", ctlgCode, "ctlg_code=" + ctlgCode, "UPSERT", "UPSERT_ERROR",
-                e.getMessage(), Map.of("ctlgCode", ctlgCode, "docType", result.document().getDocType()));
+            saveFailRow(batchId, "contents_master", ctlgCode, "ctlg_code=" + ctlgCode, headers.get(0).ifTrcId(),
+                "UPSERT", "UPSERT_ERROR", e.getMessage(), Map.of("ctlgCode", ctlgCode, "docType", result.document().getDocType()));
             reader.markIfResult(ctlgCode, "E");
             tally.failedDocCount++;
             tally.quarantineCount++;
@@ -174,7 +181,8 @@ public class CatalogContentsBatchService {
         }
 
         for (RowFailure f : result.rowFailures()) {
-            saveFailRow(batchId, f.sourceTable(), ctlgCode, f.sourceRowKey(), "CONVERT", f.failCode(), f.failDetail(), f.rawData());
+            saveFailRow(batchId, f.sourceTable(), ctlgCode, f.sourceRowKey(), headers.get(0).ifTrcId(),
+                "CONVERT", f.failCode(), f.failDetail(), f.rawData());
         }
         tally.reportNotes.addAll(result.reportNotes());
         tally.accumulate(counts);
@@ -242,18 +250,30 @@ public class CatalogContentsBatchService {
     }
 
     /**
-     * 동일 자료코드 프리픽스(CTLG_CODE 첫 "-" 앞)를 공유하는 문서 중 최신 버전만 노출 유지 — 실삭제가 아니라
-     * expose=false 처리(파일 삭제 대상 체크 기준표, 2026-07-24 확인). 최신 판단은 PRT_VER 우선, 동률이면 PRT_YYMM.
+     * 동일 제품(PRT_ID) + 동일 발행월(PRT_YYMM)을 공유하는 문서 중 최신 PRT_VER만 남기고 나머지는
+     * 삭제 처리(is_deleted=true)한다. 제목(NAHP_TITLE)은 판단 기준으로 보지 않는다 — 같은 PRT_ID+PRT_YYMM
+     * 조합이면 제목이 서로 달라 보여도 구버전으로 간주하고 최신 PRT_VER 1건만 남긴다(업무 확정 규칙).
+     * PRT_ID는 attrs(jsonb)의 "prt_id" 키에서 읽는다. PRT_YYMM은 문서의 유일 버전
+     * source_version_key("PRT_YYMM|PRT_VER")에서 읽는다. attrs에 prt_id가 없거나 PRT_YYMM을 못 읽는 문서는
+     * 그룹핑 자체에서 제외한다 — 다음 배치에서 재전송되면 값이 채워져 정상적으로 잡힌다.
      */
-    private void applyLatestVersionOnly(BatchTally tally) {
-        Map<String, List<ContentsMaster>> byPrefix = new LinkedHashMap<>();
+    private int applyLatestVersionOnly(BatchTally tally) {
+        Map<String, List<ContentsMaster>> byPrtIdAndYymm = new LinkedHashMap<>();
         for (ContentsMaster doc : masterRepository.findBySourceSystemAndIsDeletedFalse(SOURCE_SYSTEM)) {
-            String prefix = doc.getSourceDocKey().split("-", 2)[0];
-            byPrefix.computeIfAbsent(prefix, k -> new ArrayList<>()).add(doc);
+            Object prtId = jsonSupport.fromJson(doc.getAttrs()).get("prt_id");
+            if (prtId == null) {
+                continue;
+            }
+            String prtYymm = prtYymmOf(doc.getId());
+            if (prtYymm == null) {
+                continue;
+            }
+            String groupKey = prtId + "|" + prtYymm;
+            byPrtIdAndYymm.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(doc);
         }
 
-        int hiddenCount = 0;
-        for (List<ContentsMaster> group : byPrefix.values()) {
+        int deletedVersionCount = 0;
+        for (List<ContentsMaster> group : byPrtIdAndYymm.values()) {
             if (group.size() < 2) {
                 continue;
             }
@@ -267,17 +287,31 @@ public class CatalogContentsBatchService {
                 }
             }
             for (ContentsMaster doc : group) {
-                if (doc != winner && Boolean.TRUE.equals(doc.getExpose())) {
-                    doc.hideAsSupersededVersion();
+                if (doc != winner) {
+                    doc.markSupersededVersionDeleted();
                     masterRepository.save(doc);
-                    hiddenCount++;
+                    deletedVersionCount++;
                 }
             }
         }
-        if (hiddenCount > 0) {
-            tally.reportNotes.add("동일 자료코드 프리픽스 내 구버전 " + hiddenCount
-                + "건 비노출 처리함(최신 PRT_VER 우선, 동률 시 PRT_YYMM)");
+        if (deletedVersionCount > 0) {
+            tally.reportNotes.add("동일 제품(PRT_ID)+동일 발행월(PRT_YYMM) 내 구버전 " + deletedVersionCount
+                + "건 삭제 처리함(최신 PRT_VER만 유지)");
         }
+        return deletedVersionCount;
+    }
+
+    /** 문서의 유일 버전(source_version_key="PRT_YYMM|PRT_VER")에서 PRT_YYMM만 뽑는다 */
+    private String prtYymmOf(long contentsId) {
+        List<ContentsVersion> versions = versionRepository.findByContentsId(contentsId);
+        if (versions.isEmpty()) {
+            return null;
+        }
+        String[] parts = versions.get(0).getSourceVersionKey().split("\\|", 2);
+        if (parts.length != 2 || parts[0].isBlank()) {
+            return null;
+        }
+        return parts[0];
     }
 
     /** 문서의 유일 버전(source_version_key="PRT_YYMM|PRT_VER")에서 비교용 순위 키를 뽑는다 — [PRT_VER, PRT_YYMM] 순 */
@@ -337,8 +371,9 @@ public class CatalogContentsBatchService {
             String ctlgCode = String.valueOf(row[0]);
             Object levelSeq = row[1];
             Object keptIfDate = row[2];
+            String ifTrcId = (String) row[3];
             saveFailRow(batchId, "if_r_catalog_info", ctlgCode, "ctlg_code=" + ctlgCode + ", nahp_level_seq=" + levelSeq,
-                "CLEANSE", "DUPLICATE_KEY",
+                ifTrcId, "CLEANSE", "DUPLICATE_KEY",
                 "동일 복합키(ctlg_code+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리"
                     + (keptIfDate != null ? " (채택된 행 if_date=" + keptIfDate + ")" : ""),
                 Map.of("ctlgCode", ctlgCode, "nahpLevelSeq", String.valueOf(levelSeq), "keptIfDate", String.valueOf(keptIfDate)));
@@ -351,13 +386,14 @@ public class CatalogContentsBatchService {
     }
 
     private void saveFailRow(long batchId, String sourceTable, String sourceDocKey, String sourceRowKey,
-                              String failStep, String failCode, String failDetail, Map<String, Object> rawData) {
+                              String ifTrcId, String failStep, String failCode, String failDetail, Map<String, Object> rawData) {
         failRowRepository.save(ContentsIfFailRow.builder()
             .batchId(batchId)
             .sourceSystem(SOURCE_SYSTEM)
             .sourceTable(sourceTable)
             .sourceDocKey(sourceDocKey)
             .sourceRowKey(sourceRowKey)
+            .ifTrcId(ifTrcId)
             .failStep(failStep)
             .failCode(failCode)
             .failDetail(failDetail)
@@ -382,7 +418,20 @@ public class CatalogContentsBatchService {
         int versionUpdate;
         int fileInsert;
         int fileUpdate;
+        String latestTrcId;
+        java.time.LocalDateTime latestIfDate;
         final List<String> reportNotes = new ArrayList<>();
+
+        /** if_date가 가장 최근인 행의 if_trc_id를 유지한다(마지막 전송분만 남김) */
+        void considerTrcId(String trcId, java.time.LocalDateTime ifDate) {
+            if (trcId == null || ifDate == null) {
+                return;
+            }
+            if (latestIfDate == null || ifDate.isAfter(latestIfDate)) {
+                latestIfDate = ifDate;
+                latestTrcId = trcId;
+            }
+        }
 
         void accumulate(WriteCounts c) {
             masterInsert += c.masterInsert();

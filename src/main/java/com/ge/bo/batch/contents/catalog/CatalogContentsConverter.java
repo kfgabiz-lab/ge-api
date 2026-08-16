@@ -245,6 +245,12 @@ public class CatalogContentsConverter {
         if (first.nahpVideoProdStandard() != null) {
             attrs.put("video_prod_standard", first.nahpVideoProdStandard());
         }
+        // PRT_ID(제품 코드) — CatalogContentsBatchService#applyLatestVersionOnly()가 동일 제품+동일
+        // 발행월(PRT_YYMM) 내 구버전을 찾을 때 그룹핑 키로 쓴다.
+        String prtId = ContentsNormalizer.trimToNull(first.prtId());
+        if (prtId != null) {
+            attrs.put("prt_id", prtId);
+        }
 
         VersionItem version = VersionItem.builder()
             .sourceVersionKey(versionKey)

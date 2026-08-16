@@ -14,5 +14,6 @@ public record CertiRow(String certiNo, String bi, Short nahpLevelSeq, String pla
                         String pdtMiddleclassName, String pdtSeries, String pdtSeriesName, String pdtName,
                         String certiStatus, LocalDate certiDisuseDate, String lastCertiFile, LocalDate updateDate,
                         String nahpDispFlag, String cportalDispFlag, String nahpTitle, String nahpLang,
-                        String nahpLevel1Id, String nahpLevel2Id, String nahpLevel3Id) {
+                        String nahpLevel1Id, String nahpLevel2Id, String nahpLevel3Id, String ifTrcId,
+                        java.time.LocalDateTime ifDate) {
 }

@@ -7,5 +7,6 @@ package com.ge.bo.batch.contents.ssq;
 public record SsqFileInfoRow(Integer docId, String docType, String docTitle, Integer versionId, String versionName,
                               String versionDesc, Boolean versionExpose, Integer fileId, String fileKey,
                               String fileName, String fileLang, Long fileSize, Boolean fileExpose, String sizeFlag,
-                              String versionUpdateDatetime, String fileUpsertDatetime) {
+                              String versionUpdateDatetime, String fileUpsertDatetime,
+                              String ifTrcId, java.time.LocalDateTime ifDate) {
 }

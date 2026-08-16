@@ -71,6 +71,11 @@ public class SsqContentsBatchService {
             Map<Integer, List<SsqFileInfoRow>> fileGroups = reader.loadPendingFileGroups();
             tally.receivedRowCount = docGroups.values().stream().mapToInt(List::size).sum()
                 + fileGroups.values().stream().mapToInt(List::size).sum();
+            // 이번 배치가 실제로 조회한 원천 행 중 if_date가 가장 최근인 행의 if_trc_id를 배치로그에 남긴다
+            docGroups.values().stream().flatMap(List::stream)
+                .forEach(row -> tally.considerTrcId(row.ifTrcId(), row.ifDate()));
+            fileGroups.values().stream().flatMap(List::stream)
+                .forEach(row -> tally.considerTrcId(row.ifTrcId(), row.ifDate()));
 
             Set<Integer> allDocIds = new TreeSet<>();
             allDocIds.addAll(docGroups.keySet());
@@ -90,7 +95,8 @@ public class SsqContentsBatchService {
 
             markStep(batchLog, "REPORT");
             String status = (tally.failedDocCount == 0 && tally.partialDocCount == 0) ? "SUCCESS" : "PARTIAL_SUCCESS";
-            batchLog.complete(status, jsonSupport.toJson(tally.toRowCounts()), jsonSupport.toJson(tally.toReport(deletedCount)));
+            batchLog.complete(status, jsonSupport.toJson(tally.toRowCounts()), jsonSupport.toJson(tally.toReport(deletedCount)),
+                tally.latestTrcId);
             batchLogRepository.save(batchLog);
             log.info("SSQ 콘텐츠 배치 완료 batchId={} status={} success={} partial={} failed={}",
                 batchId, status, tally.successDocCount, tally.partialDocCount, tally.failedDocCount);
@@ -120,7 +126,7 @@ public class SsqContentsBatchService {
             // 다시 처리된다.
             for (SsqFileInfoRow file : files) {
                 saveFailRow(batchId, "if_r_ssq_file_info", String.valueOf(docId), "doc_id=" + docId + ", file_id=" + file.fileId(),
-                    "CONVERT", "HEADER_MISSING", "문서 IF(if_r_ssq_document)가 아직 도착하지 않아 파일만으로는 문서를 만들 수 없음",
+                    file.ifTrcId(), "CONVERT", "HEADER_MISSING", "문서 IF(if_r_ssq_document)가 아직 도착하지 않아 파일만으로는 문서를 만들 수 없음",
                     Map.of("docId", docId, "fileId", String.valueOf(file.fileId())));
             }
             reader.markFileResultOnly(docId, "E");
@@ -134,8 +140,8 @@ public class SsqContentsBatchService {
             result = converter.convert(docId, docRows, files);
         } catch (RuntimeException e) {
             log.warn("SSQ 문서 변환 중 예기치 못한 오류 docId={}", docId, e);
-            saveFailRow(batchId, "if_r_ssq_document", String.valueOf(docId), "doc_id=" + docId, "CONVERT",
-                "UNEXPECTED_ERROR", e.getMessage(), Map.of("docId", docId));
+            saveFailRow(batchId, "if_r_ssq_document", String.valueOf(docId), "doc_id=" + docId, docRows.get(0).ifTrcId(),
+                "CONVERT", "UNEXPECTED_ERROR", e.getMessage(), Map.of("docId", docId));
             reader.markIfResult(docId, "E");
             tally.failedDocCount++;
             tally.quarantineCount++;
@@ -144,8 +150,8 @@ public class SsqContentsBatchService {
 
         if (!result.hasDocument()) {
             for (RowFailure f : result.rowFailures()) {
-                saveFailRow(batchId, f.sourceTable(), String.valueOf(docId), f.sourceRowKey(), "CONVERT", f.failCode(),
-                    f.failDetail(), f.rawData());
+                saveFailRow(batchId, f.sourceTable(), String.valueOf(docId), f.sourceRowKey(), docRows.get(0).ifTrcId(),
+                    "CONVERT", f.failCode(), f.failDetail(), f.rawData());
             }
             reader.markIfResult(docId, "E");
             tally.failedDocCount++;
@@ -158,8 +164,8 @@ public class SsqContentsBatchService {
             counts = writer.writeDocument(result.document(), batchId);
         } catch (RuntimeException e) {
             log.warn("SSQ 문서 저장 실패 docId={}", docId, e);
-            saveFailRow(batchId, "contents_master", String.valueOf(docId), "doc_id=" + docId, "UPSERT", "UPSERT_ERROR",
-                e.getMessage(), Map.of("docId", docId, "docType", result.document().getDocType()));
+            saveFailRow(batchId, "contents_master", String.valueOf(docId), "doc_id=" + docId, docRows.get(0).ifTrcId(),
+                "UPSERT", "UPSERT_ERROR", e.getMessage(), Map.of("docId", docId, "docType", result.document().getDocType()));
             reader.markIfResult(docId, "E");
             tally.failedDocCount++;
             tally.quarantineCount++;
@@ -167,8 +173,8 @@ public class SsqContentsBatchService {
         }
 
         for (RowFailure f : result.rowFailures()) {
-            saveFailRow(batchId, f.sourceTable(), String.valueOf(docId), f.sourceRowKey(), "CONVERT", f.failCode(),
-                f.failDetail(), f.rawData());
+            saveFailRow(batchId, f.sourceTable(), String.valueOf(docId), f.sourceRowKey(), docRows.get(0).ifTrcId(),
+                "CONVERT", f.failCode(), f.failDetail(), f.rawData());
         }
         tally.reportNotes.addAll(result.reportNotes());
         tally.accumulate(counts);
@@ -275,7 +281,8 @@ public class SsqContentsBatchService {
             String rowKey = "doc_id=" + docId + ", spec_group=" + row[1] + ", level_1~4=["
                 + row[2] + "," + row[3] + "," + row[4] + "," + row[5] + "]";
             Object keptIfDate = row[6];
-            saveFailRow(batchId, "if_r_ssq_document", String.valueOf(docId), rowKey, "CLEANSE", "DUPLICATE_KEY",
+            String ifTrcId = (String) row[7];
+            saveFailRow(batchId, "if_r_ssq_document", String.valueOf(docId), rowKey, ifTrcId, "CLEANSE", "DUPLICATE_KEY",
                 "동일 복합키(doc_id+spec_group+level_1~4)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리"
                     + (keptIfDate != null ? " (채택된 행 if_date=" + keptIfDate + ")" : ""),
                 Map.of("docId", docId, "specGroup", String.valueOf(row[1]), "level1", String.valueOf(row[2]),
@@ -290,13 +297,14 @@ public class SsqContentsBatchService {
     }
 
     private void saveFailRow(long batchId, String sourceTable, String sourceDocKey, String sourceRowKey,
-                              String failStep, String failCode, String failDetail, Map<String, Object> rawData) {
+                              String ifTrcId, String failStep, String failCode, String failDetail, Map<String, Object> rawData) {
         failRowRepository.save(ContentsIfFailRow.builder()
             .batchId(batchId)
             .sourceSystem(SOURCE_SYSTEM)
             .sourceTable(sourceTable)
             .sourceDocKey(sourceDocKey)
             .sourceRowKey(sourceRowKey)
+            .ifTrcId(ifTrcId)
             .failStep(failStep)
             .failCode(failCode)
             .failDetail(failDetail)
@@ -320,7 +328,20 @@ public class SsqContentsBatchService {
         int versionUpdate;
         int fileInsert;
         int fileUpdate;
+        String latestTrcId;
+        java.time.LocalDateTime latestIfDate;
         final List<String> reportNotes = new ArrayList<>();
+
+        /** if_date가 가장 최근인 행의 if_trc_id를 유지한다(마지막 전송분만 남김) */
+        void considerTrcId(String trcId, java.time.LocalDateTime ifDate) {
+            if (trcId == null || ifDate == null) {
+                return;
+            }
+            if (latestIfDate == null || ifDate.isAfter(latestIfDate)) {
+                latestIfDate = ifDate;
+                latestTrcId = trcId;
+            }
+        }
 
         void accumulate(WriteCounts c) {
             masterInsert += c.masterInsert();

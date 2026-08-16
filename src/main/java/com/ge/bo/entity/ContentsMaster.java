@@ -110,9 +110,11 @@ public class ContentsMaster {
         this.updatedAt = updatedAt;
     }
 
-    /** 동일 자료코드 프리픽스 내 더 최신 버전에 밀린 문서를 비노출 처리(삭제 아님 — is_deleted는 건드리지 않음) */
-    public void hideAsSupersededVersion() {
+    /** 동일 제품(PRT_ID)+동일 발행월(PRT_YYMM) 내 구버전 문서를 삭제 처리 */
+    public void markSupersededVersionDeleted() {
         this.expose = false;
+        this.isDeleted = true;
+        this.deletedAt = OffsetDateTime.now();
         this.updatedAt = OffsetDateTime.now();
     }
 }

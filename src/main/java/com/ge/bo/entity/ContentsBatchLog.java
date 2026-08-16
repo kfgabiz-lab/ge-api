@@ -50,6 +50,11 @@ public class ContentsBatchLog {
     @Column(columnDefinition = "jsonb")
     private String report;
 
+    /** 이번 배치가 처리한 원천 행 중 if_date가 가장 최근인 행의 EAI 전송 추적 ID(마지막 전송분) —
+     *  실데이터는 하루 1회 전송이 원칙이라 최신 1건만 남긴다. */
+    @Column(name = "if_trc_id", length = 36)
+    private String ifTrcId;
+
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
@@ -61,7 +66,8 @@ public class ContentsBatchLog {
 
     @Builder
     public ContentsBatchLog(Long batchId, String sourceSystem, String status, String currentStep, String rowCounts,
-                            String report, String errorMessage, OffsetDateTime startedAt, OffsetDateTime finishedAt) {
+                            String report, String ifTrcId, String errorMessage, OffsetDateTime startedAt,
+                            OffsetDateTime finishedAt) {
         this.batchId = batchId;
         this.sourceSystem = sourceSystem;
         this.status = status;
@@ -69,6 +75,7 @@ public class ContentsBatchLog {
         // null 대신 항상 "{}"를 저장 — jsonb 컬럼에 빈 값을 표현할 때 null보다 빈 객체가 다루기 쉬움.
         this.rowCounts = rowCounts != null ? rowCounts : "{}";
         this.report = report != null ? report : "{}";
+        this.ifTrcId = ifTrcId;
         this.errorMessage = errorMessage;
         this.startedAt = startedAt;
         this.finishedAt = finishedAt;
@@ -78,10 +85,11 @@ public class ContentsBatchLog {
         this.currentStep = step;
     }
 
-    public void complete(String status, String rowCounts, String report) {
+    public void complete(String status, String rowCounts, String report, String ifTrcId) {
         this.status = status;
         this.rowCounts = rowCounts;
         this.report = report;
+        this.ifTrcId = ifTrcId;
         this.finishedAt = OffsetDateTime.now();
     }
 

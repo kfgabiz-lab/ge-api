@@ -27,7 +27,8 @@ public class SsqContentsReader {
         (Integer) rs.getObject("doc_id"), rs.getString("spec_group"), rs.getString("level_1"), rs.getString("level_2"),
         rs.getString("level_3"), rs.getString("level_4"), rs.getString("doc_title"), rs.getString("doc_type"),
         (Boolean) rs.getObject("expose"), rs.getString("site_language"), rs.getString("create_datetime"),
-        rs.getString("update_datetime"), rs.getString("delete_yn"), rs.getString("nahp_display_flag"));
+        rs.getString("update_datetime"), rs.getString("delete_yn"), rs.getString("nahp_display_flag"),
+        rs.getString("if_trc_id"), toLocalDateTime(rs.getTimestamp("if_date")));
 
     private static final RowMapper<SsqFileInfoRow> FILE_ROW_MAPPER = (rs, rowNum) -> new SsqFileInfoRow(
         rs.getInt("doc_id"), rs.getString("doc_type"), rs.getString("doc_title"),
@@ -35,9 +36,14 @@ public class SsqContentsReader {
         (Boolean) rs.getObject("version_expose"), (Integer) rs.getObject("file_id"), rs.getString("file_key"),
         rs.getString("file_name"), rs.getString("file_lang"), (Long) rs.getObject("file_size"),
         (Boolean) rs.getObject("file_expose"), rs.getString("size_flag"),
-        rs.getString("version_update_datetime"), rs.getString("file_upsert_datetime"));
+        rs.getString("version_update_datetime"), rs.getString("file_upsert_datetime"),
+        rs.getString("if_trc_id"), toLocalDateTime(rs.getTimestamp("if_date")));
 
     private final JdbcTemplate jdbcTemplate;
+
+    private static java.time.LocalDateTime toLocalDateTime(java.sql.Timestamp ts) {
+        return ts != null ? ts.toLocalDateTime() : null;
+    }
 
     /**
      * 미처리 행 중 복합키(doc_id, spec_group, level_1~4) 중복 목록 조회(로그용) — quarantineDuplicateKeys()와 짝.
@@ -50,7 +56,7 @@ public class SsqContentsReader {
     public List<Object[]> findDuplicateKeyRows() {
         return jdbcTemplate.query(
             "SELECT extra.doc_id, extra.spec_group, extra.level_1, extra.level_2, extra.level_3, extra.level_4, "
-                + "extra.if_date, kept.if_date AS kept_if_date "
+                + "extra.if_date, kept.if_date AS kept_if_date, extra.if_trc_id "
                 + "FROM if_r_ssq_document extra "
                 + "JOIN (SELECT DISTINCT ON (doc_id, spec_group, level_1, level_2, level_3, level_4) "
                 + "        doc_id, spec_group, level_1, level_2, level_3, level_4, if_date, ctid "
@@ -62,7 +68,8 @@ public class SsqContentsReader {
                 + "  AND kept.level_3 IS NOT DISTINCT FROM extra.level_3 AND kept.level_4 IS NOT DISTINCT FROM extra.level_4 "
                 + "WHERE extra.if_result = 'N' AND extra.ctid <> kept.ctid",
             (rs, rowNum) -> new Object[]{rs.getObject("doc_id"), rs.getObject("spec_group"), rs.getObject("level_1"),
-                rs.getObject("level_2"), rs.getObject("level_3"), rs.getObject("level_4"), rs.getTimestamp("kept_if_date")});
+                rs.getObject("level_2"), rs.getObject("level_3"), rs.getObject("level_4"), rs.getTimestamp("kept_if_date"),
+                rs.getString("if_trc_id")});
     }
 
     /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingDocumentGroups() 호출 전에 먼저 실행해야 한다 */
@@ -80,7 +87,7 @@ public class SsqContentsReader {
         Map<Integer, List<SsqDocumentRow>> groups = new LinkedHashMap<>();
         List<SsqDocumentRow> rows = jdbcTemplate.query(
             "SELECT doc_id, spec_group, level_1, level_2, level_3, level_4, doc_title, doc_type, expose, "
-                + "site_language, create_datetime, update_datetime, delete_yn, nahp_display_flag "
+                + "site_language, create_datetime, update_datetime, delete_yn, nahp_display_flag, if_trc_id, if_date "
                 + "FROM if_r_ssq_document WHERE if_result = ? ORDER BY doc_id",
             DOCUMENT_ROW_MAPPER, PENDING);
         for (SsqDocumentRow row : rows) {
@@ -94,7 +101,7 @@ public class SsqContentsReader {
         List<SsqFileInfoRow> rows = jdbcTemplate.query(
             "SELECT doc_id, doc_type, doc_title, version_id, version_name, version_desc, version_expose, "
                 + "file_id, file_key, file_name, file_lang, file_size, file_expose, size_flag, "
-                + "version_update_datetime, file_upsert_datetime "
+                + "version_update_datetime, file_upsert_datetime, if_trc_id, if_date "
                 + "FROM if_r_ssq_file_info WHERE if_result = ? ORDER BY doc_id",
             FILE_ROW_MAPPER, PENDING);
         for (SsqFileInfoRow row : rows) {

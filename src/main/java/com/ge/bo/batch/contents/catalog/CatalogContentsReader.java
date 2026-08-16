@@ -34,7 +34,8 @@ public class CatalogContentsReader {
         rs.getString("data_code"), rs.getString("use_yn"), rs.getString("prt_yymm"), rs.getString("prt_ver"),
         rs.getString("nahp_disp_yn"), rs.getString("ctp_disp_yn"), rs.getString("nahp_lang"), rs.getString("nahp_title"),
         toLocalDateTime(rs.getTimestamp("updated_date")), rs.getObject("nahp_video_prod_standard", Short.class),
-        rs.getString("nahp_level1_id"), rs.getString("nahp_level2_id"), rs.getString("nahp_level3_id"));
+        rs.getString("nahp_level1_id"), rs.getString("nahp_level2_id"), rs.getString("nahp_level3_id"), rs.getString("prt_id"),
+        rs.getString("if_trc_id"), toLocalDateTime(rs.getTimestamp("if_date")));
 
     private final JdbcTemplate jdbcTemplate;
     private final IfCatalogFileInfoRepository ifCatalogFileInfoRepository;
@@ -53,7 +54,7 @@ public class CatalogContentsReader {
     @Transactional(readOnly = true)
     public List<Object[]> findDuplicateKeyRows() {
         return jdbcTemplate.query(
-            "SELECT extra.ctlg_code, extra.nahp_level_seq, kept.if_date AS kept_if_date "
+            "SELECT extra.ctlg_code, extra.nahp_level_seq, kept.if_date AS kept_if_date, extra.if_trc_id "
                 + "FROM if_r_catalog_info extra "
                 + "JOIN (SELECT DISTINCT ON (ctlg_code, nahp_level_seq) ctlg_code, nahp_level_seq, if_date, ctid "
                 + "      FROM if_r_catalog_info WHERE if_result = 'N' "
@@ -61,7 +62,8 @@ public class CatalogContentsReader {
                 + "     ) kept "
                 + "  ON kept.ctlg_code = extra.ctlg_code AND kept.nahp_level_seq IS NOT DISTINCT FROM extra.nahp_level_seq "
                 + "WHERE extra.if_result = 'N' AND extra.ctid <> kept.ctid",
-            (rs, rowNum) -> new Object[]{rs.getObject("ctlg_code"), rs.getObject("nahp_level_seq"), rs.getTimestamp("kept_if_date")});
+            (rs, rowNum) -> new Object[]{rs.getObject("ctlg_code"), rs.getObject("nahp_level_seq"), rs.getTimestamp("kept_if_date"),
+                rs.getString("if_trc_id")});
     }
 
     /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingHeaderGroups() 호출 전에 먼저 실행해야 한다 */
@@ -79,7 +81,8 @@ public class CatalogContentsReader {
         List<CatalogHeaderRow> rows = jdbcTemplate.query(
             "SELECT ctlg_code, nahp_level_seq, ctlg_name, data_code, use_yn, prt_yymm, prt_ver, nahp_disp_yn, "
                 + "ctp_disp_yn, nahp_lang, nahp_title, updated_date, nahp_video_prod_standard, nahp_level1_id, "
-                + "nahp_level2_id, nahp_level3_id FROM if_r_catalog_info WHERE if_result = ? ORDER BY ctlg_code",
+                + "nahp_level2_id, nahp_level3_id, prt_id, if_trc_id, if_date "
+                + "FROM if_r_catalog_info WHERE if_result = ? ORDER BY ctlg_code",
             HEADER_ROW_MAPPER, PENDING);
         for (CatalogHeaderRow row : rows) {
             groups.computeIfAbsent(row.ctlgCode(), k -> new ArrayList<>()).add(row);

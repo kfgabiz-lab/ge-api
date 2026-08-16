@@ -72,6 +72,9 @@ public class CertiContentsBatchService {
             Map<String, List<CertiRow>> groups = reader.loadPendingGroups();
             tally.receivedRowCount = groups.values().stream().mapToInt(List::size).sum();
             tally.receivedDocumentCount = groups.size();
+            // 이번 배치가 실제로 조회한 원천 행 중 if_date가 가장 최근인 행의 if_trc_id를 배치로그에 남긴다
+            groups.values().stream().flatMap(List::stream)
+                .forEach(row -> tally.considerTrcId(row.ifTrcId(), row.ifDate()));
 
             markStep(batchLog, "UPSERT");
             Set<Long> cleanSuccessContentsIds = new LinkedHashSet<>();
@@ -85,7 +88,8 @@ public class CertiContentsBatchService {
 
             markStep(batchLog, "REPORT");
             String status = (tally.failedDocCount == 0 && tally.partialDocCount == 0) ? "SUCCESS" : "PARTIAL_SUCCESS";
-            batchLog.complete(status, jsonSupport.toJson(tally.toRowCounts()), jsonSupport.toJson(tally.toReport(deletedCount)));
+            batchLog.complete(status, jsonSupport.toJson(tally.toRowCounts()), jsonSupport.toJson(tally.toReport(deletedCount)),
+                tally.latestTrcId);
             batchLogRepository.save(batchLog);
             log.info("CERTI 콘텐츠 배치 완료 batchId={} status={} success={} partial={} failed={}",
                 batchId, status, tally.successDocCount, tally.partialDocCount, tally.failedDocCount);
@@ -116,8 +120,8 @@ public class CertiContentsBatchService {
             result = converter.convert(certiNo, bi, rows);
         } catch (RuntimeException e) {
             log.warn("CERTI 문서 변환 중 예기치 못한 오류 {}", sourceDocKey, e);
-            saveFailRow(batchId, "if_r_certi_master", sourceDocKey, sourceDocKey, "CONVERT", "UNEXPECTED_ERROR",
-                e.getMessage(), Map.of("certiNo", certiNo, "bi", bi));
+            saveFailRow(batchId, "if_r_certi_master", sourceDocKey, sourceDocKey, first.ifTrcId(), "CONVERT",
+                "UNEXPECTED_ERROR", e.getMessage(), Map.of("certiNo", certiNo, "bi", bi));
             reader.markIfResult(certiNo, bi, "E");
             tally.failedDocCount++;
             tally.quarantineCount++;
@@ -126,8 +130,8 @@ public class CertiContentsBatchService {
 
         if (!result.hasDocument()) {
             for (RowFailure f : result.rowFailures()) {
-                saveFailRow(batchId, f.sourceTable(), sourceDocKey, f.sourceRowKey(), "CONVERT", f.failCode(),
-                    f.failDetail(), f.rawData());
+                saveFailRow(batchId, f.sourceTable(), sourceDocKey, f.sourceRowKey(), first.ifTrcId(), "CONVERT",
+                    f.failCode(), f.failDetail(), f.rawData());
             }
             reader.markIfResult(certiNo, bi, "E");
             tally.failedDocCount++;
@@ -140,7 +144,7 @@ public class CertiContentsBatchService {
             counts = writer.writeDocument(result.document(), batchId);
         } catch (RuntimeException e) {
             log.warn("CERTI 문서 저장 실패 {}", sourceDocKey, e);
-            saveFailRow(batchId, "contents_master", sourceDocKey, sourceDocKey, "UPSERT", "UPSERT_ERROR",
+            saveFailRow(batchId, "contents_master", sourceDocKey, sourceDocKey, first.ifTrcId(), "UPSERT", "UPSERT_ERROR",
                 e.getMessage(), Map.of("certiNo", certiNo, "bi", bi));
             reader.markIfResult(certiNo, bi, "E");
             tally.failedDocCount++;
@@ -149,8 +153,8 @@ public class CertiContentsBatchService {
         }
 
         for (RowFailure f : result.rowFailures()) {
-            saveFailRow(batchId, f.sourceTable(), sourceDocKey, f.sourceRowKey(), "CONVERT", f.failCode(),
-                f.failDetail(), f.rawData());
+            saveFailRow(batchId, f.sourceTable(), sourceDocKey, f.sourceRowKey(), first.ifTrcId(), "CONVERT",
+                f.failCode(), f.failDetail(), f.rawData());
         }
         tally.reportNotes.addAll(result.reportNotes());
         tally.accumulate(counts);
@@ -235,9 +239,10 @@ public class CertiContentsBatchService {
             String bi = String.valueOf(row[1]);
             Object levelSeq = row[2];
             Object keptIfDate = row[3];
+            String ifTrcId = (String) row[4];
             String sourceDocKey = certiNo + "|" + bi;
             saveFailRow(batchId, "if_r_certi_master", sourceDocKey, sourceDocKey + ", nahp_level_seq=" + levelSeq,
-                "CLEANSE", "DUPLICATE_KEY",
+                ifTrcId, "CLEANSE", "DUPLICATE_KEY",
                 "동일 복합키(certi_no+bi+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리"
                     + (keptIfDate != null ? " (채택된 행 if_date=" + keptIfDate + ")" : ""),
                 Map.of("certiNo", certiNo, "bi", bi, "nahpLevelSeq", String.valueOf(levelSeq), "keptIfDate", String.valueOf(keptIfDate)));
@@ -250,13 +255,14 @@ public class CertiContentsBatchService {
     }
 
     private void saveFailRow(long batchId, String sourceTable, String sourceDocKey, String sourceRowKey,
-                              String failStep, String failCode, String failDetail, Map<String, Object> rawData) {
+                              String ifTrcId, String failStep, String failCode, String failDetail, Map<String, Object> rawData) {
         failRowRepository.save(ContentsIfFailRow.builder()
             .batchId(batchId)
             .sourceSystem(SOURCE_SYSTEM)
             .sourceTable(sourceTable)
             .sourceDocKey(sourceDocKey)
             .sourceRowKey(sourceRowKey)
+            .ifTrcId(ifTrcId)
             .failStep(failStep)
             .failCode(failCode)
             .failDetail(failDetail)
@@ -280,7 +286,20 @@ public class CertiContentsBatchService {
         int versionUpdate;
         int fileInsert;
         int fileUpdate;
+        String latestTrcId;
+        java.time.LocalDateTime latestIfDate;
         final List<String> reportNotes = new ArrayList<>();
+
+        /** if_date가 가장 최근인 행의 if_trc_id를 유지한다(마지막 전송분만 남김) */
+        void considerTrcId(String trcId, java.time.LocalDateTime ifDate) {
+            if (trcId == null || ifDate == null) {
+                return;
+            }
+            if (latestIfDate == null || ifDate.isAfter(latestIfDate)) {
+                latestIfDate = ifDate;
+                latestTrcId = trcId;
+            }
+        }
 
         void accumulate(WriteCounts c) {
             masterInsert += c.masterInsert();

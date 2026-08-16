@@ -7,5 +7,6 @@ package com.ge.bo.batch.contents.ssq;
  */
 public record SsqDocumentRow(Integer docId, String specGroup, String level1, String level2, String level3,
                               String level4, String docTitle, String docType, Boolean expose, String siteLanguage,
-                              String createDatetime, String updateDatetime, String deleteYn, String nahpDisplayFlag) {
+                              String createDatetime, String updateDatetime, String deleteYn, String nahpDisplayFlag,
+                              String ifTrcId, java.time.LocalDateTime ifDate) {
 }

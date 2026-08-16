@@ -10,5 +10,6 @@ import java.time.LocalDateTime;
 public record CatalogHeaderRow(String ctlgCode, Short nahpLevelSeq, String ctlgName, String dataCode, String useYn,
                                 String prtYymm, String prtVer, String nahpDispYn, String ctpDispYn, String nahpLang,
                                 String nahpTitle, LocalDateTime updatedDate, Short nahpVideoProdStandard,
-                                String nahpLevel1Id, String nahpLevel2Id, String nahpLevel3Id) {
+                                String nahpLevel1Id, String nahpLevel2Id, String nahpLevel3Id, String prtId,
+                                String ifTrcId, LocalDateTime ifDate) {
 }

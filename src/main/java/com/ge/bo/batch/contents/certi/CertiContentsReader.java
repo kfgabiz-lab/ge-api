@@ -37,12 +37,17 @@ public class CertiContentsReader {
         toLocalDate(rs.getDate("certi_disuse_date")), rs.getString("last_certi_file"),
         toLocalDate(rs.getDate("update_date")), rs.getString("nahp_disp_flag"), rs.getString("cportal_disp_flag"),
         rs.getString("nahp_title"), rs.getString("nahp_lang"), rs.getString("nahp_level1_id"),
-        rs.getString("nahp_level2_id"), rs.getString("nahp_level3_id"));
+        rs.getString("nahp_level2_id"), rs.getString("nahp_level3_id"), rs.getString("if_trc_id"),
+        toLocalDateTime(rs.getTimestamp("if_date")));
 
     private final JdbcTemplate jdbcTemplate;
 
     private static LocalDate toLocalDate(Date date) {
         return date != null ? date.toLocalDate() : null;
+    }
+
+    private static java.time.LocalDateTime toLocalDateTime(java.sql.Timestamp ts) {
+        return ts != null ? ts.toLocalDateTime() : null;
     }
 
     /**
@@ -54,7 +59,7 @@ public class CertiContentsReader {
     @Transactional(readOnly = true)
     public List<Object[]> findDuplicateKeyRows() {
         return jdbcTemplate.query(
-            "SELECT extra.certi_no, extra.bi, extra.nahp_level_seq, kept.if_date AS kept_if_date "
+            "SELECT extra.certi_no, extra.bi, extra.nahp_level_seq, kept.if_date AS kept_if_date, extra.if_trc_id "
                 + "FROM if_r_certi_master extra "
                 + "JOIN (SELECT DISTINCT ON (certi_no, bi, nahp_level_seq) certi_no, bi, nahp_level_seq, if_date, ctid "
                 + "      FROM if_r_certi_master WHERE if_result = 'N' "
@@ -64,7 +69,7 @@ public class CertiContentsReader {
                 + "  AND kept.nahp_level_seq IS NOT DISTINCT FROM extra.nahp_level_seq "
                 + "WHERE extra.if_result = 'N' AND extra.ctid <> kept.ctid",
             (rs, rowNum) -> new Object[]{rs.getObject("certi_no"), rs.getObject("bi"), rs.getObject("nahp_level_seq"),
-                rs.getTimestamp("kept_if_date")});
+                rs.getTimestamp("kept_if_date"), rs.getString("if_trc_id")});
     }
 
     /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingGroups() 호출 전에 먼저 실행해야 한다 */
@@ -85,7 +90,8 @@ public class CertiContentsReader {
                 + "certi_orgname, certi_begin_date, last_certi_renewal_date, last_certi_exp_date, last_certi_acq_no, "
                 + "pdt_bigclass, pdt_bigclassname, pdt_middleclass, pdt_middleclassname, pdt_series, pdt_series_name, "
                 + "pdt_name, certi_status, certi_disuse_date, last_certi_file, update_date, nahp_disp_flag, "
-                + "cportal_disp_flag, nahp_title, nahp_lang, nahp_level1_id, nahp_level2_id, nahp_level3_id "
+                + "cportal_disp_flag, nahp_title, nahp_lang, nahp_level1_id, nahp_level2_id, nahp_level3_id, "
+                + "if_trc_id, if_date "
                 + "FROM if_r_certi_master WHERE if_result = ? ORDER BY certi_no, bi",
             ROW_MAPPER, PENDING);
         for (CertiRow row : rows) {

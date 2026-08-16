@@ -50,6 +50,10 @@ public class ContentsIfFailRow {
     @Column(name = "source_row_key", length = 200)
     private String sourceRowKey;
 
+    /** 실패 행의 EAI 전송 추적 ID — 1개 물리 원천 행에 1개 값 */
+    @Column(name = "if_trc_id", length = 36, updatable = false)
+    private String ifTrcId;
+
     /** CLEANSE / CONVERT / UPSERT */
     @Column(name = "fail_step", nullable = false, length = 30, updatable = false)
     private String failStep;
@@ -81,14 +85,16 @@ public class ContentsIfFailRow {
 
     @Builder
     public ContentsIfFailRow(Long id, Long batchId, String sourceSystem, String sourceTable, String sourceDocKey,
-                             String sourceRowKey, String failStep, String failCode, String failDetail, String rawData,
-                             String status, String resolvedNote, OffsetDateTime resolvedAt, OffsetDateTime createdAt) {
+                             String sourceRowKey, String ifTrcId, String failStep, String failCode, String failDetail,
+                             String rawData, String status, String resolvedNote, OffsetDateTime resolvedAt,
+                             OffsetDateTime createdAt) {
         this.id = id;
         this.batchId = batchId;
         this.sourceSystem = sourceSystem;
         this.sourceTable = sourceTable;
         this.sourceDocKey = sourceDocKey;
         this.sourceRowKey = sourceRowKey;
+        this.ifTrcId = ifTrcId;
         this.failStep = failStep;
         this.failCode = failCode;
         this.failDetail = failDetail;

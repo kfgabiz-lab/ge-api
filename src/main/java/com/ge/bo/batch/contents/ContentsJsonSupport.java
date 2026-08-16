@@ -1,6 +1,7 @@
 package com.ge.bo.batch.contents;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,19 @@ public class ContentsJsonSupport {
         } catch (JsonProcessingException e) {
             throw new ContentsIngestException("CONVERT", "ATTRS_SERIALIZE_FAILED", null, null, null, null,
                 "attrs/raw_data JSON 직렬화 실패: " + e.getMessage());
+        }
+    }
+
+    /** attrs 등 jsonb 컬럼을 다시 읽어올 때 사용 — null/빈 문자열은 빈 Map으로 취급 */
+    public Map<String, Object> fromJson(String value) {
+        if (value == null || value.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(value, new TypeReference<Map<String, Object>>() { });
+        } catch (JsonProcessingException e) {
+            throw new ContentsIngestException("CONVERT", "ATTRS_DESERIALIZE_FAILED", null, null, null, null,
+                "attrs JSON 역직렬화 실패: " + e.getMessage());
         }
     }
 }
