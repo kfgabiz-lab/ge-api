@@ -435,7 +435,7 @@ VALUES
  true, 'SENTENCE', 'system', NOW(), 'system', NOW()),
 
 ('validation.id.pattern',
- '영문, 숫자만 입력해 주세요.',
+ '영문, 숫자, 마침표(.)만 입력해 주세요.',
  'Only letters and numbers are allowed.',
  true, 'SENTENCE', 'system', NOW(), 'system', NOW()),
 
