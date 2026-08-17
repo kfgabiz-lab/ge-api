@@ -83,9 +83,11 @@ public class PageDataService {
   private static final Set<String> FO_PUBLISH_GATED_SLUGS =
       Set.of("press-data", "blog-data", "articles-data", "events-data");
 
-  private static final String FO_PUBLISH_GATE_SQL =
-        " AND data_json->(replace(data_slug,'-data','')) ->> 'is_visible' = '001'"
-      + " AND substring(regexp_replace(data_json->(replace(data_slug,'-data',''))->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today";
+  private String publishGateSql() {
+    String fromExpr = toRangeBoundExpr("data_json->(replace(data_slug,'-data',''))->>'publish_dttm'", false);
+    return " AND data_json->(replace(data_slug,'-data','')) ->> 'is_visible' = '001'"
+        + " AND " + fromExpr + " <= :nowValue";
+  }
 
   /**
    * FO 공개 API에서 게시일(publish_dttm) 없이 노출여부(is_visible)만 서버가 강제하는 slug → JSON 섹션명 매핑.
@@ -209,7 +211,7 @@ public class PageDataService {
     }
     appendWhereConditions(whereClause, searchParams);
     if (enforcePublishGate && FO_PUBLISH_GATED_SLUGS.contains(slug)) {
-      whereClause.append(FO_PUBLISH_GATE_SQL);
+      whereClause.append(publishGateSql());
     }
     if (enforcePublishGate) {
       whereClause.append(visibilityGateSql(slug));
@@ -358,7 +360,7 @@ public class PageDataService {
     }
     appendWhereConditionsDatetime(whereClause, searchParams);
     if (FO_PUBLISH_GATED_SLUGS.contains(slug)) {
-      whereClause.append(FO_PUBLISH_GATE_SQL);
+      whereClause.append(publishGateSql());
     }
     whereClause.append(visibilityGateSql(slug));
     whereClause.append(periodGateSql(slug));
@@ -482,7 +484,7 @@ public class PageDataService {
     }
     appendWhereConditions(whereClause, statusParams);
     if (FO_PUBLISH_GATED_SLUGS.contains(slug) && !isValidPreviewToken(allParams.get("previewToken"), slug, id)) {
-      whereClause.append(FO_PUBLISH_GATE_SQL);
+      whereClause.append(publishGateSql());
     }
     whereClause.append(visibilityGateSql(slug));
 
@@ -538,7 +540,7 @@ public class PageDataService {
     }
     appendWhereConditions(baseWhere, statusParams);
     if (FO_PUBLISH_GATED_SLUGS.contains(slug)) {
-      baseWhere.append(FO_PUBLISH_GATE_SQL);
+      baseWhere.append(publishGateSql());
     }
     baseWhere.append(visibilityGateSql(slug));
 
@@ -653,6 +655,7 @@ public class PageDataService {
     @Transactional(readOnly = true)
     public List<ProductInsightRowResponse> findProductInsights(Long productId, Long siteId) {
         String section = "data_json->(replace(data_slug,'-data',''))";
+        String fromExpr = toRangeBoundExpr(section + "->>'publish_dttm'", false);
         String sql = "SELECT id, data_slug,"
             + "  " + section + "->>'title'        AS title,"
             + "  " + section + "->>'publish_dttm' AS publish_dttm,"
@@ -662,14 +665,14 @@ public class PageDataService {
             + "  AND is_deleted = false"
             + "  AND data_json->'product_list' @> to_jsonb(:productId)"
             + "  AND " + section + "->>'is_visible' = '001'"
-            + "  AND substring(regexp_replace(" + section + "->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today"
+            + "  AND " + fromExpr + " <= :nowValue"
             + "  AND (site_id = :siteId OR site_id IS NULL)"
             + " ORDER BY " + section + "->>'publish_dttm' DESC, id DESC"
             + " LIMIT 3";
 
         Query query = entityManager.createNativeQuery(sql);
         query.setParameter("productId", productId);
-        query.setParameter("today", resolveTodayParam(siteId));
+        query.setParameter("nowValue", resolveNowParam(siteId));
         query.setParameter("siteId", siteId);
 
         @SuppressWarnings("unchecked")
@@ -1157,6 +1160,7 @@ public class PageDataService {
 
     private List<ProductInsightRowResponse> queryCategoryInsights(String cte, Long categoryId, Long siteId) {
         String section = "n.data_json->(replace(n.data_slug,'-data',''))";
+        String fromExpr = toRangeBoundExpr(section + "->>'publish_dttm'", false);
         String sql = cte
             + ", matched AS ("
             + "   SELECT DISTINCT n.id"
@@ -1174,14 +1178,14 @@ public class PageDataService {
             + " JOIN matched m ON m.id = n.id"
             + " WHERE n.is_deleted = false"
             + "  AND " + section + "->>'is_visible' = '001'"
-            + "  AND substring(regexp_replace(" + section + "->>'publish_dttm', '[^0-9]', '', 'g'), 1, 8) <= :today"
+            + "  AND " + fromExpr + " <= :nowValue"
             + "  AND (n.site_id = :siteId OR n.site_id IS NULL)"
             + " ORDER BY " + section + "->>'publish_dttm' DESC, n.id DESC"
             + " LIMIT 3";
 
         Query query = entityManager.createNativeQuery(sql);
         query.setParameter("categoryId", String.valueOf(categoryId));
-        query.setParameter("today", resolveTodayParam(siteId));
+        query.setParameter("nowValue", resolveNowParam(siteId));
         query.setParameter("siteId", siteId);
 
         @SuppressWarnings("unchecked")
@@ -2109,6 +2113,30 @@ public class PageDataService {
         + " END)";
   }
 
+  /**
+   * _from/_to/_gte/_lte 날짜 범위 검색조건 공통 처리.
+   * auditBaseKey가 감사(created_at/updated_at) 컬럼이면 기존 CAST timestamptz 비교를 그대로 사용하고,
+   * 그 외(JSON 저장값)에는 toRangeBoundExpr로 저장값 쪽을 14자리 숫자로 정규화해 비교한다.
+   * (순수 날짜만 저장된 값과 시간까지 포함된 검색조건 값 사이의 문자열 길이 차이로 인한 오매칭 방지)
+   * isLowerBound=true면 >=(_from/_gte), false면 <=(_to/_lte).
+   */
+  private void appendDateBoundCondition(StringBuilder whereClause, String jsonFieldKey, String auditBaseKey,
+                                         String paramName, boolean isLowerBound) {
+    String op = isLowerBound ? ">=" : "<=";
+    String auditCol = toAuditDateColumn(auditBaseKey);
+    if (auditCol != null) {
+      whereClause.append(" AND ").append(auditCol).append(" ").append(op)
+          .append(" CAST(:").append(paramName).append(" AS timestamptz)");
+    } else {
+      String topExpr = toRangeBoundExpr("data_json->>'" + jsonFieldKey + "'", false);
+      String nestedExpr = toRangeBoundExpr("kv.value->>'" + jsonFieldKey + "'", false);
+      whereClause.append(" AND (").append(topExpr).append(" ").append(op).append(" :").append(paramName)
+          .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
+          .append(" WHERE jsonb_typeof(kv.value) = 'object'")
+          .append(" AND ").append(nestedExpr).append(" ").append(op).append(" :").append(paramName).append("))");
+    }
+  }
+
   /** toRangeBoundExpr의 Java 측 동등 구현(응답 후처리용 뱃지 계산에서 사용) */
   private static String padRangeBound(String raw, boolean isUpper) {
     if (raw == null) return null;
@@ -2591,15 +2619,7 @@ public class PageDataService {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String paramName = "p_" + key;
         String baseKey = key.substring(0, key.length() - 5);
-        String auditCol = toAuditDateColumn(baseKey);
-        if (auditCol != null) {
-          whereClause.append(" AND ").append(auditCol).append(" >= CAST(:").append(paramName).append(" AS timestamptz)");
-        } else {
-          whereClause.append(" AND (data_json->>'").append(key).append("' >= :").append(paramName)
-              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-              .append(" AND kv.value->>'").append(key).append("' >= :").append(paramName).append("))");
-        }
+        appendDateBoundCondition(whereClause, key, baseKey, paramName, true);
         return;
       }
 
@@ -2607,15 +2627,7 @@ public class PageDataService {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String paramName = "p_" + key;
         String baseKey = key.substring(0, key.length() - 3);
-        String auditCol = toAuditDateColumn(baseKey);
-        if (auditCol != null) {
-          whereClause.append(" AND ").append(auditCol).append(" <= CAST(:").append(paramName).append(" AS timestamptz)");
-        } else {
-          whereClause.append(" AND (data_json->>'").append(key).append("' <= :").append(paramName)
-              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-              .append(" AND kv.value->>'").append(key).append("' <= :").append(paramName).append("))");
-        }
+        appendDateBoundCondition(whereClause, key, baseKey, paramName, false);
         return;
       }
 
@@ -2623,15 +2635,7 @@ public class PageDataService {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String fieldKey = key.substring(0, key.length() - 4);
         String paramName = "p_" + key;
-        String auditCol = toAuditDateColumn(fieldKey);
-        if (auditCol != null) {
-          whereClause.append(" AND ").append(auditCol).append(" >= CAST(:").append(paramName).append(" AS timestamptz)");
-        } else {
-          whereClause.append(" AND (data_json->>'").append(fieldKey).append("' >= :").append(paramName)
-              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-              .append(" AND kv.value->>'").append(fieldKey).append("' >= :").append(paramName).append("))");
-        }
+        appendDateBoundCondition(whereClause, fieldKey, fieldKey, paramName, true);
         return;
       }
 
@@ -2639,15 +2643,7 @@ public class PageDataService {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String fieldKey = key.substring(0, key.length() - 4);
         String paramName = "p_" + key;
-        String auditCol = toAuditDateColumn(fieldKey);
-        if (auditCol != null) {
-          whereClause.append(" AND ").append(auditCol).append(" <= CAST(:").append(paramName).append(" AS timestamptz)");
-        } else {
-          whereClause.append(" AND (data_json->>'").append(fieldKey).append("' <= :").append(paramName)
-              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-              .append(" AND kv.value->>'").append(fieldKey).append("' <= :").append(paramName).append("))");
-        }
+        appendDateBoundCondition(whereClause, fieldKey, fieldKey, paramName, false);
         return;
       }
 
@@ -2867,15 +2863,7 @@ public class PageDataService {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String paramName = "p_" + key;
         String baseKey = key.substring(0, key.length() - 5);
-        String auditCol = toAuditDateColumn(baseKey);
-        if (auditCol != null) {
-          whereClause.append(" AND ").append(auditCol).append(" >= CAST(:").append(paramName).append(" AS timestamptz)");
-        } else {
-          whereClause.append(" AND (data_json->>'").append(key).append("' >= :").append(paramName)
-              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-              .append(" AND kv.value->>'").append(key).append("' >= :").append(paramName).append("))");
-        }
+        appendDateBoundCondition(whereClause, key, baseKey, paramName, true);
         return;
       }
 
@@ -2883,15 +2871,7 @@ public class PageDataService {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String paramName = "p_" + key;
         String baseKey = key.substring(0, key.length() - 3);
-        String auditCol = toAuditDateColumn(baseKey);
-        if (auditCol != null) {
-          whereClause.append(" AND ").append(auditCol).append(" <= CAST(:").append(paramName).append(" AS timestamptz)");
-        } else {
-          whereClause.append(" AND (data_json->>'").append(key).append("' <= :").append(paramName)
-              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-              .append(" AND kv.value->>'").append(key).append("' <= :").append(paramName).append("))");
-        }
+        appendDateBoundCondition(whereClause, key, baseKey, paramName, false);
         return;
       }
 
@@ -2899,15 +2879,7 @@ public class PageDataService {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String fieldKey = key.substring(0, key.length() - 4);
         String paramName = "p_" + key;
-        String auditCol = toAuditDateColumn(fieldKey);
-        if (auditCol != null) {
-          whereClause.append(" AND ").append(auditCol).append(" >= CAST(:").append(paramName).append(" AS timestamptz)");
-        } else {
-          whereClause.append(" AND (data_json->>'").append(fieldKey).append("' >= :").append(paramName)
-              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-              .append(" AND kv.value->>'").append(fieldKey).append("' >= :").append(paramName).append("))");
-        }
+        appendDateBoundCondition(whereClause, fieldKey, fieldKey, paramName, true);
         return;
       }
 
@@ -2915,15 +2887,7 @@ public class PageDataService {
         if (!key.matches("[a-zA-Z0-9_]+")) return;
         String fieldKey = key.substring(0, key.length() - 4);
         String paramName = "p_" + key;
-        String auditCol = toAuditDateColumn(fieldKey);
-        if (auditCol != null) {
-          whereClause.append(" AND ").append(auditCol).append(" <= CAST(:").append(paramName).append(" AS timestamptz)");
-        } else {
-          whereClause.append(" AND (data_json->>'").append(fieldKey).append("' <= :").append(paramName)
-              .append(" OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv")
-              .append(" WHERE jsonb_typeof(kv.value) = 'object'")
-              .append(" AND kv.value->>'").append(fieldKey).append("' <= :").append(paramName).append("))");
-        }
+        appendDateBoundCondition(whereClause, fieldKey, fieldKey, paramName, false);
         return;
       }
 
@@ -3658,7 +3622,6 @@ public class PageDataService {
    * paramSeq_idx 순으로 파라미터명을 채번하므로 호출부는 동일 규칙으로 값 바인딩해야 한다.
    */
   private String buildCondTokenSql(List<CondToken> tokens, String paramPrefix) {
-    String today = ":today";
     String now = ":nowValue";
     List<String> topParts = new ArrayList<>();
     List<String> nestedParts = new ArrayList<>();
@@ -3667,8 +3630,20 @@ public class PageDataService {
       String pName = paramPrefix + "_" + idx;
       String sqlOp = "!=".equals(t.op()) ? "<>" : t.op();
       if (t.isToday()) {
-        topParts.add("substring(regexp_replace(data_json->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
-        nestedParts.add("substring(regexp_replace(kv.value->>'" + t.key() + "', '[^0-9]', '', 'g'), 1, 8) " + sqlOp + " " + today);
+        // isUpper는 연산자가 아니라 비교 대상 필드가 "_from"(시작일→하한)/"_to"(종료일→상한)인지로 판단한다.
+        // buildDateRangeStatusSortExpr(FE utils.ts)가 만드는 "배제형" 조건식({from}>today()?...:{to}<today()?...)에서는
+        // 연산자와 상한/하한 방향이 반대로 뒤집히기 때문 — {from}>today()는 today()가 하한, {to}<today()는 today()가 상한이어야 맞다.
+        // "_from"/"_to" 접미사가 없는 단일 필드(예: publish_dttm)는 기존처럼 연산자 기반 판단을 유지한다.
+        boolean isUpper;
+        if (t.key().endsWith("_from")) {
+          isUpper = false;
+        } else if (t.key().endsWith("_to")) {
+          isUpper = true;
+        } else {
+          isUpper = ">".equals(t.op()) || ">=".equals(t.op());
+        }
+        topParts.add(toRangeBoundExpr("data_json->>'" + t.key() + "'", isUpper) + " " + sqlOp + " " + now);
+        nestedParts.add(toRangeBoundExpr("kv.value->>'" + t.key() + "'", isUpper) + " " + sqlOp + " " + now);
       } else if (t.isNow()) {
         topParts.add(toNowPaddedExpr("data_json->>'" + t.key() + "'") + " " + sqlOp + " " + now);
         nestedParts.add(toNowPaddedExpr("kv.value->>'" + t.key() + "'") + " " + sqlOp + " " + now);
@@ -3811,7 +3786,7 @@ public class PageDataService {
         String baseKey = key.endsWith("_from") ? key.substring(0, key.length() - 5) : key.substring(0, key.length() - 4);
         String resolvedValue = "today()".equals(value) ? resolveTodayIsoDate(siteId) : value;
         String normalized = normalizeDateFrom(resolvedValue);
-        String bindValue = toAuditDateColumn(baseKey) != null ? toIsoTimestamp(normalized) : normalized;
+        String bindValue = toAuditDateColumn(baseKey) != null ? toIsoTimestamp(normalized) : padRangeBound(normalized, false);
         query.setParameter("p_" + key, bindValue);
         return;
       }
@@ -3821,7 +3796,7 @@ public class PageDataService {
         String baseKey = key.endsWith("_to") ? key.substring(0, key.length() - 3) : key.substring(0, key.length() - 4);
         String resolvedValue = "today()".equals(value) ? resolveTodayIsoDate(siteId) : value;
         String normalized = normalizeDateTo(resolvedValue);
-        String bindValue = toAuditDateColumn(baseKey) != null ? toIsoTimestamp(normalized) : normalized;
+        String bindValue = toAuditDateColumn(baseKey) != null ? toIsoTimestamp(normalized) : padRangeBound(normalized, true);
         query.setParameter("p_" + key, bindValue);
         return;
       }
