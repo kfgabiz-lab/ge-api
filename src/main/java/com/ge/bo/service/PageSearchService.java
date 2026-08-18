@@ -30,7 +30,7 @@ public class PageSearchService {
 
     private final CodeDetailRepository codeDetailRepository;
 
-    private static final int SNIPPET_MAX_CHARS = 200;
+    private static final int SNIPPET_MAX_CHARS = 400;
 
     private static final String PAGE_SECTION_GROUP_CODE = "PAGE_SECTION";
 
