@@ -159,13 +159,21 @@ public class GlobalExceptionHandler {
   public ResponseEntity<Map<String, Object>> handleBusinessException(
       BusinessException ex,
       HttpServletRequest request) {
-    log.error("비즈니스 예외 발생: {}", ex.getMessage());
 
     Map<String, Object> body = new HashMap<>();
     body.put("status", ex.getStatus().value());
     body.put("error", ex.getErrorCode());
     body.put("message", ex.getMessage());
     body.put("timestamp", LocalDateTime.now().toString());
+
+    // 이미지/파일 미존재(FILE_NOT_FOUND)는 빈번하게 발생하는 정상적인 404이므로
+    // 에러로그(서버 로그 ERROR 레벨 + DB error_log 테이블 저장) 대상에서 제외한다.
+    if (ErrorCode.FILE_NOT_FOUND.getCode().equals(ex.getErrorCode())) {
+      log.debug("파일/이미지 미존재: {}", ex.getMessage());
+      return ResponseEntity.status(ex.getStatus()).body(body);
+    }
+
+    log.error("비즈니스 예외 발생: {}", ex.getMessage());
 
     // 오류로그 비동기 저장 (4xx — 스택트레이스 저장 안 함)
     errorLogService.saveAsync(request.getMethod(), extractFullUrl(request), ClientIpUtils.resolve(request),
