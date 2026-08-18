@@ -3002,7 +3002,7 @@ public class PageDataService {
 
   private String buildNumericAwareOrderByExpr(String jsonTextExpr, String sortDir) {
     return "CASE WHEN " + jsonTextExpr + " ~ '^-?[0-9]+$' THEN (" + jsonTextExpr + ")::numeric END "
-        + sortDir + " NULLS LAST, " + jsonTextExpr + " " + sortDir + " NULLS LAST";
+        + sortDir + " NULLS LAST, LOWER(" + jsonTextExpr + ") COLLATE \"C\" " + sortDir + " NULLS LAST";
   }
 
   /** 정렬용 record — sql은 ORDER BY 절 전체(" ORDER BY ..." 포함), params는 dataQuery에만 바인딩(countQuery는 ORDER BY 없어 불필요) */
