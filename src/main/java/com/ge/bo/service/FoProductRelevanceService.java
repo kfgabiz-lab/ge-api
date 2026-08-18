@@ -22,51 +22,71 @@ public class FoProductRelevanceService {
 
     @Transactional(readOnly = true)
     public List<FoProductRelevanceRowResponse> findRelevantProducts(String slug, Long siteId) {
-        String productSiteCond = siteId != null ? " AND (p.site_id = :siteId OR p.site_id IS NULL)" : "";
-        String selfSiteCond = siteId != null ? " AND (site_id = :siteId OR site_id IS NULL)" : "";
-        String targetLv2SiteCond = siteId != null ? " AND (cd.site_id = :siteId OR cd.site_id IS NULL)" : "";
-        String mappingSiteCond = siteId != null ? " AND (map.site_id = :siteId OR map.site_id IS NULL)" : "";
+        String selfProductSiteCond = siteId != null ? " AND (site_id = :siteId OR site_id IS NULL)" : "";
+        String selfLeafSiteCond = siteId != null ? " AND (cd.site_id = :siteId OR cd.site_id IS NULL)" : "";
+        String lv2SiteCond = siteId != null ? " AND (cd.site_id = :siteId OR cd.site_id IS NULL)" : "";
+        String lv3SiteCond = siteId != null ? " AND (p.site_id = :siteId OR p.site_id IS NULL)" : "";
 
-        String sql = "WITH self AS ("
-            + " SELECT string_to_array(attribute01, ',') AS codes"
+        // attribute01(관련 카테고리 코드 목록)은 해당 제품을 카테고리 트리에 연결하는
+        // category-data의 leaf 행(product.depth='3')에 있다 — product-data 자신의 attribute01이 아니다.
+        // 코드가 2세그먼트(예: L05-01)면 LV2 카테고리 자신(대표이미지 포함)을, 3세그먼트(예: L06-01-01)면
+        // 그 코드를 product_code로 갖는 특정 제품(LV3)을 각각 1코드당 1행으로 반환한다.
+        String sql = "WITH self_product AS ("
+            + " SELECT id"
             + " FROM page_data"
             + " WHERE data_slug = 'product-data'"
             + "  AND is_deleted = false"
             + "  AND data_json->'seo'->>'slug' = :slug"
-            + selfSiteCond
+            + selfProductSiteCond
             + " LIMIT 1"
             + " ),"
-            + " target_lv2 AS ("
-            + " SELECT cd.id"
-            + " FROM page_data cd, self"
+            + " self_leaf AS ("
+            + " SELECT cd.attribute01"
+            + " FROM page_data cd, self_product sp"
             + " WHERE cd.data_slug = 'category-data'"
             + "  AND cd.is_deleted = false"
-            + "  AND cd.data_json->'category'->>'code' = ANY(self.codes)"
-            + "  AND cd.data_json->'category'->>'depth' = '2'"
-            + targetLv2SiteCond
+            + "  AND cd.data_json->'product'->>'depth' = '3'"
+            + "  AND cd.data_json->'product'->>'id' = sp.id::text"
+            + selfLeafSiteCond
+            + " LIMIT 1"
             + " ),"
-            + " mapping AS ("
-            + " SELECT map.data_json->'product'->>'id' AS product_id"
-            + " FROM page_data map"
-            + " JOIN target_lv2 t ON map.data_json->'product'->>'parentId' = t.id::text"
-            + " WHERE map.data_slug = 'category-data'"
-            + "  AND map.is_deleted = false"
-            + "  AND map.data_json->'product'->>'depth' = '3'"
-            + mappingSiteCond
+            + " self_codes AS ("
+            + " SELECT trim(code) AS code,"
+            + "  array_length(string_to_array(trim(code), '-'), 1) AS seg_count"
+            + " FROM self_leaf, unnest(string_to_array(self_leaf.attribute01, ',')) AS code"
             + " )"
-            + " SELECT DISTINCT p.id,"
+            + " SELECT sc.code AS code, 'LV2' AS level,"
+            + "  cd.id AS id,"
+            + "  cd.data_json->'category'->>'title'      AS title,"
+            + "  cd.data_json->'seo'->>'slug'             AS slug,"
+            + "  cd.data_json->'device_systems'->>'image' AS image,"
+            + "  NULL AS awards"
+            + " FROM self_codes sc"
+            + " JOIN page_data cd"
+            + "  ON cd.data_json->'category'->>'code' = sc.code"
+            + "  AND sc.seg_count = 2"
+            + " WHERE cd.data_slug = 'category-data'"
+            + "  AND cd.is_deleted = false"
+            + "  AND cd.data_json->'category'->>'depth'       = '2'"
+            + "  AND cd.data_json->'category'->>'is_visible'  = '001'"
+            + lv2SiteCond
+            + " UNION ALL"
+            + " SELECT sc.code AS code, 'LV3' AS level,"
+            + "  p.id AS id,"
             + "  p.data_json->'product'->>'product_name' AS title,"
             + "  p.data_json->'seo'->>'slug'             AS slug,"
             + "  p.data_json->'product_info'->>'image'   AS image,"
             + "  p.data_json->'product'->>'awards'       AS awards"
-            + " FROM mapping m"
-            + " JOIN page_data p ON p.id::text = m.product_id"
+            + " FROM self_codes sc"
+            + " JOIN page_data p"
+            + "  ON p.data_json->'product'->>'product_code' = sc.code"
+            + "  AND sc.seg_count = 3"
             + " WHERE p.data_slug = 'product-data'"
             + "  AND p.is_deleted = false"
             + "  AND p.data_json->'product'->>'is_visible'   = '001'"
             + "  AND p.data_json->'product'->>'order_status' = '01'"
-            + productSiteCond
-            + " ORDER BY p.id";
+            + lv3SiteCond
+            + " ORDER BY code";
 
         Query query = entityManager.createNativeQuery(sql);
         query.setParameter("slug", slug);
@@ -80,11 +100,12 @@ public class FoProductRelevanceService {
         List<FoProductRelevanceRowResponse> result = new ArrayList<>();
         for (Object[] row : rows) {
             result.add(new FoProductRelevanceRowResponse(
-                row[0] != null ? ((Number) row[0]).longValue() : null,
-                row[1] != null ? row[1].toString() : null,
-                row[2] != null ? row[2].toString() : null,
+                row[2] != null ? ((Number) row[2]).longValue() : null,
                 row[3] != null ? row[3].toString() : null,
-                row[4] != null ? row[4].toString() : null
+                row[4] != null ? row[4].toString() : null,
+                row[5] != null ? row[5].toString() : null,
+                row[6] != null ? row[6].toString() : null,
+                row[1] != null ? row[1].toString() : null
             ));
         }
         return result;

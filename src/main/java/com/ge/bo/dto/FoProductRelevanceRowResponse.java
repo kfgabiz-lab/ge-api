@@ -5,5 +5,6 @@ public record FoProductRelevanceRowResponse(
         String title,
         String slug,
         String image,
-        String awards
+        String awards,
+        String level
 ) {}
