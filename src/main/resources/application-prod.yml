@@ -52,7 +52,7 @@ server:
 
 # CORS — 운영서버 FE 주소
 cors:
-  allowed-origins: "http://localhost:3002,http://localhost:3001,https://10.153.0.22,https://nahp.ls-electric.com,https://nahp-web.ls-electric.com,https://afd-lse-nahp-crg4emfxbvfnbddy.a01.azurefd.net"
+  allowed-origins: "http://localhost:3002,http://localhost:3001,https://10.153.0.22,https://nahp.ls-electric.com,https://nahp-web.ls-electric.com,https://119.197.90.116,http://119.197.90.116"
 
 # 파일 업로드 루트 경로
 file:
