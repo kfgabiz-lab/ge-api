@@ -61,6 +61,21 @@ public class DownloadCenterService {
       + "       AND cd.is_deleted = false"
       + "       AND cd.group_id = (SELECT id FROM code_group WHERE group_code = '" + DOC_TYPE_GROUP_CODE + "' AND is_deleted = false)";
 
+    /** 검색어(:q)가 문서유형 표시명(code_detail.name)과 일치하는지 확인하는 EXISTS 절 */
+    private static final String DOC_TYPE_NAME_MATCH =
+        "EXISTS (SELECT 1 FROM code_detail cd WHERE cd.code = m.doc_type"
+      + " AND cd.is_active = true AND cd.is_deleted = false"
+      + " AND cd.group_id = (SELECT id FROM code_group WHERE group_code = '" + DOC_TYPE_GROUP_CODE + "' AND is_deleted = false)"
+      + " AND cd.name ILIKE :q ESCAPE '\\')";
+
+    /** 검색어(:q)가 문서에 첨부된 파일명(contents_file.file_name)과 일치하는지 확인하는 EXISTS 절(버전 제한 없음) */
+    private static final String FILE_NAME_MATCH =
+        "EXISTS (SELECT 1 FROM contents_version v"
+      + " JOIN contents_file f ON f.contents_version_id = v.id"
+      + "   AND f.file_expose = true AND f.is_deleted = false"
+      + " WHERE v.contents_id = m.id AND v.version_expose = true AND v.is_deleted = false"
+      + " AND f.file_name ILIKE :q ESCAPE '\\')";
+
     /** LV3 제품코드(예: L01-15-01)로 정확히 매핑된 콘텐츠뿐 아니라, LV3가 배정되지 않아 LV2/LV1까지만
      *  매핑된 콘텐츠도 요청 제품의 상위 카테고리 기준으로 함께 노출한다 (contents_id=5060 등, 2026-08-05). */
     private static final String PRODUCT_CODE_EXISTS_CLAUSE =
@@ -134,7 +149,10 @@ public class DownloadCenterService {
 
         StringBuilder where = new StringBuilder(" WHERE").append(MASTER_GATE);
         if (hasQ) {
-            where.append(" AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q");
+            where.append(" AND (COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'")
+                 .append(" OR ").append(DOC_TYPE_NAME_MATCH)
+                 .append(" OR ").append(FILE_NAME_MATCH)
+                 .append(")");
         }
         if (hasDocTypes) {
             where.append(" AND m.doc_type IN (:docTypes)");
@@ -226,7 +244,9 @@ public class DownloadCenterService {
         Query countQuery = entityManager.createNativeQuery(
             "SELECT count(*) FROM contents_master m"
             + " WHERE" + MASTER_GATE
-            + " AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'");
+            + " AND (COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
+            + " OR " + DOC_TYPE_NAME_MATCH
+            + " OR " + FILE_NAME_MATCH + ")");
         countQuery.setParameter("q", kw);
         long total = ((Number) countQuery.getSingleResult()).longValue();
         if (total == 0) {
@@ -237,7 +257,9 @@ public class DownloadCenterService {
             "SELECT m.id FROM contents_master m"
             + DOC_TYPE_CODE_JOIN
             + " WHERE" + MASTER_GATE
-            + " AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
+            + " AND (COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
+            + " OR " + DOC_TYPE_NAME_MATCH
+            + " OR " + FILE_NAME_MATCH + ")"
             + " ORDER BY (CASE"
             + "            WHEN COALESCE(m.nahp_title, m.doc_title) ILIKE :qExact  ESCAPE '\\' THEN 100"
             + "            WHEN COALESCE(m.nahp_title, m.doc_title) ILIKE :qPrefix ESCAPE '\\' THEN 80"
@@ -338,6 +360,25 @@ public class DownloadCenterService {
             }
         }
 
+        /* ── 3) 문서유형 표시명(주 키워드) 직접 매칭 — 위와 동일하게 순위 뒤로 이어 붙임 ── */
+        if (!primaryKeyword.isEmpty()) {
+            Query docTypeQuery = entityManager.createNativeQuery(
+                "SELECT DISTINCT m.id FROM contents_master m"
+                + " WHERE" + MASTER_GATE
+                + " AND " + DOC_TYPE_NAME_MATCH);
+            docTypeQuery.setParameter("q", SearchSqlSupport.toLikePattern(primaryKeyword));
+
+            @SuppressWarnings("unchecked")
+            List<Object> docTypeRows = docTypeQuery.getResultList();
+            int nextRank = masterBestRank.size();
+            for (Object o : docTypeRows) {
+                Long masterId = ((Number) o).longValue();
+                if (!masterBestRank.containsKey(masterId)) {
+                    masterBestRank.put(masterId, nextRank++);
+                }
+            }
+        }
+
         if (masterBestRank.isEmpty()) {
             return new ArrayList<>();
         }
@@ -372,7 +413,9 @@ public class DownloadCenterService {
         Query idQuery = entityManager.createNativeQuery(
             "SELECT m.id FROM contents_master m"
             + " WHERE" + MASTER_GATE
-            + " AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
+            + " AND (COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
+            + " OR " + DOC_TYPE_NAME_MATCH
+            + " OR " + FILE_NAME_MATCH + ")"
             + " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC");
         idQuery.setParameter("q", SearchSqlSupport.toLikePattern(q.trim()));
 
