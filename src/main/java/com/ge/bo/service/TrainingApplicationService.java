@@ -291,8 +291,8 @@ public class TrainingApplicationService {
                 ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build());
 
         if (StringUtils.isNotBlank(reason)) {
-            String email = SecurityContextHolder.getContext().getAuthentication().getName();
-            String createdBy = adminRepository.findByEmail(email)
+            String employeeId = SecurityContextHolder.getContext().getAuthentication().getName();
+            String createdBy = adminRepository.findByEmployeeId(employeeId)
                     .map(u -> String.valueOf(u.getId()))
                     .orElse(null);
             downloadLogService.saveAsync("training-applications", reason, "csv", createdBy, ClientIpUtils.resolve(request));

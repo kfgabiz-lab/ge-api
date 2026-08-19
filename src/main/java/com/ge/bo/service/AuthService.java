@@ -145,8 +145,8 @@ public class AuthService {
       return ssoLogin(request, clientIp, userAgent, req);
     }
 
-    // 이메일 없음 체크 — orElseThrow 대신 분기로 변환하여 로그 저장 후 throw
-    Optional<AdminUser> adminOpt = adminRepository.findByEmail(request.getEmail());
+    // 계정 없음 체크 — orElseThrow 대신 분기로 변환하여 로그 저장 후 throw
+    Optional<AdminUser> adminOpt = adminRepository.findByEmployeeId(request.getEmail());
     if (adminOpt.isEmpty()) {
       loginLogService.saveAsync(null, request.getEmail(), "FAIL", "USER_NOT_FOUND", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
@@ -156,7 +156,7 @@ public class AuthService {
 
     // 계정 비활성화 확인
     if (!admin.isActive()) {
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent, currentSiteId());
+      loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
     }
 
@@ -165,14 +165,14 @@ public class AuthService {
       if (lockEnabled) {
         int attempts = loginAdminService.incrementFailure(admin.getId(), maxFailedAttempts);
         if (attempts >= maxFailedAttempts) {
-          loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "ACCOUNT_DISABLED", clientIp, userAgent, currentSiteId());
+          loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "FAIL", "ACCOUNT_DISABLED", clientIp, userAgent, currentSiteId());
           throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_DISABLED", "계정이 비활성화되었습니다.");
         }
-        loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
+        loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
         throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
                 "비밀번호 " + attempts + "회 실패 하셨습니다. " + maxFailedAttempts + "회 실패 시 계정 비활성화됩니다.");
       }
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
+      loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
               "ID or password가 일치하지 않습니다.");
     }
@@ -182,12 +182,12 @@ public class AuthService {
 
     // 승인 대기 확인 (SUCCESS 로그보다 먼저 체크하여 PENDING은 FAIL로 기록)
     if (PENDING_ROLE.equals(admin.getRole())) {
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
+      loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
     }
 
     // 로그인 성공 이력 저장
-    loginLogService.saveAsync(admin.getId(), admin.getEmail(), "SUCCESS", null, clientIp, userAgent, currentSiteId());
+    loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "SUCCESS", null, clientIp, userAgent, currentSiteId());
 
     // 2차인증 비활성화 시 바로 accessToken 발급
     if (!totpEnabled) {
@@ -216,7 +216,7 @@ public class AuthService {
       throw BusinessException.unauthorized("유효하지 않은 Refresh Token입니다.");
     }
 
-    AdminUser admin = adminRepository.findByEmail(email)
+    AdminUser admin = adminRepository.findByEmployeeId(email)
         .orElseThrow(() -> BusinessException.unauthorized("사용자를 찾을 수 없습니다."));
 
     if (!admin.isActive()) {
@@ -227,7 +227,7 @@ public class AuthService {
     boolean isSystem = roleEntity.map(role -> role.isSystem()).orElse(false);
     String roleDisplayName = roleEntity.map(role -> role.getDisplayName()).orElse(admin.getRole());
 
-    String newAccessToken = jwtTokenProvider.generateAccessToken(admin.getEmail(), admin.getRole());
+    String newAccessToken = jwtTokenProvider.generateAccessToken(admin.getEmployeeId(), admin.getRole());
     return LoginResponse.builder()
         .accessToken(newAccessToken)
         .expiresIn(3600L)
@@ -235,6 +235,7 @@ public class AuthService {
             .id(admin.getId())
             .name(admin.getName())
             .email(admin.getEmail())
+            .employeeId(admin.getEmployeeId())
             .role(admin.getRole())
             .roleDisplayName(roleDisplayName)
             .isSystem(isSystem)
@@ -297,11 +298,11 @@ public class AuthService {
    * ERROR → 실패횟수 +1 후 오류 메시지 반환
    */
   private LoginResponse ssoLogin(LoginRequest request, String clientIp, String userAgent, HttpServletRequest req) {
-    Optional<AdminUser> existing = adminRepository.findByEmail(request.getEmail());
+    Optional<AdminUser> existing = adminRepository.findByEmployeeId(request.getEmail());
     if (existing.isPresent()) {
       AdminUser a = existing.get();
       if (!a.isActive()) {
-        loginLogService.saveAsync(a.getId(), a.getEmail(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent, currentSiteId());
+        loginLogService.saveAsync(a.getId(), a.getEmployeeId(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent, currentSiteId());
         throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
       }
     }
@@ -322,10 +323,10 @@ public class AuthService {
           AdminUser a = existing.get();
           int attempts = loginAdminService.incrementFailure(a.getId(), maxFailedAttempts);
           if (attempts >= maxFailedAttempts) {
-            loginLogService.saveAsync(a.getId(), a.getEmail(), "FAIL", "ACCOUNT_DISABLED", clientIp, userAgent, currentSiteId());
+            loginLogService.saveAsync(a.getId(), a.getEmployeeId(), "FAIL", "ACCOUNT_DISABLED", clientIp, userAgent, currentSiteId());
             throw new BusinessException(HttpStatus.FORBIDDEN, "ACCOUNT_DISABLED", "계정이 비활성화되었습니다.");
           }
-          loginLogService.saveAsync(a.getId(), a.getEmail(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
+          loginLogService.saveAsync(a.getId(), a.getEmployeeId(), "FAIL", "INVALID_PASSWORD", clientIp, userAgent, currentSiteId());
           throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
               "비밀번호 " + attempts + "회 실패 하셨습니다. " + maxFailedAttempts + "회 실패 시 계정 비활성화됩니다.");
         }
@@ -355,7 +356,7 @@ public class AuthService {
     if (sso.deptCode() != null && !sso.deptCode().equals(admin.getDeptCode())) {
       loginAdminService.updateDeptChange(
           admin.getId(), sso.deptCode(), sso.deptName(), sso.userName());
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "DEPT_CHANGED", clientIp, userAgent, currentSiteId());
+      loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "FAIL", "DEPT_CHANGED", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
     }
 
@@ -367,12 +368,12 @@ public class AuthService {
 
     // 승인 대기 확인
     if (PENDING_ROLE.equals(admin.getRole())) {
-      loginLogService.saveAsync(admin.getId(), admin.getEmail(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
+      loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
     }
 
     // SSO 로그인 성공 이력 저장
-    loginLogService.saveAsync(admin.getId(), admin.getEmail(), "SUCCESS", null, clientIp, userAgent, currentSiteId());
+    loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "SUCCESS", null, clientIp, userAgent, currentSiteId());
 
     // 기존 TOTP 흐름과 동일
     if (!totpEnabled) {
@@ -386,6 +387,7 @@ public class AuthService {
   private AdminUser buildNewSsoUser(String email, SsoResult sso) {
     return AdminUser.builder()
         .email(email)
+        .employeeId(email)
         .name(sso.userName() != null ? sso.userName() : sso.userId())
         .role(ssoDefaultRole)
         .deptCode(sso.deptCode())
@@ -407,13 +409,14 @@ public class AuthService {
                       .id(admin.getId())
                       .name(admin.getName())
                       .email(admin.getEmail())
+                      .employeeId(admin.getEmployeeId())
                       .role(admin.getRole())
                       .roleDisplayName(roleDisplayName)
                       .isSystem(isSystem)
                       .build())
               .build();
     }else {
-      String accessToken = jwtTokenProvider.generateAccessToken(admin.getEmail(), admin.getRole());
+      String accessToken = jwtTokenProvider.generateAccessToken(admin.getEmployeeId(), admin.getRole());
       return LoginResponse.builder()
               .accessToken(accessToken)
               .expiresIn(3600L)
@@ -421,6 +424,7 @@ public class AuthService {
                       .id(admin.getId())
                       .name(admin.getName())
                       .email(admin.getEmail())
+                      .employeeId(admin.getEmployeeId())
                       .role(admin.getRole())
                       .roleDisplayName(roleDisplayName)
                       .isSystem(isSystem)
@@ -436,10 +440,10 @@ public class AuthService {
 
     String tempToken = null;
     if(redisEnabled){
-      startMfa(req, admin.getEmail());
+      startMfa(req, admin.getEmployeeId());
     }else {
       // 2FA 미완료 상태 임시 토큰 발급 (10분 유효)
-      tempToken = jwtTokenProvider.generateTotpPendingToken(admin.getEmail());
+      tempToken = jwtTokenProvider.generateTotpPendingToken(admin.getEmployeeId());
     }
     if (!admin.isTotpEnabled()) {
       // 2FA 미등록 → QR 등록 화면으로
@@ -520,17 +524,17 @@ public class AuthService {
   ) {
     HttpSession session = request.getSession(true);
 
-    String email = adminInfo.getEmail();
+    String employeeId = adminInfo.getEmployeeId();
     String role = adminInfo.getRole();
 
-    session.setAttribute("email", email);
+    session.setAttribute("email", employeeId);
     session.setAttribute("role", role);
     session.setMaxInactiveInterval(
             Math.toIntExact(
                     sessionTimeout.toSeconds()
             )
     );
-    makeSessionAndAuth(request, response, email, role);
+    makeSessionAndAuth(request, response, employeeId, role);
   }
 
   /**
@@ -547,9 +551,9 @@ public class AuthService {
       throw BusinessException.unauthorized("세션이 만료되었습니다.");
     }
 
-    String email = authentication.getName();
+    String employeeId = authentication.getName();
 
-    AdminUser admin = adminRepository.findByEmail(email)
+    AdminUser admin = adminRepository.findByEmployeeId(employeeId)
             .orElseThrow(() -> BusinessException.unauthorized("사용자를 찾을 수 없습니다."));
 
     if (!admin.isActive()) {
@@ -570,6 +574,7 @@ public class AuthService {
                     .id(admin.getId())
                     .name(admin.getName())
                     .email(admin.getEmail())
+                    .employeeId(admin.getEmployeeId())
                     .role(admin.getRole())
                     .roleDisplayName(roleDisplayName)
                     .isSystem(isSystem)

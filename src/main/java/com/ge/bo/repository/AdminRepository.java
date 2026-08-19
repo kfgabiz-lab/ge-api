@@ -13,6 +13,8 @@ public interface AdminRepository extends JpaRepository<AdminUser, Long> {
 
   boolean existsByEmail(String email);
 
+  Optional<AdminUser> findByEmployeeId(String employeeId);
+
   long countByRole(String role);
 
   List<AdminUser> findByRoleNot(String role, Sort sort);

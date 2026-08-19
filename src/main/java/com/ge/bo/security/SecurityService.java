@@ -61,7 +61,7 @@ public class SecurityService {
       return false;
     }
     return adminRepository.findById(adminUserId)
-        .map(a -> a.getEmail() != null && a.getEmail().equals(authentication.getName()))
+        .map(a -> a.getEmployeeId() != null && a.getEmployeeId().equals(authentication.getName()))
         .orElse(false);
   }
 

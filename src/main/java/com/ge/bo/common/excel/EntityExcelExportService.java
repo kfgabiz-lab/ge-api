@@ -129,8 +129,8 @@ public class EntityExcelExportService {
 
     // 7. reason이 있으면 다운로드 이력 비동기 저장 (PageDataController와 동일 방식)
     if (reason != null && !reason.isBlank()) {
-      String email = SecurityContextHolder.getContext().getAuthentication().getName();
-      String createdBy = adminRepository.findByEmail(email)
+      String employeeId = SecurityContextHolder.getContext().getAuthentication().getName();
+      String createdBy = adminRepository.findByEmployeeId(employeeId)
           .map(u -> String.valueOf(u.getId()))
           .orElse(null);
       downloadLogService.saveAsync(slug, reason, "csv", createdBy, ClientIpUtils.resolve(request));

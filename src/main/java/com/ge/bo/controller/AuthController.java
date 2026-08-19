@@ -50,7 +50,7 @@ public class AuthController {
         authService.createLoginSession(httpRequest, response, result.getAdminInfo());
       } else {
         // 2FA 비활성화 시 accessToken이 바로 발급되므로 refreshToken 쿠키도 함께 발급
-        authService.issueRefreshTokenCookie(response, result.getAdminInfo().getEmail());
+        authService.issueRefreshTokenCookie(response, result.getAdminInfo().getEmployeeId());
       }
     }
 
@@ -79,7 +79,7 @@ public class AuthController {
       authService.createLoginSession(req, response, result.getAdminInfo());
     }else{
       result = totpService.confirmWithJwt(request);
-      authService.issueRefreshTokenCookie(response, result.getAdminInfo().getEmail());
+      authService.issueRefreshTokenCookie(response, result.getAdminInfo().getEmployeeId());
     }
 
     return result;
@@ -98,7 +98,7 @@ public class AuthController {
       authService.createLoginSession(req, response, result.getAdminInfo());
     }else{
       result = totpService.verifyWithJwt(request);
-      authService.issueRefreshTokenCookie(response, result.getAdminInfo().getEmail());
+      authService.issueRefreshTokenCookie(response, result.getAdminInfo().getEmployeeId());
     }
     return result;
   }

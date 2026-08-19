@@ -41,8 +41,8 @@ public class AccessAuthorizationService {
       return;
     }
 
-    String email = authentication.getName();
-    AdminUser admin = adminRepository.findByEmail(email)
+    String employeeId = authentication.getName();
+    AdminUser admin = adminRepository.findByEmployeeId(employeeId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "인증 정보를 확인할 수 없습니다."));
 
     validateSiteAccess(request, admin);

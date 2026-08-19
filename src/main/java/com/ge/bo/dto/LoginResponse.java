@@ -28,6 +28,7 @@ public class LoginResponse {
     private Long id;
     private String name;
     private String email;
+    private String employeeId;
     private String role;
     private String roleDisplayName;
     @JsonProperty("isSystem")

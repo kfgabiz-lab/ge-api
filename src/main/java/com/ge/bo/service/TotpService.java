@@ -250,9 +250,9 @@ public class TotpService {
     }
   }
 
-  /** 이메일로 관리자 조회 */
+  /** 사번(employee_id)으로 관리자 조회 */
   private AdminUser findAdmin(String email) {
-    return adminRepository.findByEmail(email)
+    return adminRepository.findByEmployeeId(email)
         .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED",
             "사용자를 찾을 수 없습니다."));
   }
@@ -285,6 +285,7 @@ public class TotpService {
         .id(admin.getId())
         .name(admin.getName())
         .email(admin.getEmail())
+        .employeeId(admin.getEmployeeId())
         .role(admin.getRole())
         .isSystem(isSystem)
         .build();
