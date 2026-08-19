@@ -590,6 +590,7 @@ public class PageDataService {
         + " AND p.is_deleted = false"
         + " AND p.id = (c.data_json->'product'->>'id')::bigint"
         + " AND p.data_json->'product'->>'is_visible' = '001'"
+        + " AND p.data_json->'product'->>'order_status' <> '99'"
         + " AND (p.site_id = :siteId OR p.site_id IS NULL)"
         + " WHERE c.data_slug = 'category-data'"
         + "  AND c.is_deleted = false"
@@ -720,6 +721,7 @@ public class PageDataService {
         String whereClause = " WHERE pd.data_slug = 'product-data'"
             + "  AND pd.is_deleted = false"
             + "  AND pd.data_json->'product'->>'is_visible' = '001'"
+            + "  AND pd.data_json->'product'->>'order_status' <> '99'"
             + siteCond;
         if (hasKeyword) {
             whereClause += buildProductKeywordCondition("pd");
@@ -826,6 +828,7 @@ public class PageDataService {
             + " WHERE p.data_slug = 'product-data'"
             + "   AND p.is_deleted = false"
             + "   AND p.data_json->'product'->>'is_visible' = '001'"
+            + "   AND p.data_json->'product'->>'order_status' <> '99'"
             + productSiteCond;
         if (hasKeyword) {
             sql += buildProductKeywordCondition("p");
@@ -1030,6 +1033,7 @@ public class PageDataService {
           + "   ON p.data_slug = 'product-data'"
           + "  AND p.is_deleted = false"
           + "  AND p.id::text = j.data_json->'product'->>'id'"
+          + "  AND p.data_json->'product'->>'order_status' <> '99'"
           + (activeOnly ? "  AND p.data_json->'product'->>'has_training' = '001'"
                         + "  AND p.data_json->'product'->>'is_visible' = '001'" : "")
           + "  AND (p.site_id = :siteId OR p.site_id IS NULL)"
@@ -2324,8 +2328,8 @@ public class PageDataService {
     if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
       return null;
     }
-    String email = auth.getName();
-    return adminRepository.findByEmail(email)
+    String employeeId = auth.getName();
+    return adminRepository.findByEmployeeId(employeeId)
         .map(u -> String.valueOf(u.getId()))
         .orElse(null);
   }
