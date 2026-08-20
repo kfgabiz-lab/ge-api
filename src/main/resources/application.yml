@@ -38,7 +38,7 @@ app:
   mail:
     # Training 알림메일 헤더 로고 — SVG 는 Outlook 등 다수 메일 클라이언트가 렌더링 못 해서 PNG 사용(ge-fo 배포 후 반영)
     # TODO: 운영 도메인 확정 후 override 필요
-    logo-url: https://nahpdev.ls-electric.com/img/logo.png
+    logo-url: https://nahpdev.ls-electric.com/img/email_logo.png
 
 # 로깅 기본 수준 (각 환경 yml에서 override 가능)
 logging:
