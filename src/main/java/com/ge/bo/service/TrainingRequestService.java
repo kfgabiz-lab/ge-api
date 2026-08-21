@@ -286,14 +286,6 @@ public class TrainingRequestService {
     }
 
 
-    // TODO: 테스트용 추후 삭제 예정
-    /** 담당자 라우팅 분기 확인용 디버그 배너 — 현재 테스트 수신 주소가 코드별로 구분되지 않아 메일 본문으로 확인한다 */
-    private String debugRecipientBanner(String recipientCode) {
-        return "<tr><td style=\"padding:8px 32px 0;font-family:Arial, Helvetica, sans-serif;font-size:12px;"
-             + "font-weight:700;color:#c0392b;background:#fff3f3;\">[TEST] EMAIL_RECIPIENT code: "
-             + escape(recipientCode) + "</td></tr>";
-    }
-
     /** 콤마로 여러 명 저장된 이메일 문자열 → 개별 주소 리스트(공백 제거, 빈 값 제외) */
     private List<String> splitEmails(String emails) {
         return Arrays.stream(emails.split(","))
@@ -345,7 +337,6 @@ public class TrainingRequestService {
                                     LocalDate scheduleStart, LocalDate scheduleEnd, String recipientCode) {
         StringBuilder body = new StringBuilder();
         body.append(emailOpen("New Training Request Received"))
-            .append(debugRecipientBanner(recipientCode))
             .append(introRow("Hi " + escape(teamLabel(recipientCode))
                     + " Team,<br /><br />A new training request has been submitted. Please review the details below."));
 

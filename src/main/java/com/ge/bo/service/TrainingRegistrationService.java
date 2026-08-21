@@ -209,7 +209,7 @@ public class TrainingRegistrationService {
         return new ArrayList<>(emails);
     }
 
-    // TODO: 테스트용 — EMAIL_RECIPIENT 라우팅 분기가 실주소로 정상 검증되면 teamLabel/debugRecipientBanner 제거하고
+    // TODO: 테스트용 — EMAIL_RECIPIENT 라우팅 분기가 실주소로 정상 검증되면 teamLabel 제거하고
     // buildAdminEmail 인삿말도 "Hi Training Team,"으로 되돌린다.
     /** EMAIL_RECIPIENT 코드 → 관리자 메일 인삿말 표시용 라벨("Hi {label} Team," 형태로 사용) */
     private String teamLabel(String recipientCode) {
@@ -221,13 +221,6 @@ public class TrainingRegistrationService {
             case RECIPIENT_CODE_ENGINEERING_POWER_SYSTEM -> "Engineering Training (Power - System)";
             default -> "Training";
         };
-    }
-
-    /** 담당자 라우팅 분기 확인용 디버그 배너 — 현재 테스트 수신 주소가 코드별로 구분되지 않아 메일 본문으로 확인한다 */
-    private String debugRecipientBanner(String recipientCode) {
-        return "<tr><td style=\"padding:8px 32px 0;font-family:Arial, Helvetica, sans-serif;font-size:12px;"
-             + "font-weight:700;color:#c0392b;background:#fff3f3;\">[TEST] EMAIL_RECIPIENT code: "
-             + escape(recipientCode) + "</td></tr>";
     }
 
     /** 콤마로 여러 명 저장된 이메일 문자열 → 개별 주소 리스트(공백 제거, 빈 값 제외) */
@@ -422,7 +415,6 @@ public class TrainingRegistrationService {
     private String buildAdminEmail(TrainingRegistrationRequest request, SessionEmailContext ctx, LocalDate eventDate, String recipientCode) {
         StringBuilder body = new StringBuilder();
         body.append(emailOpen("New Training Registration Received"))
-            .append(debugRecipientBanner(recipientCode))
             .append(introRow("Hi " + escape(teamLabel(recipientCode)) + " Team,<br /><br />"
                     + "A new training registration has been submitted. Please review the details below."));
 
