@@ -38,6 +38,35 @@ public class SsqCategoryMapping {
      * 레벨별 코드)을 반환하고, 없으면 미매핑(empty). NAHP 자체는 3단계 고정이라 반환값도 L1~L3까지만 있다.
      */
     public Optional<SsqCategoryResolution> resolve(String level1, String level2, String level3, String level4) {
+        SsqCategoryMappingEntry entry = findEntry(level1, level2, level3, level4);
+        if (entry == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new SsqCategoryResolution(
+            entry.toNahpCategoryId(), entry.getL1Code(), entry.getL2Code(), entry.getL3Code()));
+    }
+
+    /**
+     * resolve()와 동일하게 조회하되, 매칭된 엔트리가 보조 매핑(hasSecondary())을 갖고 있으면 두 번째
+     * SsqCategoryResolution도 함께 반환한다(예: VFD 제품군은 L01-15/L05-04 두 카테고리에 동시 매핑) —
+     * 적재 시 CategoryItem을 여러 건 만들어 문서 하나가 여러 NAHP 카테고리에 걸치게 하는 용도.
+     */
+    public List<SsqCategoryResolution> resolveAll(String level1, String level2, String level3, String level4) {
+        SsqCategoryMappingEntry entry = findEntry(level1, level2, level3, level4);
+        if (entry == null) {
+            return List.of();
+        }
+        List<SsqCategoryResolution> results = new ArrayList<>();
+        results.add(new SsqCategoryResolution(
+            entry.toNahpCategoryId(), entry.getL1Code(), entry.getL2Code(), entry.getL3Code()));
+        if (entry.hasSecondary()) {
+            results.add(new SsqCategoryResolution(
+                entry.toSecondaryNahpCategoryId(), entry.getSecondaryL1Code(), entry.getSecondaryL2Code(), entry.getL3Code()));
+        }
+        return results;
+    }
+
+    private SsqCategoryMappingEntry findEntry(String level1, String level2, String level3, String level4) {
         List<String> levels = new ArrayList<>();
         for (String level : new String[]{level1, level2, level3, level4}) {
             if (level != null) {
@@ -50,11 +79,10 @@ public class SsqCategoryMapping {
         for (int len = levels.size(); len >= 1; len--) {
             SsqCategoryMappingEntry entry = byPath.get(joinKey(levels.subList(0, len)));
             if (entry != null) {
-                return Optional.of(new SsqCategoryResolution(
-                    entry.toNahpCategoryId(), entry.getL1Code(), entry.getL2Code(), entry.getL3Code()));
+                return entry;
             }
         }
-        return Optional.empty();
+        return null;
     }
 
     private String joinKey(List<String> segments) {

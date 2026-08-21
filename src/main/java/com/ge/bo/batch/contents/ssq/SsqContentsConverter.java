@@ -101,10 +101,9 @@ public class SsqContentsConverter {
                     "카테고리 레벨(level_1~level_4)이 전부 비어있음", rawRow(row)));
                 continue;
             }
-            SsqCategoryResolution resolution = categoryMapping.resolve(
-                row.level1(), row.level2(), row.level3(), row.level4())
-                .orElse(null);
-            if (resolution == null) {
+            List<SsqCategoryResolution> resolutions = categoryMapping.resolveAll(
+                row.level1(), row.level2(), row.level3(), row.level4());
+            if (resolutions.isEmpty()) {
                 rowFailures.add(new RowFailure(SOURCE_TABLE_DOC, rowKey(docId, row.specGroup()), "UNMAPPED_CATEGORY",
                     "미매핑 카테고리 경로(level_1~level_4, SsqCategoryMapping 보완 필요): " + sourcePath, rawRow(row)));
                 continue;
@@ -120,23 +119,30 @@ public class SsqContentsConverter {
                 continue;
             }
 
-            CategoryItem candidate = CategoryItem.builder()
-                .sourcePath(sourcePath)
-                .nahpCategoryId(resolution != null ? resolution.nahpCategoryId() : null)
-                .categoryL1Id(resolution != null ? resolution.categoryL1Id() : null)
-                .categoryL2Id(resolution != null ? resolution.categoryL2Id() : null)
-                .categoryL3Id(resolution != null ? resolution.categoryL3Id() : null)
-                .nahpLevelSeq(null)
-                .nahpDisplayFlag(displayFlag).build();
+            // resolutions[0]=기본 매핑(원본 source_path 그대로), [1]=보조 매핑(예: VFD의 L05-04) — source_path
+            // 컬럼은 (contents_id, source_path) 유니크 제약이 있어 보조 매핑에는 카테고리 코드를 덧붙여 구분한다.
+            for (int i = 0; i < resolutions.size(); i++) {
+                SsqCategoryResolution resolution = resolutions.get(i);
+                String itemPath = i == 0 ? sourcePath : sourcePath + "#dual:" + resolution.categoryL2Id();
 
-            CategoryItem existing = categoriesByPath.get(sourcePath);
-            if (existing != null && (existing.isNahpDisplayFlag() != candidate.isNahpDisplayFlag()
-                || !eq(existing.getNahpCategoryId(), candidate.getNahpCategoryId()))) {
-                rowFailures.add(new RowFailure(SOURCE_TABLE_DOC, rowKey(docId, row.specGroup()), "VALUE_CONFLICT",
-                    "동일 source_path에 서로 다른 카테고리 값이 반복 수신됨: " + sourcePath, rawRow(row)));
-                continue;
+                CategoryItem candidate = CategoryItem.builder()
+                    .sourcePath(itemPath)
+                    .nahpCategoryId(resolution.nahpCategoryId())
+                    .categoryL1Id(resolution.categoryL1Id())
+                    .categoryL2Id(resolution.categoryL2Id())
+                    .categoryL3Id(resolution.categoryL3Id())
+                    .nahpLevelSeq(null)
+                    .nahpDisplayFlag(displayFlag).build();
+
+                CategoryItem existing = categoriesByPath.get(itemPath);
+                if (existing != null && (existing.isNahpDisplayFlag() != candidate.isNahpDisplayFlag()
+                    || !eq(existing.getNahpCategoryId(), candidate.getNahpCategoryId()))) {
+                    rowFailures.add(new RowFailure(SOURCE_TABLE_DOC, rowKey(docId, row.specGroup()), "VALUE_CONFLICT",
+                        "동일 source_path에 서로 다른 카테고리 값이 반복 수신됨: " + itemPath, rawRow(row)));
+                    continue;
+                }
+                categoriesByPath.putIfAbsent(itemPath, candidate);
             }
-            categoriesByPath.putIfAbsent(sourcePath, candidate);
         }
 
         // 버전/파일 — version_id 기준 그룹화. 반복 행 간 값 충돌은 문서 전체 격리(SSQ 전용 규칙)

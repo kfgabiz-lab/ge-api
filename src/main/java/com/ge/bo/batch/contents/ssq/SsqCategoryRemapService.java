@@ -7,8 +7,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * SSQ 미매핑 카테고리 재처리(remap) — 매핑정의서 04시트의 "변환표에 없는 경로는 보류(NULL+리포트)로 두고,
@@ -52,7 +56,63 @@ public class SsqCategoryRemapService {
                 remapped++;
             }
         }
-        log.info("SSQ 카테고리 재매핑 완료 — 대상 {}건 중 {}건 신규 매핑", targets.size(), remapped);
-        return remapped;
+
+        int backfilled = backfillDualCategories();
+        log.info("SSQ 카테고리 재매핑 완료 — 대상 {}건 중 {}건 신규 매핑, 보조 매핑 {}건 소급 반영", targets.size(), remapped, backfilled);
+        return remapped + backfilled;
+    }
+
+    /**
+     * SsqCategoryMappingEntry에 보조 매핑(예: VFD의 L05-04)이 나중에 추가된 경우, 이미 처리 완료돼 기본
+     * 매핑만 갖고 있던 기존 카테고리 행에도 소급으로 보조 카테고리 행을 만들어 채운다.
+     * SsqContentsConverter#convert()와 동일한 규칙(source_path + "#dual:" + 보조 L2 코드)으로 대상을 식별해
+     * 이미 백필된 행은 건너뛴다.
+     */
+    private int backfillDualCategories() {
+        List<ContentsCategory> all = categoryRepository.findBySourceSystemAndIsDeletedFalse(SOURCE_SYSTEM);
+        Map<Long, Set<String>> pathsByContentsId = all.stream()
+            .collect(Collectors.groupingBy(ContentsCategory::getContentsId,
+                Collectors.mapping(ContentsCategory::getSourcePath, Collectors.toSet())));
+
+        int backfilled = 0;
+        for (ContentsCategory category : all) {
+            String sourcePath = category.getSourcePath();
+            if (sourcePath.contains("#dual:")) {
+                continue;
+            }
+            String[] levels = sourcePath.split(">", -1);
+            List<SsqCategoryResolution> resolutions = categoryMapping.resolveAll(
+                levels.length > 0 ? levels[0] : null, levels.length > 1 ? levels[1] : null,
+                levels.length > 2 ? levels[2] : null, levels.length > 3 ? levels[3] : null);
+            if (resolutions.size() < 2) {
+                continue;
+            }
+            SsqCategoryResolution secondary = resolutions.get(1);
+            String dualPath = sourcePath + "#dual:" + secondary.categoryL2Id();
+            Set<String> existingPaths = pathsByContentsId.computeIfAbsent(category.getContentsId(), k -> new java.util.HashSet<>());
+            if (existingPaths.contains(dualPath)) {
+                continue;
+            }
+
+            OffsetDateTime now = OffsetDateTime.now();
+            categoryRepository.save(ContentsCategory.builder()
+                .contentsId(category.getContentsId())
+                .sourceSystem(SOURCE_SYSTEM)
+                .sourcePath(dualPath)
+                .nahpCategoryId(secondary.nahpCategoryId())
+                .categoryL1Id(secondary.categoryL1Id())
+                .categoryL2Id(secondary.categoryL2Id())
+                .categoryL3Id(secondary.categoryL3Id())
+                .nahpLevelSeq(category.getNahpLevelSeq())
+                .nahpDisplayFlag(category.getNahpDisplayFlag())
+                .isDeleted(false)
+                .deleteCheckBatchId(category.getDeleteCheckBatchId())
+                .createdAt(now)
+                .updatedAt(now)
+                .build());
+            existingPaths.add(dualPath);
+            backfilled++;
+        }
+        return backfilled;
     }
 }
