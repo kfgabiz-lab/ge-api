@@ -68,12 +68,15 @@ public class DownloadCenterService {
       + " AND cd.group_id = (SELECT id FROM code_group WHERE group_code = '" + DOC_TYPE_GROUP_CODE + "' AND is_deleted = false)"
       + " AND cd.name ILIKE :q ESCAPE '\\')";
 
-    /** 검색어(:q)가 문서에 첨부된 파일명(contents_file.file_name)과 일치하는지 확인하는 EXISTS 절(버전 제한 없음) */
+    /** 검색어(:q)가 문서에 첨부된 파일명(contents_file.file_name)과 일치하는지 확인하는 EXISTS 절(최신 버전에 한정) */
     private static final String FILE_NAME_MATCH =
         "EXISTS (SELECT 1 FROM contents_version v"
       + " JOIN contents_file f ON f.contents_version_id = v.id"
       + "   AND f.file_expose = true AND f.is_deleted = false"
       + " WHERE v.contents_id = m.id AND v.version_expose = true AND v.is_deleted = false"
+      + " AND v.sort_key = (SELECT MAX(v2.sort_key) FROM contents_version v2"
+      + "                    WHERE v2.contents_id = m.id"
+      + "                      AND v2.version_expose = true AND v2.is_deleted = false)"
       + " AND f.file_name ILIKE :q ESCAPE '\\')";
 
     /** LV3 제품코드(예: L01-15-01)로 정확히 매핑된 콘텐츠뿐 아니라, LV3가 배정되지 않아 LV2/LV1까지만
