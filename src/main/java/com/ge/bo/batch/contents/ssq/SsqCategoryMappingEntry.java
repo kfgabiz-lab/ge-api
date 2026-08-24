@@ -21,14 +21,25 @@ import java.util.List;
 public enum SsqCategoryMappingEntry {
 
     // ---- LV Drive (7건) ----
-    LV_DRIVE_H100_PLUS(path("LV Drive", "H100+"), "LV Products & Systems", "Variable Frequency Drive", "H100 Plus", "L01", "L01-15", "L01-15-01"),
-    LV_DRIVE_SP100(path("LV Drive", "SP100"), "LV Products & Systems", "Variable Frequency Drive", "SP100", "L01", "L01-15", "L01-15-02"),
-    LV_DRIVE_G100(path("LV Drive", "G100"), "LV Products & Systems", "Variable Frequency Drive", "G100", "L01", "L01-15", "L01-15-03"),
-    LV_DRIVE_M100(path("LV Drive", "M100"), "LV Products & Systems", "Variable Frequency Drive", "M100", "L01", "L01-15", "L01-15-04"),
-    LV_DRIVE_S100(path("LV Drive", "S100"), "LV Products & Systems", "Variable Frequency Drive", "S100", "L01", "L01-15", "L01-15-05"),
+    // VFD 제품은 NAHP 카테고리 트리에 L01-15(LV Products & Systems)와 L05-04(Industrial Automation and
+    // Control) 두 곳에 동시 등록되어 있다(2026-08-21 확인, CATALOG 소스 실데이터 contents_category에 이미
+    // 두 조합 모두 존재 — L05-04 쪽도 L3 코드는 L01-15-0X를 그대로 재사용). 그래서 6개 항목 모두 보조
+    // 매핑(secondary*)을 함께 등록해 적재 시 두 카테고리에 동시 매핑되게 한다.
+    LV_DRIVE_H100_PLUS(path("LV Drive", "H100+"), "LV Products & Systems", "Variable Frequency Drive", "H100 Plus", "L01", "L01-15", "L01-15-01",
+        "Industrial Automation and Control", "L05", "L05-04"),
+    LV_DRIVE_SP100(path("LV Drive", "SP100"), "LV Products & Systems", "Variable Frequency Drive", "SP100", "L01", "L01-15", "L01-15-02",
+        "Industrial Automation and Control", "L05", "L05-04"),
+    LV_DRIVE_G100(path("LV Drive", "G100"), "LV Products & Systems", "Variable Frequency Drive", "G100", "L01", "L01-15", "L01-15-03",
+        "Industrial Automation and Control", "L05", "L05-04"),
+    LV_DRIVE_M100(path("LV Drive", "M100"), "LV Products & Systems", "Variable Frequency Drive", "M100", "L01", "L01-15", "L01-15-04",
+        "Industrial Automation and Control", "L05", "L05-04"),
+    LV_DRIVE_S100(path("LV Drive", "S100"), "LV Products & Systems", "Variable Frequency Drive", "S100", "L01", "L01-15", "L01-15-05",
+        "Industrial Automation and Control", "L05", "L05-04"),
     // N:1 — S100 NEMA4X도 S100과 동일 NAHP 카테고리로 통합(코드도 S100과 동일)
-    LV_DRIVE_S100_NEMA4X(path("LV Drive", "S100 NEMA4X"), "LV Products & Systems", "Variable Frequency Drive", "S100", "L01", "L01-15", "L01-15-05"),
-    LV_DRIVE_IS7(path("LV Drive", "iS7"), "LV Products & Systems", "Variable Frequency Drive", "iS7", "L01", "L01-15", "L01-15-06"),
+    LV_DRIVE_S100_NEMA4X(path("LV Drive", "S100 NEMA4X"), "LV Products & Systems", "Variable Frequency Drive", "S100", "L01", "L01-15", "L01-15-05",
+        "Industrial Automation and Control", "L05", "L05-04"),
+    LV_DRIVE_IS7(path("LV Drive", "iS7"), "LV Products & Systems", "Variable Frequency Drive", "iS7", "L01", "L01-15", "L01-15-06",
+        "Industrial Automation and Control", "L05", "L05-04"),
 
     // ---- HMI (3건 — page_data에 L3 product_code가 아직 배정 안 돼 l3Code는 null) ----
     HMI_EXP2(path("HMI", "eXP2"), "Industrial Automation and Control", "Human Machine Interface", "eXP2", "L05", "L05-01", null),
@@ -61,9 +72,20 @@ public enum SsqCategoryMappingEntry {
     private final String l1Code;
     private final String l2Code;
     private final String l3Code;
+    /** 보조 매핑(동일 제품을 두 번째 NAHP 카테고리에도 동시 등록) — L2 표시명/L3(코드·표시명)는 기본 매핑과
+     *  동일하게 재사용하고 L1(표시명·코드)/L2 코드만 따로 갖는다. 없으면 null(보조 매핑 없음). */
+    private final String secondaryNahpL1;
+    private final String secondaryL1Code;
+    private final String secondaryL2Code;
 
     SsqCategoryMappingEntry(List<String> ssqPath, String nahpL1, String nahpL2, String nahpL3,
                             String l1Code, String l2Code, String l3Code) {
+        this(ssqPath, nahpL1, nahpL2, nahpL3, l1Code, l2Code, l3Code, null, null, null);
+    }
+
+    SsqCategoryMappingEntry(List<String> ssqPath, String nahpL1, String nahpL2, String nahpL3,
+                            String l1Code, String l2Code, String l3Code,
+                            String secondaryNahpL1, String secondaryL1Code, String secondaryL2Code) {
         this.ssqPath = ssqPath;
         this.nahpL1 = nahpL1;
         this.nahpL2 = nahpL2;
@@ -71,6 +93,26 @@ public enum SsqCategoryMappingEntry {
         this.l1Code = l1Code;
         this.l2Code = l2Code;
         this.l3Code = l3Code;
+        this.secondaryNahpL1 = secondaryNahpL1;
+        this.secondaryL1Code = secondaryL1Code;
+        this.secondaryL2Code = secondaryL2Code;
+    }
+
+    public boolean hasSecondary() {
+        return secondaryL1Code != null;
+    }
+
+    /** 보조 매핑의 nahp_category_id — 기본 매핑과 형식을 맞춰 "L1|L2|L3" 이름 조합을 쓰되 L1만 다르다 */
+    public String toSecondaryNahpCategoryId() {
+        return secondaryNahpL1 + "|" + nahpL2 + "|" + nahpL3;
+    }
+
+    public String getSecondaryL1Code() {
+        return secondaryL1Code;
+    }
+
+    public String getSecondaryL2Code() {
+        return secondaryL2Code;
     }
 
     public List<String> getSsqPath() {

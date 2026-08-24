@@ -31,4 +31,7 @@ public interface ContentsCategoryRepository extends JpaRepository<ContentsCatego
     @Query("select c from ContentsCategory c where c.sourceSystem = :sourceSystem and c.nahpCategoryId is not null "
         + "and (c.categoryL1Id is null or c.categoryL2Id is null or c.categoryL3Id is null) and c.isDeleted = false")
     List<ContentsCategory> findMappedWithoutCode(@Param("sourceSystem") String sourceSystem);
+
+    /** 보조 매핑(예: VFD의 L05-04) 소급 백필 대상 조회 — 소스 전체 활성 카테고리 행 */
+    List<ContentsCategory> findBySourceSystemAndIsDeletedFalse(String sourceSystem);
 }
