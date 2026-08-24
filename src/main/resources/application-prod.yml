@@ -91,7 +91,7 @@ ls:
       ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : abc
-      recapchaKey: ${RECAPTCHA_SECRET:}
+      captchaKey: ${CAPTCHA_ENCRYPTION_KEY:LSE_Captcha_K16!}
       ctp:
         # Connect Portal(Salesforce) Sandbox — IF_SRR_NAHP_CTP_0001(문의접수) / _0002(문의결과조회) 현재 개발 정보임. 운영 정보로 변경 필요.
         tokenUrl: https://nosoftware-connect-6982--full.sandbox.my.salesforce.com/services/oauth2/token

@@ -54,5 +54,8 @@ public record TrainingRegistrationRequest(
 
         @AssertTrue(message = "개인정보 수집 및 이용에 동의해주세요.") Boolean privacyConsentFlag,
 
-        @NotBlank(message = "reCAPTCHA 인증을 완료해주세요.") String recaptchaToken) {
+        @NotBlank(message = "캡차 인증을 완료해주세요.") String captchaCode,
+
+        /** 자체 캡차 발급 시 받은 암호화 토큰 (FE가 그대로 되돌려줌, stateless 검증용) */
+        @NotBlank(message = "캡차 인증을 완료해주세요.") String captchaToken) {
 }

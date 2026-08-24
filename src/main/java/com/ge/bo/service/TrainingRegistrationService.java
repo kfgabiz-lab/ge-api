@@ -29,7 +29,7 @@ import java.util.List;
 
 /**
  * FO 트레이닝 세션 등록(리드 캡처) 접수 서비스
- * - 처리 순서: reCAPTCHA 검증 → typeOfBusiness 공통코드(BUSINESSTYPE) 검증(값 있을 때만) → insert
+ * - 처리 순서: 자체 캡차 검증 → typeOfBusiness 공통코드(BUSINESSTYPE) 검증(값 있을 때만) → insert
  * - ContactUsInquiryService 의 레이어 구조를 그대로 본떠 작성(공통코드 검증도 동일 메서드 재사용).
  * - 세션/코스 id 의 부모-자식 일치 검증은 하지 않는다(과설계 방지, 사용자 확정).
  * - 메일 발송은 신청자에게 신청확인 메일, 담당자(EMAIL_RECIPIENT 공통코드)에게 신청접수 알림 메일 — 각자에게 개별 발송한다.
@@ -75,7 +75,7 @@ public class TrainingRegistrationService {
 
     private final TrainingRegistrationRepository trainingRegistrationRepository;
     private final CodeDetailRepository codeDetailRepository;
-    private final RecaptchaService recaptchaService;
+    private final CaptchaService captchaService;
     private final PageDataService pageDataService;
     private final ApplicationEventPublisher eventPublisher;
     private final EntityManager entityManager;
@@ -93,7 +93,7 @@ public class TrainingRegistrationService {
     private String vfdAttachmentUrl;
 
     /**
-     * 등록 접수 처리 — reCAPTCHA 검증 → 코드 검증 → 저장 → 결과 반환
+     * 등록 접수 처리 — 자체 캡차 검증 → 코드 검증 → 저장 → 결과 반환
      *
      * @param request  폼 요청 (Bean Validation 통과 후 진입)
      * @param clientIp 요청자 IP (컨트롤러에서 getRemoteAddr() 기준 추출)
@@ -102,8 +102,8 @@ public class TrainingRegistrationService {
     @Transactional
     public TrainingRegistrationResponse submit(TrainingRegistrationRequest request, String clientIp) {
 
-        // 1) reCAPTCHA 검증 (실패 시 BusinessException 발생 → 400)
-        recaptchaService.verify(request.recaptchaToken());
+        // 1) 자체 캡차 검증 (실패 시 BusinessException 발생 → 400)
+        captchaService.verify(request.captchaToken(), request.captchaCode());
 
         // 2) 비즈니스 유형 검증 — 선택 필드이므로 값이 있을 때만 활성 코드값인지 확인(기존 메서드 재사용)
         if (StringUtils.isNotBlank(request.typeOfBusiness())
@@ -306,11 +306,17 @@ public class TrainingRegistrationService {
                         NULLIF(TRIM(sess.data_json->'curriculum_detail2'->>'address'), '')
                       ), '') AS location,
                       (SELECT string_agg(
-                           to_char(NULLIF(item->>'date', '')::date, 'FMMon FMDD, YYYY') || ': ' ||
-                           to_char(NULLIF(item->>'time_from', '')::time, 'FMHH12:MI AM') || ' - ' ||
-                           to_char(NULLIF(item->>'time_to', '')::time, 'FMHH12:MI AM'),
-                           ', ' ORDER BY (item->>'date')::date, (item->>'time_from')::time)
-                         FROM jsonb_array_elements(COALESCE(sess.data_json->'training_schedule', '[]'::jsonb)) AS item
+                           to_char(d.event_date, 'FMMon FMDD, YYYY') || ': ' ||
+                           to_char(d.start_time, 'FMHH12:MI AM') || ' - ' ||
+                           to_char(d.end_time, 'FMHH12:MI AM'),
+                           E'\n' ORDER BY d.event_date)
+                         FROM (
+                           SELECT (item->>'date')::date AS event_date,
+                                  MIN(NULLIF(item->>'time_from', '')::time) AS start_time,
+                                  MAX(NULLIF(item->>'time_to', '')::time) AS end_time
+                           FROM jsonb_array_elements(COALESCE(sess.data_json->'training_schedule', '[]'::jsonb)) AS item
+                           GROUP BY (item->>'date')::date
+                         ) d
                       ) AS schedule_text,
                       CASE WHEN sess.data_json->'curriculum_detail3'->>'training_fee_type' = '001' THEN NULL
                            ELSE NULLIF(btrim(sess.data_json->'curriculum_detail3'->>'training_fee'), '') END AS fee_amount,
@@ -516,7 +522,7 @@ public class TrainingRegistrationService {
              + "border-right:1px solid #e8e8e8;border-bottom:1px solid #e8e8e8;\">" + escape(label) + "</td>"
              + "<td valign=\"top\" style=\"padding:11px 16px;font-family:Arial, Helvetica, sans-serif;font-size:15px;font-weight:400;"
              + "line-height:1.55;color:#222222;text-align:left;vertical-align:top;background:#ffffff;border-bottom:1px solid #e8e8e8;\">"
-             + "<span style=\"color:#333;font-weight:600;\">" + escape(nz(value)) + "</span></td>"
+             + "<span style=\"color:#333;font-weight:600;\">" + escape(nz(value)).replace("\n", "<br />") + "</span></td>"
              + "</tr>";
     }
 
