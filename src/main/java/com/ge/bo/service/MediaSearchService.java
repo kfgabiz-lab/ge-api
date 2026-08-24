@@ -97,7 +97,7 @@ public class MediaSearchService {
             + " )"
             + " SELECT a.c_tech_hub, a.c_blog, a.c_press, a.c_article, a.c_event,"
             + "        p.source_type, p.id, p.title, " + buildFinalSnippetExpr() + " AS snippet,"
-            + "        p.video_url, p.file_id, p.sort_ts"
+            + "        p.video_url, p.file_id, p.sort_ts, p.slug"
             + " FROM agg a"
             + " LEFT JOIN pg p ON true"
             + " ORDER BY p.score DESC, p.sort_ts DESC NULLS LAST, p.source_type, p.row_id DESC";
@@ -131,13 +131,14 @@ public class MediaSearchService {
             String videoUrl = r[9] != null ? r[9].toString() : null;
             Long fileId = r[10] != null ? ((Number) r[10]).longValue() : null;
             String sortDate = formatSortDate(r[11], zone);
+            String slug = r[12] != null ? r[12].toString() : null;
 
             String imageUrl = "TECH_HUB".equals(sourceType)
                     ? youtubeThumbnail(videoUrl)
                     : resolveMediaProxyUrl(fileId);
 
             content.add(new MediaSearchItemResponse(
-                sourceType, id, title, snippet, imageUrl, sortDate, buildLink(sourceType, id)));
+                sourceType, id, title, snippet, imageUrl, sortDate, slug));
         }
 
         long total = 0L;
@@ -158,7 +159,8 @@ public class MediaSearchService {
           .append("  NULL::text AS snippet,")
           .append("  rep.video_url::text AS video_url,")
           .append("  NULL::bigint AS file_id,")
-          .append("  m.source_updated_at AS sort_ts,");
+          .append("  m.source_updated_at AS sort_ts,")
+          .append("  NULL::text AS slug,");
         if (hasKeyword) {
             sb.append("  (CASE")
               .append("    WHEN COALESCE(m.nahp_title, m.doc_title) ILIKE :qExact  ESCAPE '\\' THEN 100")
@@ -194,7 +196,8 @@ public class MediaSearchService {
           .append("  ").append(snippetExpr).append(" AS snippet,")
           .append("  NULL::text AS video_url,")
           .append("  ic.file_id AS file_id,")
-          .append("  ic.updated_at AS sort_ts,");
+          .append("  ic.updated_at AS sort_ts,")
+          .append("  pd.data_json->'seo'->>'slug' AS slug,");
         if (hasKeyword) {
             sb.append("  (CASE")
               .append("    WHEN ic.title ILIKE :qExact  ESCAPE '\\' THEN 100")
@@ -206,6 +209,8 @@ public class MediaSearchService {
             sb.append("  0::int AS score");
         }
         sb.append(" FROM integration_contents ic")
+          .append(" LEFT JOIN page_data pd")
+          .append("   ON pd.id = NULLIF(regexp_replace(ic.content_id,'[^0-9]','','g'),'')::bigint")
           .append(" WHERE ic.is_visible = true AND ic.type IN ('B','P','A','E')");
         if (hasSite) {
             sb.append(" AND (ic.site_id = :siteId OR ic.site_id IS NULL)");
@@ -266,18 +271,6 @@ public class MediaSearchService {
     private String resolveMediaProxyUrl(Long fileId) {
         if (fileId == null) return null;
         return "/api/v1/fo/page-files/" + fileId;
-    }
-
-    private String buildLink(String sourceType, Long id) {
-        if (sourceType == null || id == null) return null;
-        return switch (sourceType) {
-            case "TECH_HUB" -> "/support/tech-hub/view/" + id;
-            case "BLOG" -> "/company/blog/detail/" + id;
-            case "PRESS" -> "/company/press/detail/" + id;
-            case "ARTICLE" -> "/company/articles/detail/" + id;
-            case "EVENT" -> "/company/events/detail/" + id;
-            default -> null;
-        };
     }
 
     private Map<String, Long> emptyCounts() {

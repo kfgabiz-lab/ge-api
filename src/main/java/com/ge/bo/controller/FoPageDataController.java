@@ -95,8 +95,9 @@ public class FoPageDataController {
 
     /**
      * 인접글(이전/다음) 조회 — 정렬 기준으로 prev/next를 각 1건씩 반환
-     * GET /api/v1/fo/page-data/{slug}/{id}/adjacent?sortField=...&titleField=...
-     * 응답: {"prev":{"id","title"}|null, "next":{"id","title"}|null}
+     * GET /api/v1/fo/page-data/{slug}/{id}/adjacent?sortField=...&titleField=...&slugField=...
+     * slugField는 선택 — 지정 시 상세 URL용 slug를 함께 반환(미지정 시 slug는 null)
+     * 응답: {"prev":{"id","title","slug"}|null, "next":{"id","title","slug"}|null}
      */
     @GetMapping("/{id}/adjacent")
     public ResponseEntity<AdjacentResponse> adjacent(
@@ -104,9 +105,10 @@ public class FoPageDataController {
             @PathVariable Long id,
             @RequestParam String sortField,
             @RequestParam String titleField,
+            @RequestParam(required = false) String slugField,
             @RequestParam Map<String, String> allParams,
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
         return ResponseEntity.ok(
-                pageDataService.findAdjacent(slug, id, sortField, titleField, allParams, siteId));
+                pageDataService.findAdjacent(slug, id, sortField, titleField, slugField, allParams, siteId));
     }
 }

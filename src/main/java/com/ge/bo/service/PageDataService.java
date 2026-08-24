@@ -528,11 +528,15 @@ public class PageDataService {
 
   @Transactional(readOnly = true)
     public AdjacentResponse findAdjacent(String slug, Long id, String sortField, String titleField,
-                                         Map<String, String> allParams, Long siteId) {
-    Map<String, String> statusParams = extractStatusParams(allParams, "sortField", "titleField");
+                                         String slugField, Map<String, String> allParams, Long siteId) {
+    Map<String, String> statusParams =
+        extractStatusParams(allParams, "sortField", "titleField", "slugField");
 
     String sortExpr = resolveFieldExpr(sortField, true);
     String titleExpr = resolveFieldExpr(titleField, false);
+    String slugExpr = (slugField == null || slugField.isBlank())
+        ? "CAST(NULL AS text)"
+        : resolveFieldExpr(slugField, false);
 
     StringBuilder baseWhere = new StringBuilder("WHERE data_slug = :slug AND is_deleted = false");
     if (siteId != null) {
@@ -546,12 +550,12 @@ public class PageDataService {
 
     String curVal = "(SELECT " + sortExpr + " FROM page_data WHERE data_slug = :slug AND id = :id)";
 
-    String prevSql = "SELECT id, " + titleExpr + " AS title FROM page_data " + baseWhere
+    String prevSql = "SELECT id, " + titleExpr + " AS title, " + slugExpr + " AS slug FROM page_data " + baseWhere
                 + " AND (" + sortExpr + " > " + curVal
                 + " OR (" + sortExpr + " = " + curVal + " AND id > :id))"
                 + " ORDER BY " + sortExpr + " ASC, id ASC LIMIT 1";
 
-    String nextSql = "SELECT id, " + titleExpr + " AS title FROM page_data " + baseWhere
+    String nextSql = "SELECT id, " + titleExpr + " AS title, " + slugExpr + " AS slug FROM page_data " + baseWhere
                 + " AND (" + sortExpr + " < " + curVal
                 + " OR (" + sortExpr + " = " + curVal + " AND id < :id))"
                 + " ORDER BY " + sortExpr + " DESC, id DESC LIMIT 1";
@@ -660,7 +664,8 @@ public class PageDataService {
         String sql = "SELECT id, data_slug,"
             + "  " + section + "->>'title'        AS title,"
             + "  " + section + "->>'publish_dttm' AS publish_dttm,"
-            + "  " + section + "->>'image'        AS image"
+            + "  " + section + "->>'image'        AS image,"
+            + "  data_json->'seo'->>'slug'         AS slug"
             + " FROM page_data"
             + " WHERE data_slug IN ('blog-data','press-data','articles-data')"
             + "  AND is_deleted = false"
@@ -686,7 +691,8 @@ public class PageDataService {
                 row[1] != null ? row[1].toString() : null,
                 row[2] != null ? row[2].toString() : null,
                 row[3] != null ? row[3].toString() : null,
-                row[4] != null ? row[4].toString() : null
+                row[4] != null ? row[4].toString() : null,
+                row[5] != null ? row[5].toString() : null
             ));
         }
         return result;
@@ -1177,7 +1183,8 @@ public class PageDataService {
             + " SELECT n.id, n.data_slug,"
             + "  " + section + "->>'title'        AS title,"
             + "  " + section + "->>'publish_dttm' AS publish_dttm,"
-            + "  " + section + "->>'image'        AS image"
+            + "  " + section + "->>'image'        AS image,"
+            + "  n.data_json->'seo'->>'slug'       AS slug"
             + " FROM page_data n"
             + " JOIN matched m ON m.id = n.id"
             + " WHERE n.is_deleted = false"
@@ -1202,7 +1209,8 @@ public class PageDataService {
                 row[1] != null ? row[1].toString() : null,
                 row[2] != null ? row[2].toString() : null,
                 row[3] != null ? row[3].toString() : null,
-                row[4] != null ? row[4].toString() : null
+                row[4] != null ? row[4].toString() : null,
+                row[5] != null ? row[5].toString() : null
             ));
         }
         return result;
@@ -1371,8 +1379,19 @@ public class PageDataService {
         /* 선택 단위 = 카테고리 매핑(depth3) 고유 id — 같은 제품이 여러 카테고리에 매핑돼도 매핑별로 독립 선택/보존된다.
            FE가 category-data(depth3 leaf) 행의 고유 id를 그대로 제출하므로 여기서 추출되는 값도 productId가 아니라
            매핑 자신의 id다(카테고리 매핑이 없는 예외적인 경우만 productId 그대로 폴백 — buildSnapshotEntry와 동일 관례,
-           저장되는 entry 형태 자체(id/productId/depth1/depth2/depth3)는 이전과 동일하게 유지된다) */
-        LinkedHashSet<Long> requestedIds = extractProductIdsFromFieldValue(incomingDataJson.get(fieldKey));
+           저장되는 entry 형태 자체(id/productId/depth1/depth2/depth3)는 이전과 동일하게 유지된다).
+           단, 레코드 복사처럼 이미 depth3까지 채워진 완성 객체가 그대로 들어오는 경우는 재조회 대상에서 제외한다 —
+           그 depth3 값을 productId로 오인해 category-data를 재조회하면 매핑을 못 찾아 depth가 전부 null로
+           덮어써지므로, 이미 완성된 항목은 그대로 신뢰하고 미완성 항목만 아래 조회 로직을 태운다 */
+        Object rawValue = incomingDataJson.get(fieldKey);
+        List<?> rawItems = rawValue instanceof List<?> l ? l : List.of();
+        List<Object> unresolvedItems = new ArrayList<>();
+        for (Object item : rawItems) {
+          boolean alreadyResolved = item instanceof Map<?, ?> m && toLongOrNull(m.get("depth3")) != null;
+          if (!alreadyResolved) unresolvedItems.add(item);
+        }
+
+        LinkedHashSet<Long> requestedIds = extractProductIdsFromFieldValue(unresolvedItems);
         Map<Long, Map<String, Object>> previousById = baseDataJson != null
             ? groupSnapshotEntriesByProductId(baseDataJson.get(fieldKey))
             : Map.of();
@@ -1384,11 +1403,21 @@ public class PageDataService {
         Map<Long, Map<String, Object>> resolved = resolveCategoryPathSnapshotByMappingIds(pathRel, idsToResolve);
 
         List<Map<String, Object>> merged = new ArrayList<>();
-        for (Long id : requestedIds) {
-          Map<String, Object> item = previousById.get(id);
-          if (item == null) item = resolved.get(id);
-          if (item == null) item = buildSnapshotEntry(id, null, null, null);
-          merged.add(item);
+        for (Object item : rawItems) {
+          if (item instanceof Map<?, ?> m && toLongOrNull(m.get("depth3")) != null) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resolvedItem = (Map<String, Object>) m;
+            merged.add(resolvedItem);
+            continue;
+          }
+          Long id = item instanceof Map<?, ?> m2
+              ? toLongOrNull(m2.containsKey("productId") ? m2.get("productId") : m2.get("id"))
+              : toLongOrNull(item);
+          if (id == null) continue;
+          Map<String, Object> resolvedItem = previousById.get(id);
+          if (resolvedItem == null) resolvedItem = resolved.get(id);
+          if (resolvedItem == null) resolvedItem = buildSnapshotEntry(id, null, null, null);
+          merged.add(resolvedItem);
         }
         result.put(fieldKey, merged);
       } catch (Exception e) {
@@ -3598,7 +3627,8 @@ public class PageDataService {
     Object[] row = rows.get(0);
     Long rowId = ((Number) row[0]).longValue();
     String title = row[1] != null ? row[1].toString() : null;
-    return new AdjacentResponse.AdjacentItem(rowId, title);
+    String rowSlug = row[2] != null ? row[2].toString() : null;
+    return new AdjacentResponse.AdjacentItem(rowId, title, rowSlug);
   }
 
   private record CondToken(String key, String op, String value, boolean isToday, boolean isNow) {}

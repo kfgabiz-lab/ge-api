@@ -6,6 +6,6 @@ package com.ge.bo.dto;
  */
 public record AdjacentResponse(AdjacentItem prev, AdjacentItem next) {
 
-    /** 인접글 단건 — id와 표시용 제목(title) */
-    public record AdjacentItem(Long id, String title) {}
+    /** 인접글 단건 — id, 표시용 제목(title), 상세 URL용 slug(미요청 시 null) */
+    public record AdjacentItem(Long id, String title, String slug) {}
 }

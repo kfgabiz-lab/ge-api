@@ -9,7 +9,7 @@ package com.ge.bo.dto;
  * @param snippet    본문 발췌(HTML raw) — integration_contents.content 앞 200자 캡. TECH_HUB 은 null(스니펫 없음). FE 에서 stripHtml.
  * @param imageUrl   썸네일 URL — TECH_HUB=YouTube hqdefault(video_url 파싱), 그 외=file_id 프록시(/api/v1/fo/page-files/{id}). 없으면 null.
  * @param sortDate   정렬/표시용 날짜 문자열(yyyy-MM-dd, 사이트 timezone 기준) — TECH_HUB=source_updated_at, 그 외=integration_contents.updated_at
- * @param link       상세 라우트(FE 라우팅 기준): /support/tech-hub/view/{id}, /company/{blog|press|articles|events}/detail/{id}
+ * @param slug       SEO slug(page_data.data_json.seo.slug) 또는 null — TECH_HUB은 slug 미사용(null). FE에서 id/slug로 상세 경로 조립(blogDetailHref 등 contentDetailPath 계열, TECH_HUB은 /support/tech-hub/view/{id})
  */
 public record MediaSearchItemResponse(
         String sourceType,
@@ -18,5 +18,5 @@ public record MediaSearchItemResponse(
         String snippet,
         String imageUrl,
         String sortDate,
-        String link
+        String slug
 ) {}

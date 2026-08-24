@@ -79,16 +79,12 @@ public class DownloadCenterService {
       + "                      AND v2.version_expose = true AND v2.is_deleted = false)"
       + " AND f.file_name ILIKE :q ESCAPE '\\')";
 
-    /** LV3 제품코드(예: L01-15-01)로 정확히 매핑된 콘텐츠뿐 아니라, LV3가 배정되지 않아 LV2/LV1까지만
-     *  매핑된 콘텐츠도 요청 제품의 상위 카테고리 기준으로 함께 노출한다 (contents_id=5060 등, 2026-08-05). */
+    /** LV3 제품코드(예: L01-15-01)로 정확히 매핑된 콘텐츠만 노출한다 — LV1/LV2까지만 매핑된(정확한
+     *  제품코드가 없는) 콘텐츠는 제외한다. */
     private static final String PRODUCT_CODE_EXISTS_CLAUSE =
         " EXISTS (SELECT 1 FROM contents_category cc3 WHERE cc3.contents_id = m.id"
       + "   AND cc3.nahp_display_flag = true AND cc3.is_deleted = false"
-      + "   AND ("
-      + "     cc3.category_l3_id IN (:productCodes)"
-      + "     OR (cc3.category_l3_id IS NULL AND cc3.category_l2_id IN (:productL2Codes))"
-      + "     OR (cc3.category_l3_id IS NULL AND cc3.category_l2_id IS NULL AND cc3.category_l1_id IN (:productL1Codes))"
-      + "   ))";
+      + "   AND cc3.category_l3_id IN (:productCodes))";
 
     /** 문서 1건이 여러 카테고리(contents_category)에 걸쳐 있어도 카드 표시/카운트/필터가 항상 같은 값을
      *  가리키도록, 문서당 대표 카테고리(LV1/LV2) 1개를 고정 선정하는 LATERAL 서브쿼리.
@@ -104,28 +100,6 @@ public class DownloadCenterService {
       + "            cc.category_l1_id ASC, cc.category_l2_id ASC NULLS LAST, cc.id ASC"
       + "   LIMIT 1"
       + " ) rc ON true";
-
-    /** LV3 제품코드 목록에서 LV2 상위 코드(첫 두 세그먼트, 예: L01-15-01 → L01-15)를 도출한다. */
-    private static List<String> deriveProductL2Codes(List<String> productCodes) {
-        return productCodes.stream().map(DownloadCenterService::toL2Code).distinct().toList();
-    }
-
-    /** LV3 제품코드 목록에서 LV1 상위 코드(첫 세그먼트, 예: L01-15-01 → L01)를 도출한다. */
-    private static List<String> deriveProductL1Codes(List<String> productCodes) {
-        return productCodes.stream().map(DownloadCenterService::toL1Code).distinct().toList();
-    }
-
-    private static String toL1Code(String l3Code) {
-        int firstDash = l3Code.indexOf('-');
-        return firstDash < 0 ? l3Code : l3Code.substring(0, firstDash);
-    }
-
-    private static String toL2Code(String l3Code) {
-        int firstDash = l3Code.indexOf('-');
-        if (firstDash < 0) return l3Code;
-        int secondDash = l3Code.indexOf('-', firstDash + 1);
-        return secondDash < 0 ? l3Code : l3Code.substring(0, secondDash);
-    }
 
     /** getContents/getCategoryCounts/getDocTypeCounts 가 공유하는 WHERE 절 빌더 결과.
      *  needsCategoryJoin 이 true 인 경우에만 REPRESENTATIVE_CATEGORY_JOIN 을 FROM 절에 붙이면 된다. */
@@ -186,8 +160,6 @@ public class DownloadCenterService {
         if (fc.hasParentCats()) query.setParameter("parentCats", parentCategories);
         if (fc.hasProductCodes()) {
             query.setParameter("productCodes", productCodes);
-            query.setParameter("productL2Codes", deriveProductL2Codes(productCodes));
-            query.setParameter("productL1Codes", deriveProductL1Codes(productCodes));
         }
     }
 

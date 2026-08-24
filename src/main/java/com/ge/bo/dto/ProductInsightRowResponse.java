@@ -11,11 +11,13 @@ package com.ge.bo.dto;
  * @param title       게시글 제목(data_json.title)
  * @param publishDttm 게시일시 원본 문자열(data_json.publish_dttm)
  * @param image       업로드 이미지 파일ID 배열의 JSON 텍스트("[123]") 또는 null — FE에서 첫 id → page-files URL 변환
+ * @param slug        SEO slug(data_json.seo.slug) 또는 null — FE 상세 경로 {id}/{slug} 구성에 사용
  */
 public record ProductInsightRowResponse(
         Long id,
         String dataSlug,
         String title,
         String publishDttm,
-        String image
+        String image,
+        String slug
 ) {}
