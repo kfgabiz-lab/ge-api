@@ -84,6 +84,14 @@ public class TrainingRegistrationService {
     @Value("${app.mail.logo-url}")
     private String logoUrl;
 
+    /** Payment Authorization Form 첨부 링크 — FO 사이트 public/docs 에 호스팅된 절대 URL */
+    @Value("${app.mail.payment-form-url}")
+    private String paymentFormUrl;
+
+    /** VFD 전용 첨부파일 링크 — FO 사이트 public/docs 에 호스팅된 절대 URL */
+    @Value("${app.mail.vfd-attachment-url}")
+    private String vfdAttachmentUrl;
+
     /**
      * 등록 접수 처리 — reCAPTCHA 검증 → 코드 검증 → 저장 → 결과 반환
      *
@@ -385,8 +393,7 @@ public class TrainingRegistrationService {
                         + "<li>ACH / Wire transfer</li><li>Check</li><li>Credit card (4% processing fee applies)</li></ul>"
                         + "Please complete the attached payment authorization form. An invoice can be provided upon request. "
                         + "Payment must be submitted at least one week before the scheduled class date."));
-            // TODO: Payment Authorization Form 실제 파일/URL 확정 필요(기획서에도 "개발 검토 필요"로 표시됨)
-            body.append(linkRow("#", "Payment Authorization Form"));
+            body.append(linkRow(paymentFormUrl, "Payment Authorization Form"));
         }
 
         List<String> additionalInfo = new ArrayList<>();
@@ -402,8 +409,7 @@ public class TrainingRegistrationService {
             .append(bulletListRow(additionalInfo, ctx.vfd()));
 
         if (ctx.vfd()) {
-            // TODO: VFD 전용 첨부파일 실제 파일/URL 확정 필요(기획서에도 "개발 검토 필요"로 표시됨)
-            body.append(attachmentLinkRow("#"));
+            body.append(attachmentLinkRow(vfdAttachmentUrl));
         }
 
         body.append(closingRow("We look forward to your participation.<br /><br />Sincerely,<br />LS ELECTRIC America"))
