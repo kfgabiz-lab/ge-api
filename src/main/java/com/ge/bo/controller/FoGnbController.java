@@ -34,4 +34,13 @@ public class FoGnbController {
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
         return ResponseEntity.ok(pageDataService.findDevicesTree(siteId));
     }
+    
+    /*
+     * explore-all 전용으로 단종 제품 포함하여 쿼리 추가
+     * */
+    @GetMapping("/devices-explore-all")
+    public ResponseEntity<List<DevicesTreeRowResponse>> getDevicesExploreAll(
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.ok(pageDataService.findDevicesExploreAll(siteId));
+    }
 }

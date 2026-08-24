@@ -636,6 +636,77 @@ public class PageDataService {
     }
     return result;
   }
+  
+  @Transactional(readOnly = true)
+  public List<DevicesTreeRowResponse> findDevicesExploreAll(Long siteId) {
+	  String sql = "SELECT"
+	      + "  c.id AS row_id,"
+	      + "  CASE WHEN jsonb_exists(c.data_json, 'category')"
+	      + "       THEN c.data_json->'category'->>'depth'"
+	      + "       ELSE c.data_json->'product'->>'depth'"
+	      + "  END AS depth,"
+	      + "  CASE WHEN jsonb_exists(c.data_json, 'category')"
+	      + "       THEN c.data_json->'category'->>'parentId'"
+	      + "       ELSE c.data_json->'product'->>'parentId'"
+	      + "  END AS parent_id,"
+	      + "  c.data_json->'category'->>'title'                 AS category_title,"
+	      + "  c.data_json->'device_systems'->>'description'     AS category_description,"
+	      + "  c.data_json->'seo'->>'slug'                        AS category_slug,"
+	      + "  c.data_json->>'sortOrder'                          AS sort_order,"
+	      + "  (c.data_json->'product'->>'id')::bigint            AS product_id,"
+	      + "  p.data_json->'seo'->>'slug'                        AS product_slug,"
+	      + "  p.data_json->'product'->>'product_name'            AS product_title,"
+	      + "  p.data_json->'product'->>'product_description'    AS product_description,"
+	      + "  p.data_json->'product_info'->>'gnb_image'          AS product_image,"
+	      + "  p.data_json->'product'->>'order_status'            AS product_order_status,"
+	      + "  p.data_json->'product'->>'order_method'            AS product_order_method"
+	      + " FROM page_data c"
+	      + " LEFT JOIN page_data p"
+	      + "  ON p.data_slug = 'product-data'"
+	      + " AND p.is_deleted = false"
+	      + " AND p.id = (c.data_json->'product'->>'id')::bigint"
+	      + " AND p.data_json->'product'->>'is_visible' = '001'"
+	      + " AND (p.site_id = :siteId OR p.site_id IS NULL)"
+	      + " WHERE c.data_slug = 'category-data'"
+	      + "  AND c.is_deleted = false"
+	      + "  AND CASE WHEN jsonb_exists(c.data_json, 'category')"
+	      + "           THEN c.data_json->'category'->>'is_visible' = '001'"
+	      + "           ELSE true"
+	      + "      END"
+	      + "  AND (NOT jsonb_exists(c.data_json, 'product') OR p.id IS NOT NULL)"
+	      + "  AND (c.site_id = :siteId OR c.site_id IS NULL)"
+	      + " ORDER BY"
+	      + "  CASE WHEN jsonb_exists(c.data_json, 'category') THEN c.data_json->'category'->>'depth' ELSE c.data_json->'product'->>'depth' END ASC,"
+	      + "  CASE WHEN c.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (c.data_json->>'sortOrder')::int END ASC NULLS LAST,"
+	      + "  c.id ASC";
+	
+	  Query query = entityManager.createNativeQuery(sql);
+	  query.setParameter("siteId", siteId);
+	
+	  @SuppressWarnings("unchecked")
+	      List<Object[]> rows = query.getResultList();
+	
+	  List<DevicesTreeRowResponse> result = new ArrayList<>();
+	  for (Object[] row : rows) {
+	    result.add(new DevicesTreeRowResponse(
+	        row[0] != null ? ((Number) row[0]).longValue() : null,
+	        row[1] != null ? row[1].toString() : null,
+	        row[2] != null ? row[2].toString() : null,
+	        row[3] != null ? row[3].toString() : null,
+	        row[4] != null ? row[4].toString() : null,
+	        row[5] != null ? row[5].toString() : null,
+	        row[6] != null ? row[6].toString() : null,
+	        row[7] != null ? ((Number) row[7]).longValue() : null,
+	        row[8] != null ? row[8].toString() : null,
+	        row[9] != null ? row[9].toString() : null,
+	        row[10] != null ? row[10].toString() : null,
+	        row[11] != null ? row[11].toString() : null,
+	        row[12] != null ? row[12].toString() : null,
+	        row[13] != null ? row[13].toString() : null
+	    ));
+	  }
+	  return result;
+	}
 
     @Transactional(readOnly = true)
     public Optional<String> findProductManagerEmail(Long productId, Long siteId) {
