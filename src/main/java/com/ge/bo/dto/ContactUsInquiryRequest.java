@@ -4,7 +4,6 @@ import jakarta.validation.constraints.*;
 
 /**
  * FO Contact Us 문의 접수 요청 (POST /api/v1/fo/contact-us)
- * ※ 기존 CTP 전송용 ContactUsRequest와는 별개 도메인
  * type/country는 여기서 정적 검증(@Pattern/@Size min)을 하지 않고,
  *   ContactUsInquiryService에서 공통코드(code_detail) 실시간 존재·활성 검증으로 전환한다.
  */
