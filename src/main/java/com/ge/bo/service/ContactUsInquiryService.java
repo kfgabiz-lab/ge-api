@@ -8,6 +8,7 @@ import com.ge.bo.dto.CtpContactUsPayload;
 import com.ge.bo.dto.CtpContactUsResult;
 import com.ge.bo.entity.CodeDetail;
 import com.ge.bo.exception.BusinessException;
+import com.ge.bo.exception.ErrorCode;
 import com.ge.bo.repository.CodeDetailRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -116,8 +117,11 @@ public class ContactUsInquiryService {
         log.info("Contact Us 문의 접수 CTP 전송 완료 - type={}, status={}, code={}, returnMessage={}",
                 request.type(), result.status(), result.returnCode(), result.returnMessage());
 
-        boolean success = "S".equals(result.status());
-        return new ContactUsInquiryResponse(success, null, ctpContactUsClient.resolveMessage(result));
+        if (!"S".equals(result.status())) {
+            throw new BusinessException(ErrorCode.CTP_SUBMIT_FAILED.getStatus(), ErrorCode.CTP_SUBMIT_FAILED.getCode(),
+                    ctpContactUsClient.resolveMessage(result));
+        }
+        return ContactUsInquiryResponse.success(null);
     }
 
     /** IF_SRR_NAHP_CTP_0001 Target 필드 규칙에 맞춰 CTP 전송 페이로드 조립 */
