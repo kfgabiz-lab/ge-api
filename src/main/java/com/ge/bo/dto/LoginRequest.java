@@ -20,6 +20,9 @@ public class LoginRequest {
   @Size(min = 4, max = 100, message = "비밀번호는 4자 이상 100자 이하로 입력해주세요.")
   private String password;
 
-  /** reCAPTCHA v2 검증 토큰 (FE에서 전달) */
-  private String recaptchaToken;
+  /** 자체 캡차 인증번호 (FE에서 입력값 전달) */
+  private String captchaCode;
+
+  /** 자체 캡차 발급 시 받은 암호화 토큰 (FE가 그대로 되돌려줌, stateless 검증용) */
+  private String captchaToken;
 }

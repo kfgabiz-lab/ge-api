@@ -32,7 +32,7 @@ public class AuthController {
   private boolean redisEnabled;
 
   /**
-   * 1단계 로그인 (이메일/비밀번호/reCAPTCHA 검증)
+   * 1단계 로그인 (이메일/비밀번호/캡차 검증)
    * totp.enabled=true  → tempToken 반환 (2FA 단계 진행)
    * totp.enabled=false → accessToken 직접 반환 + refreshToken 쿠키 발급
    */

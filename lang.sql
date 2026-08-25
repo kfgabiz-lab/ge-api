@@ -1153,3 +1153,34 @@ ON CONFLICT ("key") DO NOTHING;
 -- code_group, code_detail 테이블에 msgKey 컬럼 추가
 ALTER TABLE code_group  ADD COLUMN IF NOT EXISTS group_name_msg_key VARCHAR(255);
 ALTER TABLE code_detail ADD COLUMN IF NOT EXISTS name_msg_key       VARCHAR(255);
+
+-- ────────────── 자체 캡차(reCAPTCHA 대체) 신규 키 ──────────────
+INSERT INTO message_resource ("key", ko, en, is_active, resource_type, created_by, created_at, updated_by, updated_at)
+VALUES
+
+('validation.captcha.required',
+ '캡차 인증번호 4자리를 입력해주세요.',
+ 'Please enter the 4-digit CAPTCHA code.',
+ true, 'SENTENCE', 'system', NOW(), 'system', NOW()),
+
+('login.error.captcha',
+ '캡차 인증에 실패했습니다. 다시 시도해주세요.',
+ 'CAPTCHA verification failed. Please try again.',
+ true, 'SENTENCE', 'system', NOW(), 'system', NOW()),
+
+('login.error.captcha_expired',
+ '캡차가 만료되었습니다. 새로고침 후 다시 시도해주세요.',
+ 'The CAPTCHA has expired. Please refresh and try again.',
+ true, 'SENTENCE', 'system', NOW(), 'system', NOW()),
+
+('login.captcha.loading',
+ '캡차를 불러오는 중입니다. 잠시 후 다시 시도해주세요.',
+ 'Loading CAPTCHA. Please try again in a moment.',
+ true, 'SENTENCE', 'system', NOW(), 'system', NOW()),
+
+('login.captcha.load_failed',
+ '캡차를 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.',
+ 'Failed to load CAPTCHA. Please refresh and try again.',
+ true, 'SENTENCE', 'system', NOW(), 'system', NOW())
+
+ON CONFLICT ("key") DO NOTHING;

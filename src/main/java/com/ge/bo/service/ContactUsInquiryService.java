@@ -161,7 +161,7 @@ public class ContactUsInquiryService {
     private record ExceptionRouting(Boolean flag, String email) {
         private static final String LV1_SOFTWARE = "Software";
         private static final Set<String> SCADA_GROUP = Set.of("SCADA", "xEMS", "Micro Grid");
-        private static final String SMART_FACTORY = "Smart Factory";
+        private static final String DIAGNOSIS_SYSTEM = "Diagnosis System";
 
         static ExceptionRouting resolve(String productCategory) {
             if (productCategory == null || productCategory.isBlank()) {
@@ -177,7 +177,7 @@ public class ContactUsInquiryService {
             if (SCADA_GROUP.contains(lv2)) {
                 return new ExceptionRouting(true, "usnascada@ls-electric.com");
             }
-            if (SMART_FACTORY.equals(lv2)) {
+            if (DIAGNOSIS_SYSTEM.equals(lv2)) {
                 return new ExceptionRouting(true, "smartfactory.america@ls-electric.com");
             }
             return new ExceptionRouting(false, null);

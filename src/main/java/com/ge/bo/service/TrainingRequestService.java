@@ -32,8 +32,8 @@ import java.util.stream.Collectors;
 
 /**
  * FO Training Request(비정기 교육 신청, Step1~4) 접수 서비스
- * - 처리 순서: reCAPTCHA 검증 → 날짜 파싱 → selectedProducts JSON 직렬화 → insert
- * - TrainingRegistrationService 의 레이어 구조를 그대로 본떠 작성(reCAPTCHA 공용 서비스 재사용).
+ * - 처리 순서: 자체 캡차 검증 → 날짜 파싱 → selectedProducts JSON 직렬화 → insert
+ * - TrainingRegistrationService 의 레이어 구조를 그대로 본떠 작성(캡차 공용 서비스 재사용).
  * - 신청자가 입력한 값을 그대로 보존하는 이력성 저장이라 코드값 변환/공통코드 검증은 하지 않는다.
  * - 메일 발송은 신청자에게 신청확인 메일, 담당자(EMAIL_RECIPIENT 공통코드)에게 신청접수 알림 메일 — 각자에게 개별 발송한다.
  *   담당자 메일은 trainingFormat(In-Person/Virtual)에 따라 현장 위치 필드 포함 여부가 갈리고, 담당자는 Sales/Service 는
@@ -76,7 +76,7 @@ public class TrainingRequestService {
     private static final DateTimeFormatter DATE_DISPLAY_FORMAT = DateTimeFormatter.ofPattern("MMM d, yyyy");
 
     private final TrainingRequestRepository trainingRequestRepository;
-    private final RecaptchaService recaptchaService;
+    private final CaptchaService captchaService;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final CodeDetailRepository codeDetailRepository;
@@ -87,7 +87,7 @@ public class TrainingRequestService {
     private String logoUrl;
 
     /**
-     * 교육 신청 접수 처리 — reCAPTCHA 검증 → 저장 → 결과 반환
+     * 교육 신청 접수 처리 — 자체 캡차 검증 → 저장 → 결과 반환
      *
      * @param request  폼 요청 (Bean Validation 통과 후 진입)
      * @param clientIp 요청자 IP (컨트롤러에서 getRemoteAddr() 기준 추출)
@@ -96,8 +96,8 @@ public class TrainingRequestService {
     @Transactional
     public TrainingRequestSubmitResponse submit(TrainingRequestSubmitRequest request, String clientIp) {
 
-        // 1) reCAPTCHA 검증 (실패 시 BusinessException 발생 → 400)
-        recaptchaService.verify(request.recaptchaToken());
+        // 1) 자체 캡차 검증 (실패 시 BusinessException 발생 → 400)
+        captchaService.verify(request.captchaToken(), request.captchaCode());
 
         // 2) 희망 교육 일자 파싱("yyyy-MM-dd")
         LocalDate scheduleStart = parseDate(request.scheduleStart(), "교육 시작일");

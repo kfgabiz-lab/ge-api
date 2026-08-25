@@ -94,7 +94,7 @@ public class AuthService {
   private final CodeDetailRepository codeDetailRepository;
   private final PasswordEncoder passwordEncoder;
   private final JwtTokenProvider jwtTokenProvider;
-  private final RecaptchaService recaptchaService;
+  private final CaptchaService captchaService;
   private final LseSsoService lseSsoService;
   private final LoginAdminService loginAdminService;
   private final LoginLogService loginLogService;
@@ -119,12 +119,12 @@ public class AuthService {
   }
 
   /**
-   * 1단계 로그인 (reCAPTCHA + 비밀번호 검증)
+   * 1단계 로그인 (자체 캡차 + 비밀번호 검증)
    * ls.isApiLogin=true  → LS Electric SSO 서버 인증 후 JWT 발급 (TOTP 스킵)
    * totp.enabled=true   → tempToken 발급 후 2FA 단계 진행
    * totp.enabled=false  → 바로 accessToken 발급 (2FA 스킵)
    *
-   * @param request   로그인 요청 DTO (이메일/사원번호, 비밀번호, reCAPTCHA 토큰)
+   * @param request   로그인 요청 DTO (이메일/사원번호, 비밀번호, 캡차 인증번호)
    * @param clientIp  요청자 IP (AuthController에서 getRemoteAddr() 기준 추출)
    * @param userAgent 브라우저 User-Agent
    * @return LoginResponse
@@ -138,8 +138,8 @@ public class AuthService {
               "ID or password가 일치하지 않습니다.");
     }
 
-    // reCAPTCHA 토큰 검증 (로컬 로그인/SSO 로그인 공통 — 분기 이전에 반드시 통과)
-    recaptchaService.verify(request.getRecaptchaToken());
+    // 자체 캡차 검증 (로컬 로그인/SSO 로그인 공통 — 분기 이전에 반드시 통과)
+    captchaService.verify(request.getCaptchaToken(), request.getCaptchaCode());
 
     if (isApiLogin) {
       return ssoLogin(request, clientIp, userAgent, req);

@@ -114,8 +114,11 @@ public record TrainingRequestSubmitRequest(
 
         @AssertTrue(message = "개인정보 수집 및 이용에 동의해주세요.") Boolean consentChecked,
 
-        /** reCAPTCHA 토큰 — 검증에만 사용하고 저장하지 않는다 */
-        @NotBlank(message = "reCAPTCHA 인증을 완료해주세요.") String recaptchaToken) {
+        /** 자체 캡차 인증번호 — 검증에만 사용하고 저장하지 않는다 */
+        @NotBlank(message = "캡차 인증을 완료해주세요.") String captchaCode,
+
+        /** 자체 캡차 발급 시 받은 암호화 토큰 (FE가 그대로 되돌려줌, stateless 검증용) — 검증에만 사용하고 저장하지 않는다 */
+        @NotBlank(message = "캡차 인증을 완료해주세요.") String captchaToken) {
 
     /**
      * Step4 제품 선택 항목 — FE RequestForTrainingSelectedProduct 구조와 1:1 대응

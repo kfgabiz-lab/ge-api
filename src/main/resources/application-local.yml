@@ -77,7 +77,7 @@ ls:
       ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : "AIzaSyBkHvBn_MG-VWQd2C8-UA3PJBniWPy5QNk"
-      recapchaKey: ${RECAPTCHA_SECRET:6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe}
+      captchaKey: ${CAPTCHA_ENCRYPTION_KEY:LSE_Captcha_K16!}
       azure-search:
         api-url: ${AZURE_SEARCH_API_URL:}
         api-key: ${AZURE_SEARCH_API_KEY:}
