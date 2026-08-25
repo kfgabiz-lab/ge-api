@@ -31,6 +31,7 @@ public class LoginResponse {
     private String employeeId;
     private String role;
     private String roleDisplayName;
+    private String roleDisplayNameMsgKey;
     @JsonProperty("isSystem")
         private boolean isSystem; // 시스템관리자 여부 (role.is_system 기반)
   }

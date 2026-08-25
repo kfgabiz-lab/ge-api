@@ -18,12 +18,15 @@ public class RoleDto {
         @Pattern(regexp = "^[A-Z0-9_]+$", message = "영문 대문자, 숫자, _만 입력 가능합니다.")
         private String code;
 
-    @NotBlank(message = "표시명을 입력해주세요.")
-        @Size(max = 20, message = "표시명은 20자 이하여야 합니다.")
+    @Size(max = 20, message = "표시명은 20자 이하여야 합니다.")
         private String displayName;
+
+    private String displayNameMsgKey;
 
     @Size(max = 100, message = "설명은 100자 이하여야 합니다.")
         private String description;
+
+    private String descriptionMsgKey;
 
     @NotBlank(message = "색상을 선택해주세요.")
         @Pattern(regexp = "^#[0-9a-fA-F]{6}$", message = "올바른 색상 형식이 아닙니다.")
@@ -36,12 +39,15 @@ public class RoleDto {
   @AllArgsConstructor
   @Builder
   public static class UpdateRequest {
-    @NotBlank(message = "표시명을 입력해주세요.")
-        @Size(max = 20, message = "표시명은 20자 이하여야 합니다.")
+    @Size(max = 20, message = "표시명은 20자 이하여야 합니다.")
         private String displayName;
+
+    private String displayNameMsgKey;
 
     @Size(max = 100, message = "설명은 100자 이하여야 합니다.")
         private String description;
+
+    private String descriptionMsgKey;
 
     @NotBlank(message = "색상을 선택해주세요.")
         @Pattern(regexp = "^#[0-9a-fA-F]{6}$", message = "올바른 색상 형식이 아닙니다.")
@@ -57,7 +63,9 @@ public class RoleDto {
     private Long id;
     private String code;
     private String displayName;
+    private String displayNameMsgKey;
     private String description;
+    private String descriptionMsgKey;
     private String color;
     private boolean isSystem;
     private long memberCount; // 해당 역할을 가진 관리자 수
