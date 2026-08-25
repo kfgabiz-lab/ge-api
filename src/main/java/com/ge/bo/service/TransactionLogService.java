@@ -108,10 +108,15 @@ public class TransactionLogService {
       "(?i)(\"(?:password|passwordHash|passwd|pwd|secret|credentials|confirmPassword)\"\\s*:\\s*\")([^\"]*)(\")",
       Pattern.CASE_INSENSITIVE);
 
-  /** 개인정보 필드 암호화 패턴(가역, AES256) — FO 리드캡처 폼(Contact Us/Training/Newsletter) 실제 필드명 전수 */
+  /**
+   * 개인정보 필드 암호화 패턴(가역, AES256) — FO 리드캡처 폼(Contact Us/Training/Newsletter) 실제 필드명 전수
+   * requesterName: CtpContactUsPayload(서버→CTP 전송 payload) 전용 필드 — 호출부에서 이미 암호화되어 들어오므로
+   * saveExternalAsync 경로에서는 이중암호화 없이 조회 시 복호화 대상으로만 사용된다
+   */
   private static final Pattern PII_ENCRYPT_PATTERN = Pattern.compile(
       "(?i)(\"(?:email|firstName|lastName|studentName|companyName|company|phone|cellPhone|jobTitle|"
-      + "streetAddress|address2|apartment|city|stateProvince|state|zipCode|zip|contactPerson|contactDetails)\""
+      + "streetAddress|address2|apartment|city|stateProvince|state|zipCode|zip|contactPerson|contactDetails|"
+      + "requesterName)\""
       + "\\s*:\\s*\")([^\"]*)(\")",
       Pattern.CASE_INSENSITIVE);
 
@@ -147,6 +152,41 @@ public class TransactionLogService {
     } catch (Exception e) {
       // 로그 저장 실패가 메인 기능에 영향을 주지 않도록 예외를 삼킴
       log.warn("트랜잭션 로그 저장 실패: {}", e.getMessage());
+    }
+  }
+
+  /**
+   * 외부 API(서버→서버) 호출 트랜잭션 로그 비동기 저장
+   * FE→BE 요청(TransactionLogFilter)과 달리 clientIp/loginUser/siteId가 없고,
+   * 개인정보 필드는 호출부에서 이미 암호화(cryptoUtil.encrypt)된 상태로 넘어오므로
+   * 이중 암호화를 피하기 위해 encryptSensitiveFields는 적용하지 않고 마스킹만 적용한다.
+   *
+   * @param method      HTTP 메서드
+   * @param requestUrl  외부 API 요청 URL
+   * @param requestBody 요청 바디 원문(JSON) — PII 필드는 호출부에서 이미 암호화됨
+   * @param httpStatus  외부 API 응답 상태코드
+   * @param durationMs  처리 시간(ms)
+   */
+  @Async
+  public void saveExternalAsync(String method, String requestUrl, String requestBody,
+      int httpStatus, long durationMs) {
+    try {
+      TransactionLog transactionLog = TransactionLog.builder()
+          .actionType("EXTERNAL")
+          .method(method)
+          .requestUrl(requestUrl)
+          .requestBody(maskSensitiveFields(requestBody))
+          .httpStatus(httpStatus)
+          .loginUser(null)
+          .clientIp(null)
+          .durationMs(durationMs)
+          .siteId(null)
+          .build();
+
+      transactionLogRepository.save(transactionLog);
+    } catch (Exception e) {
+      // 로그 저장 실패가 메인 기능에 영향을 주지 않도록 예외를 삼킴
+      log.warn("외부 API 트랜잭션 로그 저장 실패: {}", e.getMessage());
     }
   }
 
