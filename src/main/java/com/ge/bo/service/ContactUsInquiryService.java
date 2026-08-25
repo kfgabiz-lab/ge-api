@@ -6,6 +6,7 @@ import com.ge.bo.dto.ContactUsInquiryRequest;
 import com.ge.bo.dto.ContactUsInquiryResponse;
 import com.ge.bo.dto.CtpContactUsPayload;
 import com.ge.bo.dto.CtpContactUsResult;
+import com.ge.bo.entity.CodeDetail;
 import com.ge.bo.exception.BusinessException;
 import com.ge.bo.repository.CodeDetailRepository;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,12 @@ public class ContactUsInquiryService {
     private static final String GROUP_INQUIRY_TYPE = "INQUIRY_TYPE";
     /** 공통코드 그룹 코드 — 국가(코드값 자체는 ISO 3166-1 alpha-2라 CTP Country로 그대로 사용 가능) */
     private static final String GROUP_COUNTRY = "COUNTRYCODE";
+    /** 담당자 이메일 공통코드 그룹(TrainingRegistrationService와 동일 패턴 — name 필드에 실제 수신 이메일 저장) */
+    private static final String GROUP_EMAIL_RECIPIENT = "EMAIL_RECIPIENT";
+    /** EMAIL_RECIPIENT 담당자 코드 — Software>SCADA/xEMS/Micro Grid 문의 라우팅용 */
+    private static final String RECIPIENT_CODE_SCADA = "CONTACT_US_SCADA";
+    /** EMAIL_RECIPIENT 담당자 코드 — Software>Diagnosis System(Smart Factory) 문의 라우팅용 */
+    private static final String RECIPIENT_CODE_SF = "CONTACT_US_SF";
 
     /** 신규 폼(UPPER_SNAKE_CASE) → CTP(PascalCase) 문의유형 매핑 */
     private static final Map<String, String> TYPE_TO_CTP = Map.of(
@@ -99,9 +106,10 @@ public class ContactUsInquiryService {
         // 3) CTP(Salesforce) 전송 — 접수일시는 요청 사이트(X-Site-Id)의 timezone 기준(없으면 서버 기본 zone)
         OffsetDateTime inquiryDateTime = OffsetDateTime.now(siteTimeZoneResolver.resolve(siteId));
         ExceptionRouting routing = ExceptionRouting.resolve(request.productCategory());
+        String routingEmail = routing.recipientCode() != null ? resolveRecipientEmail(routing.recipientCode()) : null;
         String productInformationInquiryType = resolveProductInformationInquiryType(request.productId(), siteId);
 
-        CtpContactUsPayload payload = buildCtpPayload(request, inquiryDateTime, routing, productInformationInquiryType);
+        CtpContactUsPayload payload = buildCtpPayload(request, inquiryDateTime, routing, routingEmail, productInformationInquiryType);
         CtpContactUsResult result = ctpContactUsClient.send(payload);
 
         // 개인정보(이메일/이름/문의내용 등)는 로그에 남기지 않고, 추적용 결과값만 기록
@@ -114,7 +122,8 @@ public class ContactUsInquiryService {
 
     /** IF_SRR_NAHP_CTP_0001 Target 필드 규칙에 맞춰 CTP 전송 페이로드 조립 */
     private CtpContactUsPayload buildCtpPayload(ContactUsInquiryRequest request, OffsetDateTime inquiryDateTime,
-                                                 ExceptionRouting routing, String productInformationInquiryType) {
+                                                 ExceptionRouting routing, String routingEmail,
+                                                 String productInformationInquiryType) {
         String ctpType = TYPE_TO_CTP.getOrDefault(request.type(), request.type());
         String subject = "[LS ELECTRIC America][" + inquiryDateTime.format(SUBJECT_DATE_FORMAT) + "] " + ctpType;
 
@@ -132,7 +141,15 @@ public class ContactUsInquiryService {
                 request.marketingOptInFlag(),
                 inquiryDateTime.format(INQUIRY_DATE_FORMAT),
                 routing.flag(),
-                routing.email());
+                routingEmail);
+    }
+
+    /** EMAIL_RECIPIENT 코드 → 수신 이메일(name 필드) 조회 */
+    private String resolveRecipientEmail(String recipientCode) {
+        return codeDetailRepository.findByGroup_GroupCodeAndCodeAndActiveTrue(GROUP_EMAIL_RECIPIENT, recipientCode)
+                .map(CodeDetail::getName)
+                .filter(name -> !name.isBlank())
+                .orElse(null);
     }
 
     /**
@@ -154,11 +171,12 @@ public class ContactUsInquiryService {
 
     /**
      * productCategory("Lv1 | Lv2 | Lv3") 라벨 기준 문의 예외 처리 판정
-     * - Lv1 = "Software" 이고 Lv2 = "SCADA"/"xEMS"/"Micro Grid" → usnascada@ls-electric.com
-     * - Lv1 = "Software" 이고 Lv2 = "Smart Factory" → smartfactory.america@ls-electric.com
+     * - Lv1 = "Software" 이고 Lv2 = "SCADA"/"xEMS"/"Micro Grid" → EMAIL_RECIPIENT 코드 CONTACT_US_SCADA
+     * - Lv1 = "Software" 이고 Lv2 = "Smart Factory" → EMAIL_RECIPIENT 코드 CONTACT_US_SF
+     * 실제 수신 이메일은 하드코딩하지 않고 resolveRecipientEmail()에서 공통코드(EMAIL_RECIPIENT)로 조회한다.
      * (구 CTP 서비스는 "L06"/"L06-01" 같은 코드값으로 판정했으나, 신규 폼은 코드값이 없어 devices-tree 실제 카테고리 라벨로 판정한다)
      */
-    private record ExceptionRouting(Boolean flag, String email) {
+    private record ExceptionRouting(Boolean flag, String recipientCode) {
         private static final String LV1_SOFTWARE = "Software";
         private static final Set<String> SCADA_GROUP = Set.of("SCADA", "xEMS", "Micro Grid");
         private static final String DIAGNOSIS_SYSTEM = "Diagnosis System";
@@ -175,10 +193,10 @@ public class ContactUsInquiryService {
                 return new ExceptionRouting(false, null);
             }
             if (SCADA_GROUP.contains(lv2)) {
-                return new ExceptionRouting(true, "usnascada@ls-electric.com");
+                return new ExceptionRouting(true, RECIPIENT_CODE_SCADA);
             }
             if (DIAGNOSIS_SYSTEM.equals(lv2)) {
-                return new ExceptionRouting(true, "smartfactory.america@ls-electric.com");
+                return new ExceptionRouting(true, RECIPIENT_CODE_SF);
             }
             return new ExceptionRouting(false, null);
         }
