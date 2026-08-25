@@ -37,8 +37,11 @@ public class FoDownloadCenterController {
      * - productCodes: LV3 제품코드(contents_category.category_l3_id, 예: L01-02-01) 콤마구분(IN). 미지정 시 전체.
      *   제품상세(/product/[slug]) Downloads 섹션에서 "현재 제품과 연계된 파일만" 거를 때 사용.
      *   한 제품 slug 가 복수 product_code 를 가질 수 있어 다중값을 받는다. categories 와는 AND 결합.
-     * - sort: doctype(문서유형 우선순위 → 동일 유형 내 등록일시 내림차순)/newest(기본)/oldest/title/title_desc.
-     *   페이지 크기 기본 12.
+     * - sort: doctype(문서유형 우선순위 → 동일 유형 내 등록일시 내림차순)/newest(기본)/relevance/title/title_desc.
+     *   relevance 는 includeFileContent=true 로 얻은 파일내용 매칭 순서(Azure 관련도)를 우선 적용하고,
+     *   매칭이 없으면 newest 와 동일하게 동작한다. 페이지 크기 기본 12.
+     * - includeFileContent: true 일 때만 Azure AI Search 파일내용 매칭을 q 조건에 OR 로 포함한다.
+     *   Download Center 전용이며, 제품상세 Downloads 는 미사용(false).
      */
     @GetMapping("/contents")
     public ResponseEntity<DownloadCenterContentPageResponse> getContents(
@@ -47,6 +50,7 @@ public class FoDownloadCenterController {
             @RequestParam(required = false) String parentCategories,
             @RequestParam(required = false) String docTypes,
             @RequestParam(required = false) String productCodes,
+            @RequestParam(defaultValue = "false") boolean includeFileContent,
             @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size) {
@@ -55,7 +59,8 @@ public class FoDownloadCenterController {
         List<String> docTypeList = parseCsv(docTypes);
         List<String> productCodeList = parseCsv(productCodes);
         return ResponseEntity.ok(
-            downloadCenterService.getContents(q, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList, sort, page, size));
+            downloadCenterService.getContents(
+                q, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList, includeFileContent, sort, page, size));
     }
 
     /**
@@ -65,6 +70,9 @@ public class FoDownloadCenterController {
      * - 파라미터 의미는 /contents 와 동일(미지정 시 전체 기준). 응답의 l1Counts 합계/l2Counts 합계는
      *   해당 필터 기준 total 과 항상 일치한다.
      * - 응답 구조: { l1Counts: [{categoryL1Id, count}], l2Counts: [{categoryL1Id, categoryL2Id, count}] }
+     * - includeFileContent: true 일 때만 Azure AI Search 파일내용 매칭을 q 조건에 OR 로 포함한다.
+     *   Download Center 전용이며, 제품상세 Downloads 는 미사용(false). /contents 와 반드시 동일 값으로 호출해야
+     *   목록 total 과 카운트가 정합된다.
      */
     @GetMapping("/category-counts")
     public ResponseEntity<DownloadCenterCategoryCountsResponse> getCategoryCounts(
@@ -72,13 +80,15 @@ public class FoDownloadCenterController {
             @RequestParam(required = false) String categories,
             @RequestParam(required = false) String parentCategories,
             @RequestParam(required = false) String docTypes,
-            @RequestParam(required = false) String productCodes) {
+            @RequestParam(required = false) String productCodes,
+            @RequestParam(defaultValue = "false") boolean includeFileContent) {
         List<String> categoryL2Ids = parseCsv(categories);
         List<String> categoryL1Ids = parseCsv(parentCategories);
         List<String> docTypeList = parseCsv(docTypes);
         List<String> productCodeList = parseCsv(productCodes);
         return ResponseEntity.ok(
-            downloadCenterService.getCategoryCounts(q, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList));
+            downloadCenterService.getCategoryCounts(
+                q, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList, includeFileContent));
     }
 
     /**
@@ -90,6 +100,9 @@ public class FoDownloadCenterController {
      * - 파라미터 의미는 /contents 와 동일(미지정 시 전체 기준). categories/parentCategories 는 대표 카테고리 기준.
      * - productCodes: LV3 제품코드(contents_category.category_l3_id, 예: L02-01-01) 콤마구분.
      *   지정 시 해당 제품에 연계된 콘텐츠만 유형별 집계 → 제품상세 Downloads 섹션의 Document Type 필터 유형별 검색결과 수.
+     * - includeFileContent: true 일 때만 Azure AI Search 파일내용 매칭을 q 조건에 OR 로 포함한다.
+     *   Download Center 전용이며, 제품상세 Downloads 는 미사용(false). /contents 와 반드시 동일 값으로 호출해야
+     *   목록 total 과 카운트가 정합된다.
      */
     @GetMapping("/doctype-counts")
     public ResponseEntity<List<DownloadCenterDocTypeCountResponse>> getDocTypeCounts(
@@ -97,13 +110,15 @@ public class FoDownloadCenterController {
             @RequestParam(required = false) String categories,
             @RequestParam(required = false) String parentCategories,
             @RequestParam(required = false) String docTypes,
-            @RequestParam(required = false) String productCodes) {
+            @RequestParam(required = false) String productCodes,
+            @RequestParam(defaultValue = "false") boolean includeFileContent) {
         List<String> categoryL2Ids = parseCsv(categories);
         List<String> categoryL1Ids = parseCsv(parentCategories);
         List<String> docTypeList = parseCsv(docTypes);
         List<String> productCodeList = parseCsv(productCodes);
         return ResponseEntity.ok(
-            downloadCenterService.getDocTypeCounts(q, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList));
+            downloadCenterService.getDocTypeCounts(
+                q, categoryL2Ids, categoryL1Ids, docTypeList, productCodeList, includeFileContent));
     }
 
     /**

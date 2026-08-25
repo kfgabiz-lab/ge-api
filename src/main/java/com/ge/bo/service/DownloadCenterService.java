@@ -39,6 +39,8 @@ public class DownloadCenterService {
 
     private static final String DOC_TYPE_GROUP_CODE = "DOC_TYPE";
 
+    private static final String TITLE_EXPR = "COALESCE(m.nahp_title, m.doc_title)";
+
     private static final String MASTER_GATE =
         " m.expose = true AND m.is_deleted = false"
       + " AND m.doc_type IN (SELECT cd.code FROM code_detail cd"
@@ -105,7 +107,8 @@ public class DownloadCenterService {
      *  needsCategoryJoin 이 true 인 경우에만 REPRESENTATIVE_CATEGORY_JOIN 을 FROM 절에 붙이면 된다. */
     private record FilterClause(
             String where, boolean hasQ, boolean hasDocTypes,
-            boolean hasCats, boolean hasParentCats, boolean hasProductCodes) {
+            boolean hasCats, boolean hasParentCats, boolean hasProductCodes,
+            boolean hasContentIds) {
         boolean needsCategoryJoin() {
             return hasCats || hasParentCats;
         }
@@ -117,19 +120,23 @@ public class DownloadCenterService {
      *  FROM contents_master m 뒤에 추가해야 한다. */
     private static FilterClause buildFilterClause(
             String q, List<String> categories, List<String> parentCategories,
-            List<String> docTypes, List<String> productCodes) {
+            List<String> docTypes, List<String> productCodes, List<Long> contentIds) {
         boolean hasQ = q != null && !q.isBlank();
         boolean hasCats = categories != null && !categories.isEmpty();
         boolean hasParentCats = parentCategories != null && !parentCategories.isEmpty();
         boolean hasDocTypes = docTypes != null && !docTypes.isEmpty();
         boolean hasProductCodes = productCodes != null && !productCodes.isEmpty();
+        boolean hasContentIds = hasQ && contentIds != null && !contentIds.isEmpty();
 
         StringBuilder where = new StringBuilder(" WHERE").append(MASTER_GATE);
         if (hasQ) {
-            where.append(" AND (COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'")
+            where.append(" AND (").append(TITLE_EXPR).append(" ILIKE :q ESCAPE '\\'")
                  .append(" OR ").append(DOC_TYPE_NAME_MATCH)
-                 .append(" OR ").append(FILE_NAME_MATCH)
-                 .append(")");
+                 .append(" OR ").append(FILE_NAME_MATCH);
+            if (hasContentIds) {
+                where.append(" OR m.id IN (:contentIds)");
+            }
+            where.append(")");
         }
         if (hasDocTypes) {
             where.append(" AND m.doc_type IN (:docTypes)");
@@ -147,13 +154,14 @@ public class DownloadCenterService {
         if (hasProductCodes) {
             where.append(" AND").append(PRODUCT_CODE_EXISTS_CLAUSE);
         }
-        return new FilterClause(where.toString(), hasQ, hasDocTypes, hasCats, hasParentCats, hasProductCodes);
+        return new FilterClause(
+            where.toString(), hasQ, hasDocTypes, hasCats, hasParentCats, hasProductCodes, hasContentIds);
     }
 
     private static void applyFilterParams(
             Query query, FilterClause fc,
             String q, List<String> categories, List<String> parentCategories,
-            List<String> docTypes, List<String> productCodes) {
+            List<String> docTypes, List<String> productCodes, List<Long> contentIds) {
         if (fc.hasQ()) query.setParameter("q", "%" + q.trim() + "%");
         if (fc.hasDocTypes()) query.setParameter("docTypes", docTypes);
         if (fc.hasCats()) query.setParameter("cats", categories);
@@ -161,40 +169,42 @@ public class DownloadCenterService {
         if (fc.hasProductCodes()) {
             query.setParameter("productCodes", productCodes);
         }
+        if (fc.hasContentIds()) {
+            query.setParameter("contentIds", contentIds);
+        }
     }
 
     @Transactional(readOnly = true)
     public DownloadCenterContentPageResponse getContents(
             String q, List<String> categories, List<String> parentCategories,
-            List<String> docTypes, List<String> productCodes,
+            List<String> docTypes, List<String> productCodes, boolean includeFileContent,
             String sort, int page, int size) {
         int safeSize = size <= 0 ? 12 : size;
         int safePage = Math.max(page, 0);
 
-        FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes);
+        List<Long> contentIds = (includeFileContent && q != null && !q.isBlank())
+                ? new ArrayList<>(findFileContentMatchRanks(q).keySet())
+                : List.of();
+
+        FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes, contentIds);
         String categoryJoin = fc.needsCategoryJoin() ? REPRESENTATIVE_CATEGORY_JOIN : "";
 
         Query countQuery = entityManager.createNativeQuery(
             "SELECT count(*) FROM contents_master m" + categoryJoin + fc.where());
-        applyFilterParams(countQuery, fc, q, categories, parentCategories, docTypes, productCodes);
+        applyFilterParams(countQuery, fc, q, categories, parentCategories, docTypes, productCodes, contentIds);
         long total = ((Number) countQuery.getSingleResult()).longValue();
 
         Query idQuery = entityManager.createNativeQuery(
             "SELECT m.id FROM contents_master m"
             + (isDocTypeSort(sort) ? DOC_TYPE_CODE_JOIN : "")
             + categoryJoin
-            + fc.where() + orderByClause(sort)
+            + fc.where() + orderByClause(sort, contentIds)
             + " LIMIT :size OFFSET :offset");
-        applyFilterParams(idQuery, fc, q, categories, parentCategories, docTypes, productCodes);
+        applyFilterParams(idQuery, fc, q, categories, parentCategories, docTypes, productCodes, contentIds);
         idQuery.setParameter("size", safeSize);
         idQuery.setParameter("offset", safePage * safeSize);
 
-        @SuppressWarnings("unchecked")
-        List<Object> idRows = idQuery.getResultList();
-        List<Long> pageIds = new ArrayList<>();
-        for (Object o : idRows) {
-            pageIds.add(((Number) o).longValue());
-        }
+        List<Long> pageIds = toIdList(idQuery.getResultList());
 
         List<DownloadCenterContentResponse> content =
             pageIds.isEmpty() ? new ArrayList<>() : loadContents(pageIds);
@@ -209,20 +219,14 @@ public class DownloadCenterService {
             return new FoDocumentSearchResponse(0L, new ArrayList<>());
         }
         int safeLimit = limit <= 0 ? 10 : limit;
-
         String trimmed = q.trim();
-        String kw = SearchSqlSupport.toLikePattern(trimmed);
-        String kwExact = SearchSqlSupport.toLikeExactPattern(trimmed);
-        String kwPrefix = SearchSqlSupport.toLikePrefixPattern(trimmed);
-        String kwRegex = SearchSqlSupport.toWordStartRegex(trimmed);
+        List<Long> contentIds = List.of();
+
+        FilterClause fc = buildFilterClause(trimmed, null, null, null, null, contentIds);
 
         Query countQuery = entityManager.createNativeQuery(
-            "SELECT count(*) FROM contents_master m"
-            + " WHERE" + MASTER_GATE
-            + " AND (COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
-            + " OR " + DOC_TYPE_NAME_MATCH
-            + " OR " + FILE_NAME_MATCH + ")");
-        countQuery.setParameter("q", kw);
+            "SELECT count(*) FROM contents_master m" + fc.where());
+        applyFilterParams(countQuery, fc, trimmed, null, null, null, null, contentIds);
         long total = ((Number) countQuery.getSingleResult()).longValue();
         if (total == 0) {
             return new FoDocumentSearchResponse(0L, new ArrayList<>());
@@ -231,31 +235,14 @@ public class DownloadCenterService {
         Query idQuery = entityManager.createNativeQuery(
             "SELECT m.id FROM contents_master m"
             + DOC_TYPE_CODE_JOIN
-            + " WHERE" + MASTER_GATE
-            + " AND (COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
-            + " OR " + DOC_TYPE_NAME_MATCH
-            + " OR " + FILE_NAME_MATCH + ")"
-            + " ORDER BY (CASE"
-            + "            WHEN COALESCE(m.nahp_title, m.doc_title) ILIKE :qExact  ESCAPE '\\' THEN 100"
-            + "            WHEN COALESCE(m.nahp_title, m.doc_title) ILIKE :qPrefix ESCAPE '\\' THEN 80"
-            + "            WHEN COALESCE(m.nahp_title, m.doc_title) ~* :qRegex THEN 60"
-            + "            ELSE 40 END) DESC,"
-            + "          cd.sort_order ASC NULLS LAST,"
-            + "          m.source_updated_at DESC NULLS LAST,"
-            + "          m.id DESC"
+            + fc.where()
+            + searchRankOrderBy(contentIds)
             + " LIMIT :limit");
-        idQuery.setParameter("q", kw);
-        idQuery.setParameter("qExact", kwExact);
-        idQuery.setParameter("qPrefix", kwPrefix);
-        idQuery.setParameter("qRegex", kwRegex);
+        applyFilterParams(idQuery, fc, trimmed, null, null, null, null, contentIds);
+        applySearchRankParams(idQuery, trimmed);
         idQuery.setParameter("limit", safeLimit);
 
-        @SuppressWarnings("unchecked")
-        List<Object> idRows = idQuery.getResultList();
-        List<Long> pageIds = new ArrayList<>();
-        for (Object o : idRows) {
-            pageIds.add(((Number) o).longValue());
-        }
+        List<Long> pageIds = toIdList(idQuery.getResultList());
 
         List<DownloadCenterContentResponse> items =
             pageIds.isEmpty() ? new ArrayList<>() : loadContents(pageIds);
@@ -263,20 +250,83 @@ public class DownloadCenterService {
         return new FoDocumentSearchResponse(total, items);
     }
 
-    /**
-     * 챗봇 keyword(+연관검색어, 콤마구분)로 (1) Azure AI Search 후보(file_name) 매칭과
-     * (2) contents_master 제목(주 키워드) 직접 매칭을 각각 수행해 하나의 리스트로 합친다.
-     * Azure 매칭 결과는 관련도 순위를 그대로 유지하고, 제목 직접매칭으로만 새로 추가된 문서는 그 뒤에 이어 붙인다
-     * (두 방식 모두에서 매칭된 문서는 Azure 순위를 그대로 씀). 페이징 없이 매칭된 전체 리스트를 반환하며,
-     * All탭 프리뷰/Documents탭은 이 리스트를 필요한 만큼만 잘라서 쓴다.
-     */
     @Transactional(readOnly = true)
     public List<DownloadCenterContentResponse> searchDocumentsByKeyword(String keyword) {
         if (keyword == null || keyword.isBlank()) {
             return new ArrayList<>();
         }
-        /* 콤마로 이어진 "키워드,연관검색어..."에서 주 키워드(첫 토큰)만 contents_master 제목 조회에 사용 */
-        String primaryKeyword = keyword.split(",", 2)[0].trim();
+        return searchDocumentsRanked(keyword, keyword.split(",", 2)[0].trim());
+    }
+
+    private List<DownloadCenterContentResponse> searchDocumentsRanked(String azureKeyword, String matchKeyword) {
+        List<Long> contentIds = new ArrayList<>(findFileContentMatchRanks(azureKeyword).keySet());
+        String q = matchKeyword == null ? "" : matchKeyword.trim();
+
+        if (q.isEmpty()) {
+            return contentIds.isEmpty() ? new ArrayList<>() : loadContents(contentIds);
+        }
+
+        FilterClause fc = buildFilterClause(q, null, null, null, null, contentIds);
+
+        Query idQuery = entityManager.createNativeQuery(
+            "SELECT m.id FROM contents_master m"
+            + DOC_TYPE_CODE_JOIN
+            + fc.where()
+            + searchRankOrderBy(fc.hasContentIds() ? contentIds : List.of()));
+        applyFilterParams(idQuery, fc, q, null, null, null, null, contentIds);
+        applySearchRankParams(idQuery, q);
+
+        List<Long> orderedIds = toIdList(idQuery.getResultList());
+        return orderedIds.isEmpty() ? new ArrayList<>() : loadContents(orderedIds);
+    }
+
+    private static String searchRankOrderBy(List<Long> contentIds) {
+        StringBuilder order = new StringBuilder(" ORDER BY ");
+        if (contentIds != null && !contentIds.isEmpty()) {
+            order.append("array_position(ARRAY[").append(joinLongs(contentIds))
+                 .append("]::bigint[], m.id) ASC NULLS LAST, ");
+        }
+        return order
+            .append("(CASE")
+            .append(" WHEN ").append(TITLE_EXPR).append(" ILIKE :qExact  ESCAPE '\\' THEN 100")
+            .append(" WHEN ").append(TITLE_EXPR).append(" ILIKE :qPrefix ESCAPE '\\' THEN 80")
+            .append(" WHEN ").append(TITLE_EXPR).append(" ~* :qRegex THEN 60")
+            .append(" WHEN ").append(TITLE_EXPR).append(" ILIKE :q ESCAPE '\\' THEN 50")
+            .append(" WHEN ").append(DOC_TYPE_NAME_MATCH).append(" THEN 40")
+            .append(" ELSE 20 END) DESC,")
+            .append(" cd.sort_order ASC NULLS LAST,")
+            .append(" m.source_updated_at DESC NULLS LAST,")
+            .append(" m.id DESC")
+            .toString();
+    }
+
+    private static void applySearchRankParams(Query query, String keyword) {
+        query.setParameter("qExact", SearchSqlSupport.toLikeExactPattern(keyword));
+        query.setParameter("qPrefix", SearchSqlSupport.toLikePrefixPattern(keyword));
+        query.setParameter("qRegex", SearchSqlSupport.toWordStartRegex(keyword));
+    }
+
+    private static List<Long> toIdList(List<?> rows) {
+        List<Long> ids = new ArrayList<>();
+        for (Object o : rows) {
+            ids.add(((Number) o).longValue());
+        }
+        return ids;
+    }
+
+    /**
+     * Azure AI Search(파일 본문 인덱스)로 keyword 에 매칭되는 파일명을 얻고, 그 파일명을 실제로 보유한
+     * contents_master 를 DB 에서 되찾아 "관련도 순위" 맵을 만든다.
+     * - 반환: contents_master.id → 0..k-1 로 조밀하게(dense) 재부여된 관련도 순번(LinkedHashMap = 순위 오름차순).
+     * - DB 재매칭은 MASTER_GATE + version_expose/file_expose 게이트만 적용하고 최신 버전 제한은 두지 않는다
+     *   (구버전 파일에서만 본문이 매칭되는 경우도 문서 단위로는 검색 결과에 포함시켜야 하므로).
+     * - Azure 실패/결과 없음이면 빈 맵을 반환한다.
+     */
+    private LinkedHashMap<Long, Integer> findFileContentMatchRanks(String keyword) {
+        LinkedHashMap<Long, Integer> ranks = new LinkedHashMap<>();
+        if (keyword == null || keyword.isBlank()) {
+            return ranks;
+        }
 
         AzureAiSearchResponse azureResponse = azureAiSearchService.azureAiSearch(keyword);
 
@@ -290,117 +340,53 @@ public class DownloadCenterService {
                 candidateFileNames.add(fn);
             }
         }
+        if (candidateFileNames.isEmpty()) {
+            return ranks;
+        }
+
+        Query matchQuery = entityManager.createNativeQuery(
+            "SELECT DISTINCT m.id, f.file_name FROM contents_master m"
+            + " JOIN contents_version v ON v.contents_id = m.id"
+            + "   AND v.version_expose = true AND v.is_deleted = false"
+            + " JOIN contents_file f ON f.contents_version_id = v.id"
+            + "   AND f.file_expose = true AND f.is_deleted = false"
+            + " WHERE" + MASTER_GATE
+            + " AND f.file_name IN (:fileNames)");
+        matchQuery.setParameter("fileNames", candidateFileNames);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = matchQuery.getResultList();
 
         Map<Long, Integer> masterBestRank = new LinkedHashMap<>();
-
-        /* ── 1) Azure 후보(file_name) 매칭 ── */
-        if (!candidateFileNames.isEmpty()) {
-            Query matchQuery = entityManager.createNativeQuery(
-                "SELECT DISTINCT m.id, f.file_name FROM contents_master m"
-                + " JOIN contents_version v ON v.contents_id = m.id"
-                + "   AND v.version_expose = true AND v.is_deleted = false"
-                + " JOIN contents_file f ON f.contents_version_id = v.id"
-                + "   AND f.file_expose = true AND f.is_deleted = false"
-                + " WHERE" + MASTER_GATE
-                + " AND f.file_name IN (:fileNames)");
-            matchQuery.setParameter("fileNames", candidateFileNames);
-
-            @SuppressWarnings("unchecked")
-            List<Object[]> rows = matchQuery.getResultList();
-            for (Object[] r : rows) {
-                Long masterId = ((Number) r[0]).longValue();
-                String fileName = r[1].toString();
-                Integer fnRank = fileNameRank.get(fileName);
-                if (fnRank == null) continue;
-                masterBestRank.merge(masterId, fnRank, Math::min);
-            }
-        }
-
-        /* ── 2) contents_master 제목(주 키워드) 직접 매칭 — Azure와 별개로 추가, Azure 순위 뒤로 이어 붙임 ── */
-        if (!primaryKeyword.isEmpty()) {
-            Query titleQuery = entityManager.createNativeQuery(
-                "SELECT DISTINCT m.id FROM contents_master m"
-                + " WHERE" + MASTER_GATE
-                + " AND COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'");
-            titleQuery.setParameter("q", SearchSqlSupport.toLikePattern(primaryKeyword));
-
-            @SuppressWarnings("unchecked")
-            List<Object> titleRows = titleQuery.getResultList();
-            int nextRank = fileNameRank.size();
-            for (Object o : titleRows) {
-                Long masterId = ((Number) o).longValue();
-                if (!masterBestRank.containsKey(masterId)) {
-                    masterBestRank.put(masterId, nextRank++);
-                }
-            }
-        }
-
-        /* ── 3) 문서유형 표시명(주 키워드) 직접 매칭 — 위와 동일하게 순위 뒤로 이어 붙임 ── */
-        if (!primaryKeyword.isEmpty()) {
-            Query docTypeQuery = entityManager.createNativeQuery(
-                "SELECT DISTINCT m.id FROM contents_master m"
-                + " WHERE" + MASTER_GATE
-                + " AND " + DOC_TYPE_NAME_MATCH);
-            docTypeQuery.setParameter("q", SearchSqlSupport.toLikePattern(primaryKeyword));
-
-            @SuppressWarnings("unchecked")
-            List<Object> docTypeRows = docTypeQuery.getResultList();
-            int nextRank = masterBestRank.size();
-            for (Object o : docTypeRows) {
-                Long masterId = ((Number) o).longValue();
-                if (!masterBestRank.containsKey(masterId)) {
-                    masterBestRank.put(masterId, nextRank++);
-                }
-            }
-        }
-
-        if (masterBestRank.isEmpty()) {
-            return new ArrayList<>();
+        for (Object[] r : rows) {
+            Long masterId = ((Number) r[0]).longValue();
+            String fileName = r[1].toString();
+            Integer fnRank = fileNameRank.get(fileName);
+            if (fnRank == null) continue;
+            masterBestRank.merge(masterId, fnRank, Math::min);
         }
 
         List<Long> orderedIds = masterBestRank.entrySet().stream()
             .sorted(Map.Entry.comparingByValue())
             .map(Map.Entry::getKey)
             .toList();
-
-        return loadContents(orderedIds);
+        for (Long id : orderedIds) {
+            ranks.put(id, ranks.size());
+        }
+        return ranks;
     }
 
-    /**
-     * FO 통합검색용 — 챗봇 keyword로 매칭된 전체 문서 리스트를 페이징/필터 없이 한 번에 반환한다.
-     * keyword 가 없으면(챗봇 응답 실패/지연) q(원본 검색어) 기준 제목 검색으로 대체 조회한다.
-     * All탭(4건)/Documents탭(10건씩 클라이언트 페이지네이션)의 슬라이싱과 카테고리/문서유형 필터는
-     * FE가 이 전체 리스트를 받아 클라이언트에서 처리한다(재호출 없음).
-     */
     @Transactional(readOnly = true)
     public FoDocumentSearchResponse getContentsByKeyword(String keyword, String q) {
-        List<DownloadCenterContentResponse> matched = (keyword != null && !keyword.isBlank())
-            ? searchDocumentsByKeyword(keyword)
-            : searchDocumentsByTitle(q);
+        List<DownloadCenterContentResponse> matched;
+        if (keyword != null && !keyword.isBlank()) {
+            matched = searchDocumentsByKeyword(keyword);
+        } else if (q != null && !q.isBlank()) {
+            matched = searchDocumentsRanked(q, q);
+        } else {
+            matched = new ArrayList<>();
+        }
         return new FoDocumentSearchResponse(matched.size(), matched);
-    }
-
-    /** keyword 없이 q(제목검색)만으로 매칭된 전체 문서 리스트를 반환한다(페이징 없음). */
-    private List<DownloadCenterContentResponse> searchDocumentsByTitle(String q) {
-        if (q == null || q.isBlank()) {
-            return new ArrayList<>();
-        }
-        Query idQuery = entityManager.createNativeQuery(
-            "SELECT m.id FROM contents_master m"
-            + " WHERE" + MASTER_GATE
-            + " AND (COALESCE(m.nahp_title, m.doc_title) ILIKE :q ESCAPE '\\'"
-            + " OR " + DOC_TYPE_NAME_MATCH
-            + " OR " + FILE_NAME_MATCH + ")"
-            + " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC");
-        idQuery.setParameter("q", SearchSqlSupport.toLikePattern(q.trim()));
-
-        @SuppressWarnings("unchecked")
-        List<Object> idRows = idQuery.getResultList();
-        List<Long> ids = new ArrayList<>();
-        for (Object o : idRows) {
-            ids.add(((Number) o).longValue());
-        }
-        return ids.isEmpty() ? new ArrayList<>() : loadContents(ids);
     }
 
     private Map<String, String> loadDocTypeLabels() {
@@ -411,16 +397,32 @@ public class DownloadCenterService {
         return labels;
     }
 
-    private String orderByClause(String sort) {
+    private static final String NEWEST_ORDER_BY =
+        " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC";
+
+    private String orderByClause(String sort, List<Long> contentIds) {
         String key = sort == null ? "" : sort.trim().toLowerCase();
         return switch (key) {
             case "doctype" -> " ORDER BY cd.sort_order ASC NULLS LAST"
                 + ", m.source_updated_at DESC NULLS LAST, m.id DESC";
-            case "oldest" -> " ORDER BY m.source_updated_at ASC NULLS LAST, m.id ASC";
             case "title" -> " ORDER BY COALESCE(m.nahp_title, m.doc_title) ASC, m.id ASC";
             case "title_desc" -> " ORDER BY COALESCE(m.nahp_title, m.doc_title) DESC, m.id DESC";
-            default -> " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC";
+            case "relevance" -> (contentIds == null || contentIds.isEmpty())
+                ? NEWEST_ORDER_BY
+                : " ORDER BY array_position(ARRAY[" + joinLongs(contentIds) + "]::bigint[], m.id) ASC NULLS LAST,"
+                  + "          m.source_updated_at DESC NULLS LAST, m.id DESC";
+            default -> NEWEST_ORDER_BY;
         };
+    }
+
+    /** Long 값만 콤마로 이어 붙인다(SQL 배열 리터럴 인라인용 — 사용자 입력 문자열은 절대 들어가지 않는다). */
+    private static String joinLongs(List<Long> ids) {
+        StringBuilder sb = new StringBuilder();
+        for (Long id : ids) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(Long.toString(id));
+        }
+        return sb.toString();
     }
 
     private static boolean isDocTypeSort(String sort) {
@@ -501,8 +503,12 @@ public class DownloadCenterService {
     @Transactional(readOnly = true)
     public DownloadCenterCategoryCountsResponse getCategoryCounts(
             String q, List<String> categories, List<String> parentCategories,
-            List<String> docTypes, List<String> productCodes) {
-        FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes);
+            List<String> docTypes, List<String> productCodes, boolean includeFileContent) {
+        List<Long> contentIds = (includeFileContent && q != null && !q.isBlank())
+                ? new ArrayList<>(findFileContentMatchRanks(q).keySet())
+                : List.of();
+
+        FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes, contentIds);
 
         String l2Sql = "SELECT rc.category_l1_id, rc.category_l2_id, count(*)::int"
             + " FROM contents_master m"
@@ -510,7 +516,7 @@ public class DownloadCenterService {
             + fc.where()
             + " GROUP BY rc.category_l1_id, rc.category_l2_id";
         Query l2Query = entityManager.createNativeQuery(l2Sql);
-        applyFilterParams(l2Query, fc, q, categories, parentCategories, docTypes, productCodes);
+        applyFilterParams(l2Query, fc, q, categories, parentCategories, docTypes, productCodes, contentIds);
         @SuppressWarnings("unchecked")
         List<Object[]> l2Rows = l2Query.getResultList();
         List<DownloadCenterCategoryCountResponse> l2Counts = new ArrayList<>();
@@ -527,7 +533,7 @@ public class DownloadCenterService {
             + fc.where()
             + " GROUP BY rc.category_l1_id";
         Query l1Query = entityManager.createNativeQuery(l1Sql);
-        applyFilterParams(l1Query, fc, q, categories, parentCategories, docTypes, productCodes);
+        applyFilterParams(l1Query, fc, q, categories, parentCategories, docTypes, productCodes, contentIds);
         @SuppressWarnings("unchecked")
         List<Object[]> l1Rows = l1Query.getResultList();
         List<DownloadCenterL1CategoryCountResponse> l1Counts = new ArrayList<>();
@@ -543,8 +549,12 @@ public class DownloadCenterService {
     @Transactional(readOnly = true)
     public List<DownloadCenterDocTypeCountResponse> getDocTypeCounts(
             String q, List<String> categories, List<String> parentCategories,
-            List<String> docTypes, List<String> productCodes) {
-        FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes);
+            List<String> docTypes, List<String> productCodes, boolean includeFileContent) {
+        List<Long> contentIds = (includeFileContent && q != null && !q.isBlank())
+                ? new ArrayList<>(findFileContentMatchRanks(q).keySet())
+                : List.of();
+
+        FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes, contentIds);
 
         String sql = "SELECT m.doc_type, count(*)::int"
             + " FROM contents_master m"
@@ -553,7 +563,7 @@ public class DownloadCenterService {
             + " GROUP BY m.doc_type";
 
         Query query = entityManager.createNativeQuery(sql);
-        applyFilterParams(query, fc, q, categories, parentCategories, docTypes, productCodes);
+        applyFilterParams(query, fc, q, categories, parentCategories, docTypes, productCodes, contentIds);
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
 
