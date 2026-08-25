@@ -226,6 +226,7 @@ public class AuthService {
     var roleEntity = roleRepository.findByCode(admin.getRole());
     boolean isSystem = roleEntity.map(role -> role.isSystem()).orElse(false);
     String roleDisplayName = roleEntity.map(role -> role.getDisplayName()).orElse(admin.getRole());
+    String roleDisplayNameMsgKey = roleEntity.map(role -> role.getDisplayNameMsgKey()).orElse(null);
 
     String newAccessToken = jwtTokenProvider.generateAccessToken(admin.getEmployeeId(), admin.getRole());
     return LoginResponse.builder()
@@ -238,6 +239,7 @@ public class AuthService {
             .employeeId(admin.getEmployeeId())
             .role(admin.getRole())
             .roleDisplayName(roleDisplayName)
+            .roleDisplayNameMsgKey(roleDisplayNameMsgKey)
             .isSystem(isSystem)
             .build())
         .build();
@@ -406,6 +408,7 @@ public class AuthService {
     var roleEntity = roleRepository.findByCode(admin.getRole());
     boolean isSystem = roleEntity.map(role -> role.isSystem()).orElse(false);
     String roleDisplayName = roleEntity.map(role -> role.getDisplayName()).orElse(admin.getRole());
+    String roleDisplayNameMsgKey = roleEntity.map(role -> role.getDisplayNameMsgKey()).orElse(null);
     if(redisEnabled){
       return LoginResponse.builder()
               .accessToken("SUCCESS")
@@ -416,6 +419,7 @@ public class AuthService {
                       .employeeId(admin.getEmployeeId())
                       .role(admin.getRole())
                       .roleDisplayName(roleDisplayName)
+            .roleDisplayNameMsgKey(roleDisplayNameMsgKey)
                       .isSystem(isSystem)
                       .build())
               .build();
@@ -431,6 +435,7 @@ public class AuthService {
                       .employeeId(admin.getEmployeeId())
                       .role(admin.getRole())
                       .roleDisplayName(roleDisplayName)
+            .roleDisplayNameMsgKey(roleDisplayNameMsgKey)
                       .isSystem(isSystem)
                       .build())
               .build();
@@ -571,6 +576,7 @@ public class AuthService {
     var roleEntity = roleRepository.findByCode(admin.getRole());
     boolean isSystem = roleEntity.map(role -> role.isSystem()).orElse(false);
     String roleDisplayName = roleEntity.map(role -> role.getDisplayName()).orElse(admin.getRole());
+    String roleDisplayNameMsgKey = roleEntity.map(role -> role.getDisplayNameMsgKey()).orElse(null);
 
     return LoginResponse.builder()
             .accessToken("SUCCESS") // 세션 방식에서는 accessToken 발급 안 함
@@ -581,6 +587,7 @@ public class AuthService {
                     .employeeId(admin.getEmployeeId())
                     .role(admin.getRole())
                     .roleDisplayName(roleDisplayName)
+            .roleDisplayNameMsgKey(roleDisplayNameMsgKey)
                     .isSystem(isSystem)
                     .build())
             .build();

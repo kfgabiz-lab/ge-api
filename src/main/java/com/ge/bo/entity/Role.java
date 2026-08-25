@@ -33,8 +33,14 @@ public class Role {
   @Column(nullable = false, length = 20)
     private String displayName;
 
+  @Column(name = "display_name_msg_key")
+    private String displayNameMsgKey;
+
   @Column(length = 100)
     private String description;
+
+  @Column(name = "description_msg_key")
+    private String descriptionMsgKey;
 
   @Column(nullable = false, length = 7)
     @Builder.Default

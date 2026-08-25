@@ -21,6 +21,7 @@ public class RoleService {
 
   private final RoleRepository roleRepository;
   private final AdminRepository adminRepository;
+  private final MessageResourceService messageResourceService;
 
   private static final String SYSTEM_ADMIN_CODE = "SYSTEM_ADMIN";
 
@@ -83,10 +84,28 @@ public class RoleService {
           HttpStatus.BAD_REQUEST, "DUPLICATE_ROLE_CODE", "이미 사용 중인 역할 코드입니다.");
     }
 
+    /* 표시명/표시명 msgKey — 둘 중 하나는 필수 */
+    boolean hasMsgKey = request.getDisplayNameMsgKey() != null && !request.getDisplayNameMsgKey().isBlank();
+    boolean hasDirectName = request.getDisplayName() != null && !request.getDisplayName().isBlank();
+    if (!hasMsgKey && !hasDirectName) {
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "ROLE_DISPLAY_NAME_REQUIRED", "표시명을 입력해주세요.");
+    }
+
+    /* 다국어 모드 ON: msgKey로 ko 값 조회 / OFF: 직접 입력값 사용 */
+    String displayNameKo = hasMsgKey
+        ? messageResourceService.resolveKo(request.getDisplayNameMsgKey())
+        : request.getDisplayName().trim();
+    boolean hasDescMsgKey = request.getDescriptionMsgKey() != null && !request.getDescriptionMsgKey().isBlank();
+    String descriptionKo = hasDescMsgKey
+        ? messageResourceService.resolveKo(request.getDescriptionMsgKey())
+        : (request.getDescription() != null ? request.getDescription().trim() : "");
+
     Role role = Role.builder()
         .code(request.getCode().toUpperCase())
-        .displayName(request.getDisplayName())
-        .description(request.getDescription())
+        .displayName(displayNameKo)
+        .displayNameMsgKey(hasMsgKey ? request.getDisplayNameMsgKey() : null)
+        .description(descriptionKo.isEmpty() ? null : descriptionKo)
+        .descriptionMsgKey(hasDescMsgKey ? request.getDescriptionMsgKey() : null)
         .color(request.getColor() != null ? request.getColor() : "#6b7280")
         .isSystem(false)
         .build();
@@ -114,8 +133,26 @@ public class RoleService {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "SUPER_ADMIN_ROLE", "최고 관리자 역할은 수정할 수 없습니다.");
     }
 
-    role.setDisplayName(request.getDisplayName());
-    role.setDescription(request.getDescription());
+    /* 표시명/표시명 msgKey — 둘 중 하나는 필수 */
+    boolean hasMsgKey = request.getDisplayNameMsgKey() != null && !request.getDisplayNameMsgKey().isBlank();
+    boolean hasDirectName = request.getDisplayName() != null && !request.getDisplayName().isBlank();
+    if (!hasMsgKey && !hasDirectName) {
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "ROLE_DISPLAY_NAME_REQUIRED", "표시명을 입력해주세요.");
+    }
+
+    /* 다국어 모드 ON: msgKey로 ko 값 조회 / OFF: 직접 입력값 사용 */
+    String displayNameKo = hasMsgKey
+        ? messageResourceService.resolveKo(request.getDisplayNameMsgKey())
+        : request.getDisplayName().trim();
+    boolean hasDescMsgKey = request.getDescriptionMsgKey() != null && !request.getDescriptionMsgKey().isBlank();
+    String descriptionKo = hasDescMsgKey
+        ? messageResourceService.resolveKo(request.getDescriptionMsgKey())
+        : (request.getDescription() != null ? request.getDescription().trim() : "");
+
+    role.setDisplayName(displayNameKo);
+    role.setDisplayNameMsgKey(hasMsgKey ? request.getDisplayNameMsgKey() : null);
+    role.setDescription(descriptionKo.isEmpty() ? null : descriptionKo);
+    role.setDescriptionMsgKey(hasDescMsgKey ? request.getDescriptionMsgKey() : null);
     role.setColor(request.getColor());
 
     return toResponse(roleRepository.save(role));
@@ -154,7 +191,9 @@ public class RoleService {
         .id(role.getId())
         .code(role.getCode())
         .displayName(role.getDisplayName())
+        .displayNameMsgKey(role.getDisplayNameMsgKey())
         .description(role.getDescription())
+        .descriptionMsgKey(role.getDescriptionMsgKey())
         .color(role.getColor())
         .isSystem(role.isSystem())
         .memberCount(memberCount)
