@@ -62,7 +62,7 @@ public class ContactUsInquiryService {
     @Transactional
     public ContactUsInquiryResponse submit(ContactUsInquiryRequest request, String clientIp, Long siteId) {
 
-        // 1) 입력값 검증 — 문의유형은 CTP picklist 고정값, 국가는 공통코드(활성 코드값만 통과, BO에서 코드 추가/비활성해도 소스 수정 불필요)
+        // 1) 입력값 검증 — 문의유형은 고정 4개 값(VALID_INQUIRY_TYPES), 국가는 공통코드(활성 코드값만 통과, BO에서 코드 추가/비활성해도 소스 수정 불필요)
         if (!VALID_INQUIRY_TYPES.contains(request.type())) {
             throw BusinessException.badRequest("유효하지 않은 문의 유형입니다.");
         }
