@@ -7,6 +7,9 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.OffsetDateTime;
+import java.util.List;
+
 /**
  * 이메일 발송 이력 Repository — 동적 필터(sendStatus/emailSendType/emailSendDetailType/recipientEmail/기간)를
  * Specification으로 조합해야 해서 JpaSpecificationExecutor를 함께 상속한다.
@@ -22,4 +25,7 @@ public interface EmailSendHisRepository extends JpaRepository<EmailSendHis, Long
     @Modifying
     @Query("UPDATE EmailSendHis e SET e.sendStatus = :sendStatus, e.updatedBy = :updatedBy, e.updatedAt = CURRENT_TIMESTAMP WHERE e.id = :id")
     int updateSendStatus(@Param("id") Long id, @Param("sendStatus") String sendStatus, @Param("updatedBy") String updatedBy);
+
+    @Query("SELECT e.id FROM EmailSendHis e WHERE e.sendStatus = 'F' AND e.createdAt >= :start AND e.createdAt < :end AND e.updatedAt = e.createdAt ORDER BY e.id")
+    List<Long> findAutoResendTargetIds(@Param("start") OffsetDateTime start, @Param("end") OffsetDateTime end);
 }
