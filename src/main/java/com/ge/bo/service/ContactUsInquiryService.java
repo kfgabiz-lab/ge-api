@@ -6,7 +6,6 @@ import com.ge.bo.dto.ContactUsInquiryRequest;
 import com.ge.bo.dto.ContactUsInquiryResponse;
 import com.ge.bo.dto.CtpContactUsPayload;
 import com.ge.bo.dto.CtpContactUsResult;
-import com.ge.bo.entity.CodeDetail;
 import com.ge.bo.exception.BusinessException;
 import com.ge.bo.exception.ErrorCode;
 import com.ge.bo.repository.CodeDetailRepository;
@@ -18,7 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * FO Contact Us 문의 접수 서비스
@@ -35,12 +33,8 @@ public class ContactUsInquiryService {
     private static final String GROUP_INQUIRY_TYPE = "INQUIRY_TYPE";
     /** 공통코드 그룹 코드 — 국가(코드값 자체는 ISO 3166-1 alpha-2라 CTP Country로 그대로 사용 가능) */
     private static final String GROUP_COUNTRY = "COUNTRYCODE";
-    /** 담당자 이메일 공통코드 그룹(TrainingRegistrationService와 동일 패턴 — name 필드에 실제 수신 이메일 저장) */
-    private static final String GROUP_EMAIL_RECIPIENT = "EMAIL_RECIPIENT";
-    /** EMAIL_RECIPIENT 담당자 코드 — Software>SCADA/xEMS/Micro Grid 문의 라우팅용 */
-    private static final String RECIPIENT_CODE_SCADA = "CONTACT_US_SCADA";
-    /** EMAIL_RECIPIENT 담당자 코드 — Software>Diagnosis System(Smart Factory) 문의 라우팅용 */
-    private static final String RECIPIENT_CODE_SF = "CONTACT_US_SF";
+    /** productCategory("Lv1 | Lv2 | Lv3") Lv1 라벨 — Software 여부에 따라 담당자 이메일을 보낼 CTP 필드가 갈린다 */
+    private static final String LV1_SOFTWARE = "Software";
 
     /** 신규 폼(UPPER_SNAKE_CASE) → CTP(PascalCase) 문의유형 매핑 */
     private static final Map<String, String> TYPE_TO_CTP = Map.of(
@@ -106,11 +100,21 @@ public class ContactUsInquiryService {
 
         // 3) CTP(Salesforce) 전송 — 접수일시는 요청 사이트(X-Site-Id)의 timezone 기준(없으면 서버 기본 zone)
         OffsetDateTime inquiryDateTime = OffsetDateTime.now(siteTimeZoneResolver.resolve(siteId));
-        ExceptionRouting routing = ExceptionRouting.resolve(request.productCategory());
-        String routingEmail = routing.recipientCode() != null ? resolveRecipientEmail(routing.recipientCode()) : null;
-        String productInformationInquiryType = resolveProductInformationInquiryType(request.productId(), siteId);
+        // 담당자가 제품에 2건 이상 등록될 수 있어 findProductManagerEmail()이 created_at DESC로 최신 1건만 반환한다
+        String managerEmail = request.productId() == null
+                ? null
+                : pageDataService.findProductManagerEmail(request.productId(), siteId).orElse(null);
 
-        CtpContactUsPayload payload = buildCtpPayload(request, inquiryDateTime, routing, routingEmail, productInformationInquiryType);
+        // Software 제품 → 담당자 이메일 그대로 InquiryProcessingExceptionEmail로 전송
+        // Software 외 제품 → 담당자 이메일의 "@" 앞부분만 ProductInformationInquiryType으로 전송
+        boolean isSoftware = isSoftwareCategory(request.productCategory());
+        String exceptionRoutingEmail = isSoftware ? managerEmail : null;
+        boolean isSoftwareException = exceptionRoutingEmail != null;
+        String productInformationInquiryType = (!isSoftware && managerEmail != null && managerEmail.contains("@"))
+                ? managerEmail.substring(0, managerEmail.indexOf('@')).trim()
+                : null;
+
+        CtpContactUsPayload payload = buildCtpPayload(request, inquiryDateTime, isSoftwareException, exceptionRoutingEmail, productInformationInquiryType);
         CtpContactUsResult result = ctpContactUsClient.send(payload);
 
         // 개인정보(이메일/이름/문의내용 등)는 로그에 남기지 않고, 추적용 결과값만 기록
@@ -126,7 +130,7 @@ public class ContactUsInquiryService {
 
     /** IF_SRR_NAHP_CTP_0001 Target 필드 규칙에 맞춰 CTP 전송 페이로드 조립 */
     private CtpContactUsPayload buildCtpPayload(ContactUsInquiryRequest request, OffsetDateTime inquiryDateTime,
-                                                 ExceptionRouting routing, String routingEmail,
+                                                 boolean isSoftwareException, String routingEmail,
                                                  String productInformationInquiryType) {
         String ctpType = TYPE_TO_CTP.getOrDefault(request.type(), request.type());
         String subject = "[LS ELECTRIC America][" + inquiryDateTime.format(SUBJECT_DATE_FORMAT) + "] " + ctpType;
@@ -144,65 +148,20 @@ public class ContactUsInquiryService {
                 cryptoUtil.encrypt(request.password()),
                 request.marketingOptInFlag(),
                 inquiryDateTime.format(INQUIRY_DATE_FORMAT),
-                routing.flag(),
+                isSoftwareException,
                 routingEmail);
     }
 
-    /** EMAIL_RECIPIENT 코드 → 수신 이메일(name 필드) 조회 */
-    private String resolveRecipientEmail(String recipientCode) {
-        return codeDetailRepository.findByGroup_GroupCodeAndCodeAndActiveTrue(GROUP_EMAIL_RECIPIENT, recipientCode)
-                .map(CodeDetail::getName)
-                .filter(name -> !name.isBlank())
-                .orElse(null);
-    }
-
-    /**
-     * Lv3(제품) product-data id로 담당자 이메일을 조회해 "@" 앞부분을 반환 (없으면 null)
-     */
-    private String resolveProductInformationInquiryType(Long productId, Long siteId) {
-        if (productId == null) {
-            return null;
+    /** productCategory("Lv1 | Lv2 | Lv3")의 Lv1이 Software인지 판정 */
+    private boolean isSoftwareCategory(String productCategory) {
+        if (isBlank(productCategory)) {
+            return false;
         }
-        return pageDataService.findProductManagerEmail(productId, siteId)
-                .filter(email -> email.contains("@"))
-                .map(email -> email.substring(0, email.indexOf('@')))
-                .orElse(null);
+        String lv1 = productCategory.split("\\s*\\|\\s*")[0];
+        return LV1_SOFTWARE.equals(lv1);
     }
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
-    }
-
-    /**
-     * productCategory("Lv1 | Lv2 | Lv3") 라벨 기준 문의 예외 처리 판정
-     * - Lv1 = "Software" 이고 Lv2 = "SCADA"/"xEMS"/"Micro Grid" → EMAIL_RECIPIENT 코드 CONTACT_US_SCADA
-     * - Lv1 = "Software" 이고 Lv2 = "Smart Factory" → EMAIL_RECIPIENT 코드 CONTACT_US_SF
-     * 실제 수신 이메일은 하드코딩하지 않고 resolveRecipientEmail()에서 공통코드(EMAIL_RECIPIENT)로 조회한다.
-     * (구 CTP 서비스는 "L06"/"L06-01" 같은 코드값으로 판정했으나, 신규 폼은 코드값이 없어 devices-tree 실제 카테고리 라벨로 판정한다)
-     */
-    private record ExceptionRouting(Boolean flag, String recipientCode) {
-        private static final String LV1_SOFTWARE = "Software";
-        private static final Set<String> SCADA_GROUP = Set.of("SCADA", "xEMS", "Micro Grid");
-        private static final String DIAGNOSIS_SYSTEM = "Diagnosis System";
-
-        static ExceptionRouting resolve(String productCategory) {
-            if (productCategory == null || productCategory.isBlank()) {
-                return new ExceptionRouting(false, null);
-            }
-            String[] labels = productCategory.split("\\s*\\|\\s*");
-            String lv1 = labels.length > 0 ? labels[0] : null;
-            String lv2 = labels.length > 1 ? labels[1] : null;
-
-            if (!LV1_SOFTWARE.equals(lv1)) {
-                return new ExceptionRouting(false, null);
-            }
-            if (SCADA_GROUP.contains(lv2)) {
-                return new ExceptionRouting(true, RECIPIENT_CODE_SCADA);
-            }
-            if (DIAGNOSIS_SYSTEM.equals(lv2)) {
-                return new ExceptionRouting(true, RECIPIENT_CODE_SF);
-            }
-            return new ExceptionRouting(false, null);
-        }
     }
 }

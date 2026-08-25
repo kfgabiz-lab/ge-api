@@ -708,6 +708,10 @@ public class PageDataService {
 	  return result;
 	}
 
+    /**
+     * 제품 담당자 이메일 조회 — 동일 제품에 담당자가 2건 이상 등록될 수 있어
+     * created_at DESC로 정렬해 가장 최근 등록된 담당자 1건만 사용한다(과거 미정렬 LIMIT 1은 순서 비결정적이었음)
+     */
     @Transactional(readOnly = true)
     public Optional<String> findProductManagerEmail(Long productId, Long siteId) {
         String sql = "SELECT data_json->'product_manager'->>'email'"
@@ -717,6 +721,7 @@ public class PageDataService {
             + "  AND data_json->'ms' @> to_jsonb(:productId)"
             + "  AND data_json->'product_manager'->>'is_visible' = '001'"
             + "  AND (site_id = :siteId OR site_id IS NULL)"
+            + " ORDER BY created_at DESC"
             + " LIMIT 1";
 
         Query query = entityManager.createNativeQuery(sql);
