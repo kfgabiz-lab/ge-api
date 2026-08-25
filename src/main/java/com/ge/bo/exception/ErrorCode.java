@@ -115,6 +115,9 @@ public enum ErrorCode {
     /* 연동 콘텐츠 (blog/articles/press → integration_contents 외부연동) */
     INTEGRATION_CONTENTS_FIELD_MISSING(HttpStatus.BAD_REQUEST, "INTEGRATION_CONTENTS_FIELD_MISSING", "title/content 값이 없어 외부연동 데이터를 저장할 수 없습니다."),
 
+    /* Contact Us (CTP/Salesforce 연동) */
+    CTP_SUBMIT_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "CTP_SUBMIT_FAILED", "문의 접수 처리 중 오류가 발생했습니다."),
+
     /* 공통 */
     DATA_INTEGRITY_VIOLATION(HttpStatus.CONFLICT, "DATA_INTEGRITY", "데이터 무결성 제약조건 위반이 발생했습니다.");
 

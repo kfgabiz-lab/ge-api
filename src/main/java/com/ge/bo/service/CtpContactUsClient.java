@@ -1,5 +1,6 @@
 package com.ge.bo.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ge.bo.common.client.ApiCallRequest;
 import com.ge.bo.common.client.ApiCallResult;
 import com.ge.bo.common.client.ExternalApiClient;
@@ -24,17 +25,36 @@ public class CtpContactUsClient {
     private final CtpAuthService ctpAuthService;
     private final ExternalApiClient externalApiClient;
     private final CtpProperties ctpProperties;
+    private final TransactionLogService transactionLogService;
+    private final ObjectMapper objectMapper;
 
     /** CTP 문의 접수 전송 실행 — 401(토큰 만료) 시 토큰 재발급 후 1회 재시도, 실패 시 Status="E"로 반환 */
     public CtpContactUsResult send(CtpContactUsPayload payload) {
+        long startTime = System.currentTimeMillis();
         ApiCallResult<CtpContactUsResult> result = callWithAuthRetry(
                 token -> postCtp(payload, token));
+        logTransaction(payload, result, System.currentTimeMillis() - startTime);
 
         if (!result.isSuccess() || result.getData() == null) {
             log.warn("CTP 문의 접수 전송 실패 statusCode={} error={}", result.getStatusCode(), result.getErrorMessage());
             return new CtpContactUsResult("E", "ERROR", "Connect Portal 전송에 실패했습니다. 잠시 후 다시 시도해주세요.");
         }
         return result.getData();
+    }
+
+    /**
+     * 서버→CTP 실제 전송 payload를 트랜잭션 로그(actionType=EXTERNAL)에 비동기 저장
+     * 브라우저/기존 트랜잭션 로그는 FE→BE 요청만 남기므로 CTP로 실제 전송된 값(Type 변환 등)을 확인할 방법이 없어 추가함
+     * payload 직렬화 실패는 CTP 전송 자체(메인 기능)에 영향을 주면 안 되므로 예외를 삼킨다
+     */
+    private void logTransaction(CtpContactUsPayload payload, ApiCallResult<CtpContactUsResult> result, long durationMs) {
+        try {
+            String requestBody = objectMapper.writeValueAsString(payload);
+            transactionLogService.saveExternalAsync("POST", ctpProperties.getApiUrl(), requestBody,
+                    result.getStatusCode(), durationMs);
+        } catch (Exception e) {
+            log.warn("CTP 전송 트랜잭션 로그 저장 실패: {}", e.getMessage());
+        }
     }
 
     /** CTP 응답 Status 코드를 프론트에 보여줄 안내 문구로 변환 */
