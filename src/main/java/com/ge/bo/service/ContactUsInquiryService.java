@@ -16,11 +16,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Map;
+import java.util.Set;
 
 /**
  * FO Contact Us 문의 접수 서비스
- * - 공통코드(INQUIRY_TYPE/COUNTRYCODE) 실시간 검증 → CTP(Salesforce) 전송
+ * - 문의유형(CTP picklist 고정값)/공통코드(COUNTRYCODE) 검증 → CTP(Salesforce) 전송
  * - DB 저장(contact_us_inquiry)은 2026-07-23부로 비활성화(주석 처리) — 추후 재사용 대비 보존
  * ※ 기존 CTP 전용 ContactUsService와는 별개 클래스지만, 실제 CTP 전송은 CtpContactUsClient를 공유한다
  */
@@ -29,19 +29,16 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ContactUsInquiryService {
 
-    /** 공통코드 그룹 코드 — 문의유형 */
-    private static final String GROUP_INQUIRY_TYPE = "INQUIRY_TYPE";
     /** 공통코드 그룹 코드 — 국가(코드값 자체는 ISO 3166-1 alpha-2라 CTP Country로 그대로 사용 가능) */
     private static final String GROUP_COUNTRY = "COUNTRYCODE";
     /** productCategory("Lv1 | Lv2 | Lv3") Lv1 라벨 — Software 여부에 따라 담당자 이메일을 보낼 CTP 필드가 갈린다 */
     private static final String LV1_SOFTWARE = "Software";
 
-    /** 신규 폼(UPPER_SNAKE_CASE) → CTP(PascalCase) 문의유형 매핑 */
-    private static final Map<String, String> TYPE_TO_CTP = Map.of(
-            "PRODUCT_INFORMATION", "ProductInformation",
-            "QUOTATION_REQUEST", "QuotationRequest",
-            "PURCHASE", "Purchase",
-            "OTHERS", "Others");
+    /**
+     * 문의유형
+     */
+    private static final Set<String> VALID_INQUIRY_TYPES =
+            Set.of("ProductInformation", "QuotationRequest", "Purchase", "Others");
 
     private static final DateTimeFormatter INQUIRY_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter SUBJECT_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
@@ -65,8 +62,8 @@ public class ContactUsInquiryService {
     @Transactional
     public ContactUsInquiryResponse submit(ContactUsInquiryRequest request, String clientIp, Long siteId) {
 
-        // 1) 공통코드 검증 — 활성 코드값만 통과 (BO에서 코드 추가/비활성해도 소스 수정 불필요)
-        if (!codeDetailRepository.existsByGroup_GroupCodeAndCodeAndActiveTrue(GROUP_INQUIRY_TYPE, request.type())) {
+        // 1) 입력값 검증 — 문의유형은 고정 4개 값(VALID_INQUIRY_TYPES), 국가는 공통코드(활성 코드값만 통과, BO에서 코드 추가/비활성해도 소스 수정 불필요)
+        if (!VALID_INQUIRY_TYPES.contains(request.type())) {
             throw BusinessException.badRequest("유효하지 않은 문의 유형입니다.");
         }
         if (!codeDetailRepository.existsByGroup_GroupCodeAndCodeAndActiveTrue(GROUP_COUNTRY, request.country())) {
@@ -132,11 +129,10 @@ public class ContactUsInquiryService {
     private CtpContactUsPayload buildCtpPayload(ContactUsInquiryRequest request, OffsetDateTime inquiryDateTime,
                                                  boolean isSoftwareException, String routingEmail,
                                                  String productInformationInquiryType) {
-        String ctpType = TYPE_TO_CTP.getOrDefault(request.type(), request.type());
-        String subject = "[LS ELECTRIC America][" + inquiryDateTime.format(SUBJECT_DATE_FORMAT) + "] " + ctpType;
+        String subject = "[LS ELECTRIC America][" + inquiryDateTime.format(SUBJECT_DATE_FORMAT) + "] " + request.type();
 
         return new CtpContactUsPayload(
-                ctpType,
+                request.type(),
                 productInformationInquiryType,
                 subject,
                 isBlank(request.productCategory()) ? null : request.productCategory(),
