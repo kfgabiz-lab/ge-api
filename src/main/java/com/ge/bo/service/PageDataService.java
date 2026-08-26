@@ -487,6 +487,9 @@ public class PageDataService {
       whereClause.append(publishGateSql());
     }
     whereClause.append(visibilityGateSql(slug));
+    if ("product-data".equals(slug)) {
+      whereClause.append(" AND data_json->'product'->>'order_status' <> '99'");
+    }
 
     String dataSql = "SELECT id, template_slug, data_json::text, group_id,"
                 + " created_by, created_at, updated_by, updated_at, \"count\" "
@@ -1212,10 +1215,19 @@ public class PageDataService {
           + "  AND p.is_deleted = false"
           + "  AND p.id::text = c.data_json->'product'->>'id'"
           + "  AND (p.site_id = :siteId OR p.site_id IS NULL)"
+          + "  AND p.data_json->'product'->>'order_status' <> '99'"
           + " WHERE c.data_slug = 'category-data'"
           + "  AND c.is_deleted = false"
           + "  AND c.id IN (:ids)"
-          + "  AND (c.site_id = :siteId OR c.site_id IS NULL)";
+          + "  AND (c.site_id = :siteId OR c.site_id IS NULL)"
+          + "  AND NOT EXISTS ("
+          + "    SELECT 1 FROM page_data dp"
+          + "     WHERE dp.data_slug = 'product-data'"
+          + "      AND dp.is_deleted = false"
+          + "      AND dp.id::text = c.data_json->'product'->>'id'"
+          + "      AND (dp.site_id = :siteId OR dp.site_id IS NULL)"
+          + "      AND dp.data_json->'product'->>'order_status' = '99'"
+          + "  )";
 
         Query query = entityManager.createNativeQuery(sql);
         query.setParameter("ids", ids);
