@@ -98,4 +98,18 @@ public class MenuController {
     menuService.updateRoleMenuMapping(menuId, roleId, hasAccess);
     return ResponseEntity.ok().build();
   }
+
+  @GetMapping("/{id}/apis")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+    public ResponseEntity<List<Long>> getMenuApiMappings(@PathVariable Long id) {
+    return ResponseEntity.ok(menuService.getMenuApiMappings(id));
+  }
+
+  @PutMapping("/{id}/apis")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+    public ResponseEntity<Void> updateMenuApiMapping(@PathVariable Long id, @RequestBody Map<String, List<Long>> body) {
+    List<Long> apiInfoIds = body.get("apiInfoIds");
+    menuService.updateMenuApiMapping(id, apiInfoIds);
+    return ResponseEntity.noContent().build();
+  }
 }

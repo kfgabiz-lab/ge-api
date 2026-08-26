@@ -7,12 +7,16 @@ import com.ge.bo.dto.MenuResponse;
 import com.ge.bo.dto.MenuSortBatchItem;
 import com.ge.bo.dto.RoleMenuResponse;
 import com.ge.bo.entity.Menu;
+import com.ge.bo.entity.MenuApi;
 import com.ge.bo.entity.Role;
 import com.ge.bo.entity.RoleMenu;
 import com.ge.bo.exception.ErrorCode;
+import com.ge.bo.repository.ApiInfoRepository;
+import com.ge.bo.repository.MenuApiRepository;
 import com.ge.bo.repository.MenuRepository;
 import com.ge.bo.repository.RoleMenuRepository;
 import com.ge.bo.repository.RoleRepository;
+import com.ge.bo.security.MenuApiAuthorizationCache;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +42,9 @@ public class MenuService {
   private final RoleMenuRepository roleMenuRepository;
   private final RoleRepository roleRepository;
   private final MessageResourceService messageResourceService;
+  private final MenuApiRepository menuApiRepository;
+  private final ApiInfoRepository apiInfoRepository;
+  private final MenuApiAuthorizationCache menuApiAuthorizationCache;
 
   private static final Pattern XSS_PATTERN = Pattern.compile("[<>\"']");
 
@@ -339,6 +346,44 @@ public class MenuService {
     } else if (!hasAccess && exists) {
       roleMenuRepository.deleteByRoleIdAndMenuId(roleId, menuId);
     }
+  }
+
+    /* ══════════════════════════════════════ */
+    /*  API 매핑                               */
+    /* ══════════════════════════════════════ */
+
+    /** 메뉴가 사용하는 API 매핑 조회 (apiInfoId 목록) */
+  @Transactional(readOnly = true)
+    public List<Long> getMenuApiMappings(Long menuId) {
+    findMenuOrThrow(menuId);
+    return menuApiRepository.findByMenuId(menuId).stream()
+                .map(MenuApi::getApiInfoId).toList();
+  }
+
+    /** API 매핑 전체 치환 (멱등성 보장) */
+  @Transactional
+    public void updateMenuApiMapping(Long menuId, List<Long> apiInfoIds) {
+    findMenuOrThrow(menuId);
+    Set<Long> requested = apiInfoIds == null ? Set.of() : new java.util.HashSet<>(apiInfoIds);
+
+    if (!requested.isEmpty() && apiInfoRepository.findAllById(requested).size() != requested.size()) {
+      throw ErrorCode.API_INFO_NOT_FOUND.toException();
+    }
+
+    Set<Long> current = menuApiRepository.findByMenuId(menuId).stream()
+                .map(MenuApi::getApiInfoId).collect(Collectors.toSet());
+
+    Set<Long> toAdd = new java.util.HashSet<>(requested);
+    toAdd.removeAll(current);
+    Set<Long> toRemove = new java.util.HashSet<>(current);
+    toRemove.removeAll(requested);
+
+    String employeeId = SecurityContextHolder.getContext().getAuthentication().getName();
+    toAdd.forEach(apiInfoId -> menuApiRepository.save(
+        MenuApi.builder().menuId(menuId).apiInfoId(apiInfoId).createdBy(employeeId).build()));
+    toRemove.forEach(apiInfoId -> menuApiRepository.deleteByMenuIdAndApiInfoId(menuId, apiInfoId));
+
+    menuApiAuthorizationCache.reload();
   }
 
     /* ══════════════════════════════════════ */

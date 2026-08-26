@@ -18,5 +18,8 @@ public record ApiInfoRequest(
 
         String connectedEntity,
 
-        Boolean active) {
+        Boolean active,
+
+        @Pattern(regexp = "^(ALL|RESTRICTED)$", message = "접근 유형은 ALL 또는 RESTRICTED만 가능합니다.")
+        String accessType) {
 }

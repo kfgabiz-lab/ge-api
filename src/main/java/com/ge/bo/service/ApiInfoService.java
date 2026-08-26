@@ -6,6 +6,7 @@ import com.ge.bo.dto.ApiInfoSyncResponse;
 import com.ge.bo.entity.ApiInfo;
 import com.ge.bo.exception.ErrorCode;
 import com.ge.bo.repository.ApiInfoRepository;
+import com.ge.bo.security.MenuApiAuthorizationCache;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -29,13 +30,16 @@ public class ApiInfoService {
     /** Spring MVC에 등록된 모든 핸들러 매핑 정보 */
   private final RequestMappingHandlerMapping handlerMapping;
   private final DatabaseService databaseService;
+  private final MenuApiAuthorizationCache menuApiAuthorizationCache;
 
   public ApiInfoService(ApiInfoRepository apiInfoRepository,
             RequestMappingHandlerMapping handlerMapping,
-            DatabaseService databaseService) {
+            DatabaseService databaseService,
+            MenuApiAuthorizationCache menuApiAuthorizationCache) {
     this.apiInfoRepository = apiInfoRepository;
     this.handlerMapping = handlerMapping;
     this.databaseService = databaseService;
+    this.menuApiAuthorizationCache = menuApiAuthorizationCache;
   }
 
     /* ══════════ 목록 조회 ══════════ */
@@ -83,8 +87,11 @@ public class ApiInfoService {
                 .description(trimOrNull(request.description()))
                 .connectedEntity(trimOrNull(request.connectedEntity()))
                 .active(request.active() != null ? request.active() : true)
+                .accessType(request.accessType() != null ? request.accessType() : "RESTRICTED")
                 .build();
-    return ApiInfoResponse.from(apiInfoRepository.save(entity));
+    ApiInfoResponse response = ApiInfoResponse.from(apiInfoRepository.save(entity));
+    menuApiAuthorizationCache.reload();
+    return response;
   }
 
     /* ══════════ 수정 ══════════ */
@@ -101,6 +108,10 @@ public class ApiInfoService {
     if (request.active() != null) {
       entity.setActive(request.active());
     }
+    if (request.accessType() != null) {
+      entity.setAccessType(request.accessType());
+    }
+    menuApiAuthorizationCache.reload();
     return ApiInfoResponse.from(entity);
   }
 
@@ -109,6 +120,7 @@ public class ApiInfoService {
   @Transactional
     public void delete(Long id) {
     apiInfoRepository.delete(findOrThrow(id));
+    menuApiAuthorizationCache.reload();
   }
 
     /* ══════════ 동기화 ══════════ */

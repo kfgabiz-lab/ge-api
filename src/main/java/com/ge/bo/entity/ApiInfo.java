@@ -64,6 +64,11 @@ public class ApiInfo {
     @Builder.Default
     private Boolean active = true;
 
+    /** 접근 유형 — ALL: role_menu/menu_api 검사 없이 항상 허용, RESTRICTED: 메뉴 등록분에 한해 인가 검사 */
+  @Column(name = "access_type", nullable = false, length = 20)
+    @Builder.Default
+    private String accessType = "RESTRICTED";
+
   @Builder.Default
     @Column(name = "is_deleted", nullable = false)
     private Boolean isDeleted = Boolean.FALSE;

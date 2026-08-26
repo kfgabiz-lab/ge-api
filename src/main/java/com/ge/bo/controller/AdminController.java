@@ -50,7 +50,7 @@ public class AdminController {
   /**
    * 관리자 정보 수정
    *
-   * @param id 관리자 PK
+   * @param id      관리자 PK
    * @param request 수정 요청 DTO
    * @return 수정된 관리자 응답 DTO
    */
@@ -65,7 +65,7 @@ public class AdminController {
   /**
    * 관리자 활성화/비활성화 상태 변경
    *
-   * @param id 관리자 PK
+   * @param id      관리자 PK
    * @param request 상태 변경 요청 DTO
    * @return 상태가 변경된 관리자 응답 DTO
    */
@@ -75,19 +75,6 @@ public class AdminController {
       @PathVariable Long id,
       @RequestBody AdminDto.UpdateRequest request) {
     return ResponseEntity.ok(adminService.toggleStatus(id, request.isActive()));
-  }
-
-  /**
-   * 관리자 삭제
-   *
-   * @param id 관리자 PK
-   * @return 204 No Content
-   */
-  @DeleteMapping("/{id}")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
-  public ResponseEntity<Void> deleteAdmin(@PathVariable Long id) {
-    adminService.deleteAdmin(id);
-    return ResponseEntity.noContent().build();
   }
 
   /**
@@ -105,7 +92,7 @@ public class AdminController {
   /**
    * 관리자 홈페이지 매핑 일괄 변경
    *
-   * @param id 관리자 PK
+   * @param id      관리자 PK
    * @param request 매핑할 홈페이지 ID 목록
    * @return 변경 후 매핑된 홈페이지 응답 DTO 목록
    */

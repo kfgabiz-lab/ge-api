@@ -12,6 +12,7 @@ public record ApiInfoResponse(
         String description,
         String connectedEntity,
         Boolean active,
+        String accessType,
         String createdBy,
         LocalDateTime createdAt,
         String updatedBy,
@@ -19,7 +20,7 @@ public record ApiInfoResponse(
   public static ApiInfoResponse from(ApiInfo e) {
     return new ApiInfoResponse(
                 e.getId(), e.getCategory(), e.getName(), e.getMethod(),
-                e.getUrlPattern(), e.getDescription(), e.getConnectedEntity(), e.getActive(),
+                e.getUrlPattern(), e.getDescription(), e.getConnectedEntity(), e.getActive(), e.getAccessType(),
                 e.getCreatedBy(), e.getCreatedAt(), e.getUpdatedBy(), e.getUpdatedAt());
   }
 }

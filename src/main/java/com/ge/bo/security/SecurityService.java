@@ -38,6 +38,15 @@ public class SecurityService {
                 .orElse(false);
   }
 
+  public boolean isSuperAdmin(Authentication authentication) {
+    if (authentication == null || !authentication.isAuthenticated()) {
+      return false;
+    }
+
+    return authentication.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
+  }
+
   public boolean hasMenu(Authentication authentication, Long menuId) {
     if (authentication == null || !authentication.isAuthenticated()) {
       return false;
