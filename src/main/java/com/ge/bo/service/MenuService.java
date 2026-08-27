@@ -124,16 +124,24 @@ public class MenuService {
      */
   @Transactional(readOnly = true)
     public List<FoGnbMenuResponse> getFoGnbMenus(Long siteId) {
-    List<Menu> rootMenus = menuRepository.findFoGnbRootMenus(siteId);
+    List<Menu> allMenus = menuRepository.findFoVisibleMenus(siteId);
+
+    Map<Long, List<Menu>> childrenByParentId = allMenus.stream()
+                .filter(m -> m.getParent() != null)
+                .collect(Collectors.groupingBy(m -> m.getParent().getId()));
+
+    List<Menu> rootMenus = allMenus.stream()
+                .filter(m -> m.getParent() == null)
+                .toList();
 
         /* 트리 전체를 재귀 순회하여 name/description msgKey를 수집 → en 배치 조회(단일 호출) */
     List<String> msgKeys = new ArrayList<>();
-    rootMenus.forEach(m -> collectMsgKeys(m, msgKeys));
+    rootMenus.forEach(m -> collectMsgKeys(m, childrenByParentId, msgKeys));
     Map<String, String> enMap = messageResourceService.resolveEnMap(msgKeys);
 
         /* 수집한 en 맵으로 트리 전체 치환 (children 재귀 치환은 DTO에서 처리) */
     return rootMenus.stream()
-                .map(m -> FoGnbMenuResponse.from(m, enMap, siteId))
+                .map(m -> FoGnbMenuResponse.from(m, childrenByParentId, enMap, siteId))
                 .toList();
   }
 
@@ -146,12 +154,12 @@ public class MenuService {
   }
 
     /** 메뉴 트리를 재귀 순회하며 name/description msgKey를 수집 (visible=true 자식만) */
-  private void collectMsgKeys(Menu menu, List<String> keys) {
+  private void collectMsgKeys(Menu menu, Map<Long, List<Menu>> childrenByParentId, List<String> keys) {
     if (menu.getNameMsgKey() != null && !menu.getNameMsgKey().isBlank()) keys.add(menu.getNameMsgKey());
     if (menu.getDescriptionMsgKey() != null && !menu.getDescriptionMsgKey().isBlank()) keys.add(menu.getDescriptionMsgKey());
-    menu.getChildren().stream()
+    childrenByParentId.getOrDefault(menu.getId(), List.of()).stream()
                 .filter(c -> Boolean.TRUE.equals(c.getVisible()))
-                .forEach(c -> collectMsgKeys(c, keys));
+                .forEach(c -> collectMsgKeys(c, childrenByParentId, keys));
   }
 
     /** 메뉴 단건 조회 */

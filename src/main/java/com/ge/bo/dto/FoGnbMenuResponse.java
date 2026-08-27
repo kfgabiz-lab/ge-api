@@ -42,16 +42,17 @@ public record FoGnbMenuResponse(
     }
 
     /**
-     * Menu 엔티티 → DTO 변환 (en 배치 치환 버전)
+     * Menu 엔티티 → DTO 변환 (en 배치 치환 + parentId 맵 기반 트리 조립 버전)
+     * - childrenByParentId: parentId → 자식 Menu 목록 (평면 조회 결과로 미리 그룹핑, menu.getChildren() lazy loading 미사용)
      * - enMap: msgKey → en 텍스트 (MessageResourceService.resolveEnMap 결과)
      * - name/description을 enMap 값으로 치환, msgKey 없거나 맵에 없으면 원래 한국어값 유지(폴백)
      * - children도 동일 맵으로 재귀 치환 (계층 트리 전체 en 적용)
      */
-    public static FoGnbMenuResponse from(Menu menu, Map<String, String> enMap, Long siteId) {
-        List<FoGnbMenuResponse> childResponses = menu.getChildren().stream()
+    public static FoGnbMenuResponse from(Menu menu, Map<Long, List<Menu>> childrenByParentId, Map<String, String> enMap, Long siteId) {
+        List<FoGnbMenuResponse> childResponses = childrenByParentId.getOrDefault(menu.getId(), List.of()).stream()
                 .filter(c -> Boolean.TRUE.equals(c.getVisible()))
                 .filter(c -> c.getSiteId() == null || c.getSiteId().equals(siteId))
-                .map(c -> from(c, enMap, siteId))
+                .map(c -> from(c, childrenByParentId, enMap, siteId))
                 .toList();
 
         String name = resolveText(menu.getNameMsgKey(), menu.getName(), enMap);

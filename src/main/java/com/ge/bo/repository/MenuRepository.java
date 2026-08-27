@@ -23,12 +23,11 @@ public interface MenuRepository extends JpaRepository<Menu, Long> {
   @EntityGraph(attributePaths = {"children"})
     List<Menu> findByMenuTypeAndSiteIdAndParentIsNullOrderBySortOrderAsc(String menuType, Long siteId);
 
-    @EntityGraph(attributePaths = {"children"})
     @Query("SELECT m FROM Menu m WHERE m.menuType = 'FO'"
-        + " AND m.parent IS NULL AND m.visible = true"
+        + " AND m.visible = true"
         + " AND (m.siteId IS NULL OR m.siteId = :siteId)"
         + " ORDER BY m.sortOrder ASC")
-    List<Menu> findFoGnbRootMenus(@Param("siteId") Long siteId);
+    List<Menu> findFoVisibleMenus(@Param("siteId") Long siteId);
 
   @Query("SELECT m FROM Menu m WHERE m.menuType = 'FO' AND m.url = :url"
         + " AND m.visible = true"
