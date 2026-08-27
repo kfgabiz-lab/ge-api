@@ -13,7 +13,7 @@ spring:
   mail:
     host: 10.153.2.44
     port: 25
-    username: A003elesmtp
+    username: A003website.noreply
     password: ${MAIL_PASSWORD:}
     properties:
       mail:
