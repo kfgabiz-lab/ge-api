@@ -37,6 +37,11 @@ public class MailService {
     public String sendMail(String to, String subject, String content, String emailSendType,
                             String emailSendDetailType, Long siteId) {
         String sendStatus = doSend(to, subject, content);
+        // 임시 테스트 start
+        if(sendStatus.length() > 1){
+            return sendStatus;
+        }
+        // 임시 테스트 end
         saveEmailSendHistory(sendStatus, to, subject, content, emailSendType, emailSendDetailType,
                 siteId != null ? siteId : DEFAULT_SITE_ID);
         return sendStatus;
