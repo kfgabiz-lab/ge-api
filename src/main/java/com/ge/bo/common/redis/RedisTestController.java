@@ -60,13 +60,11 @@ public class RedisTestController {
 
         try {
             // 임시 메일 테스트
-            mailService.sendMail("comgsu@ls-electric.com", "test", "01", "01", null, 1L);
+            return mailService.sendMail("comgsu@ls-electric.com", "test", "01", "01", null, 1L);
         }catch (Exception e){
             log.error(e.getMessage());
             return e.getMessage();
         }
-
-        return "OK";
     }
 
 
