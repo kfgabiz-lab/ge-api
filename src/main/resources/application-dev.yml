@@ -82,6 +82,10 @@ ls:
   isApiLogin: false
   file-storage: local   # local, blob
   redis-enabled: true
+  fo:
+    # sitemap.xml <loc> 생성용 FO(ge-fo) 공개 사이트 base URL
+    base-url: ${LS_FO_BASE_URL:https://nahpdev.ls-electric.com}
+    site-id: 1
   totp:
     isUser: "LSE Admin"
     enabled: false    # true = 2차인증 활성화 / false = 비밀번호만으로 로그인

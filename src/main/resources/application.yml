@@ -52,6 +52,10 @@ logging:
 
 ls:
   isApiLogin: true
+  fo:
+    # FO(ge-fo) 공개 사이트 base URL — sitemap.xml <loc> 생성용. 환경별로 override (dev/prod yml).
+    base-url: ${LS_FO_BASE_URL:http://localhost:3002}
+    site-id: 1
   totp:
     isUser: "LSE Admin"
     enabled: true   # true = 2차인증 활성화 / false = 비밀번호만으로 로그인

@@ -82,6 +82,10 @@ ls:
   isApiLogin: true
   file-storage: local   # local, blob
   redis-enabled: true
+  fo:
+    # sitemap.xml <loc> 생성용 FO(ge-fo) 공개 사이트 base URL
+    base-url: ${LS_FO_BASE_URL:https://nahp.ls-electric.com}
+    site-id: 1
   lse:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
