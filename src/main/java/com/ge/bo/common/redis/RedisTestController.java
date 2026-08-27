@@ -1,12 +1,17 @@
 package com.ge.bo.common.redis;
 
+import com.ge.bo.common.mail.MailService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/redisTest")
+@RequiredArgsConstructor
 @ConditionalOnProperty(
         name = "ls.redis-enabled",
         havingValue = "true"
@@ -15,9 +20,7 @@ public class RedisTestController {
 
     private final RedisCacheService redisCacheService;
 
-    public RedisTestController(RedisCacheService redisCacheService) {
-        this.redisCacheService = redisCacheService;
-    }
+    private final MailService mailService;
 
     @GetMapping("/set")
     public String set(
@@ -51,4 +54,22 @@ public class RedisTestController {
 
         return value.equals(result) ? "REDIS_OK" : "REDIS_FAIL";
     }
+
+    @GetMapping("/mail")
+    public String mail() {
+
+        try {
+            // 임시 메일 테스트
+            mailService.sendMail("comgsu@ls-electric.com", "test", "01", "01", null, 1L);
+        }catch (Exception e){
+            log.error(e.getMessage());
+            return e.getMessage();
+        }
+
+        return "OK";
+    }
+
+
+
+
 }
