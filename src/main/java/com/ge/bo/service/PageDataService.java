@@ -301,7 +301,7 @@ public class PageDataService {
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
 
-    Map<Long, String> userNameMap = buildUserNameMap(rows, 4, 6);
+    Map<Long, String> userNameMap = enforcePublishGate ? Collections.emptyMap() : buildUserNameMap(rows, 4, 6);
 
     List<PageDataResponse> content = rows.stream()
                 .map(row -> mapRowToResponse(row, userNameMap))
@@ -2520,7 +2520,6 @@ public class PageDataService {
 
   private java.time.LocalDateTime toLocalDateTime(Object obj) {
     if (obj == null) return null;
-    log.debug("createdAt 실제 타입: {}, 값: {}", obj.getClass().getName(), obj);
     if (obj instanceof java.time.LocalDateTime ldt) return ldt;
     if (obj instanceof java.sql.Timestamp ts) return ts.toLocalDateTime();
     if (obj instanceof java.time.OffsetDateTime odt) return odt.toLocalDateTime();
