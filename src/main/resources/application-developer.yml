@@ -117,5 +117,8 @@ ls:
         endpoint-url: "https://blobctpeus2.blob.core.windows.net"
         container-name: "download-test"
         sas-token: ${AZURE_BLOB_SAS_TOKEN:}
+    # 발송 email 설정
+    mail:
+      from-email: elesmtp@ls-electric.com
 
 

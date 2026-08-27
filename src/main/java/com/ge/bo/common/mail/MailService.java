@@ -5,6 +5,7 @@ import com.ge.bo.repository.EmailSendHisRepository;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,9 @@ public class MailService {
 
     private final JavaMailSender mailSender;
     private final EmailSendHisRepository emailSendHisRepository;
+
+    @Value("${ls.lse.mail.from-email:}")
+    private String fromEmail;
 
     private static final String EMAIL_SEND_SUCCESS = "S";
 	private static final String EMAIL_SEND_FAIL    = "F";
@@ -54,7 +58,7 @@ public class MailService {
             MimeMessage message = mailSender.createMimeMessage();
 
             MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
-            helper.setFrom("elesmtp@ls-electric.com");
+            helper.setFrom(fromEmail);
             helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(content, true); // false = plain text
