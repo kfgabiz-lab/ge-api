@@ -13,7 +13,7 @@ spring:
   mail:
     host: 10.153.2.44
     port: 25
-    username: A003elesmtp
+    username: A003website.noreply
     password: ${MAIL_PASSWORD:}
     properties:
       mail:
@@ -82,6 +82,10 @@ ls:
   isApiLogin: false
   file-storage: local   # local, blob
   redis-enabled: true
+  fo:
+    # sitemap.xml <loc> 생성용 FO(ge-fo) 공개 사이트 base URL
+    base-url: ${LS_FO_BASE_URL:https://nahpdev.ls-electric.com}
+    site-id: 1
   totp:
     isUser: "LSE Admin"
     enabled: false    # true = 2차인증 활성화 / false = 비밀번호만으로 로그인
@@ -118,4 +122,4 @@ ls:
         sas-token: ${AZURE_BLOB_SAS_TOKEN:}
     # 발송 email 설정
     mail:
-      from-email: elesmtp@ls-electric.com
+      from-email: website.noreply@lselectricamerica.com

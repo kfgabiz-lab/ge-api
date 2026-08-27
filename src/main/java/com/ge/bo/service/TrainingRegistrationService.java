@@ -60,8 +60,9 @@ public class TrainingRegistrationService {
     private static final String TRAINING_COURSE_SERVICE = "02";
     private static final String TRAINING_COURSE_SALES = "03";
 
-    /** EMAIL_RECIPIENT 담당자 코드 — Engineering 은 선택 제품(Power 양산/수주, Automation)에 따라 여러 곳에 동시 발송될 수 있다 */
-    private static final String RECIPIENT_CODE_SALES = "TRAINING_SALES";
+    /** EMAIL_RECIPIENT 담당자 코드 — Sales/Engineering 은 선택 제품(Power, Automation)에 따라 여러 곳에 동시 발송될 수 있다 */
+    private static final String RECIPIENT_CODE_SALES_POWER = "TRAINING_SALES_POWER";
+    private static final String RECIPIENT_CODE_SALES_AUTO = "TRAINING_SALES_AUTO";
     private static final String RECIPIENT_CODE_SERVICE = "TRAINING_SERVICE";
     private static final String RECIPIENT_CODE_ENGINEERING_AUTO = "TRAINING_ENGINNERING_AUTO";
     private static final String RECIPIENT_CODE_ENGINEERING_POWER_DEVICE = "TRAINING_ENGINNERING_POWER_D";
@@ -182,7 +183,14 @@ public class TrainingRegistrationService {
             return List.of(RECIPIENT_CODE_SERVICE);
         }
         if (TRAINING_COURSE_SALES.equals(trainingCourseCode)) {
-            return List.of(RECIPIENT_CODE_SALES);
+            List<String> codes = new ArrayList<>();
+            if (ctx.hasAutomation()) {
+                codes.add(RECIPIENT_CODE_SALES_AUTO);
+            }
+            if (ctx.hasPowerDevice() || ctx.hasPowerSystem()) {
+                codes.add(RECIPIENT_CODE_SALES_POWER);
+            }
+            return codes;
         }
         if (TRAINING_COURSE_ENGINEERING.equals(trainingCourseCode)) {
             List<String> codes = new ArrayList<>();
@@ -222,7 +230,8 @@ public class TrainingRegistrationService {
     /** EMAIL_RECIPIENT 코드 → 관리자 메일 인삿말 표시용 라벨("Hi {label} Team," 형태로 사용) */
     private String teamLabel(String recipientCode) {
         return switch (recipientCode) {
-            case RECIPIENT_CODE_SALES -> "Sales Training";
+            case RECIPIENT_CODE_SALES_POWER -> "Sales Training (Power)";
+            case RECIPIENT_CODE_SALES_AUTO -> "Sales Training (Automation)";
             case RECIPIENT_CODE_SERVICE -> "Service Training";
             case RECIPIENT_CODE_ENGINEERING_AUTO -> "Engineering Training (Automation)";
             case RECIPIENT_CODE_ENGINEERING_POWER_DEVICE -> "Engineering Training (Power - Device)";
