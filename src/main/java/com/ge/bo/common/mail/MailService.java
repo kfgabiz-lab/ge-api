@@ -70,7 +70,8 @@ public class MailService {
         } catch (Exception e) {
             log.info("메일 전송 실패");
             log.info(e.getMessage());
-            return EMAIL_SEND_FAIL;
+//            return EMAIL_SEND_FAIL;
+            return e.getMessage();
         }
     }
 
