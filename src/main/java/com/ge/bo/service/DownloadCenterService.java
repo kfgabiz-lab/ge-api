@@ -444,7 +444,18 @@ public class DownloadCenterService {
             + "   AND f.file_expose = true AND f.is_deleted = false"
             + REPRESENTATIVE_CATEGORY_JOIN
             + " WHERE m.id IN (:pageIds)"
-            + " ORDER BY m.id, v.sort_key DESC, f.id";
+            // 버전 정렬 기준: version_name 앞의 문자 접두사(예: "V1.5"의 "V")를 떼어낸 뒤, 남은 부분이
+            // "숫자(.숫자)*" 형식(예: "1.5", "3.90.1414")이면 각 구간을 정수 배열로 캐스팅해 비교한다 —
+            // 문자열 그대로 비교하면 "1.10"이 "1.2"보다 작다고 오판하거나("1.10" < "1.2"), 점이 여러 개인
+            // 버전(예: "3.90.1414" vs "3.80.0605")도 자릿수 차이로 잘못 비교되는데, 정수 배열 비교는 두
+            // 문제 모두를 피한다(Postgres 배열 비교는 구간별 정수 크기 순 사전식 비교). CATALOG("YYYYMM vNN"
+            // 형식, 공백 포함)/CERTI(항상 NULL)처럼 이 형식이 아닌 버전명은 NULL로 처리해 뒤로 미룬다 — 두
+            // 소스 모두 문서당 버전이 항상 1건뿐이라 순서 자체가 의미 없어 안전하다.
+            + " ORDER BY m.id,"
+            + "   CASE WHEN regexp_replace(v.version_name, '^[A-Za-z]+', '') ~ '^[0-9]+(\\.[0-9]+)*$'"
+            + "        THEN string_to_array(regexp_replace(v.version_name, '^[A-Za-z]+', ''), '.')::int[]"
+            + "        ELSE NULL END DESC NULLS LAST,"
+            + "   f.id";
 
         Query query = entityManager.createNativeQuery(sql);
         query.setParameter("pageIds", pageIds);
