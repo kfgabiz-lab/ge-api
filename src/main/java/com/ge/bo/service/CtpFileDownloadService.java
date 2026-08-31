@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.yaml.snakeyaml.util.UriEncoder;
 
 /**
  * Connect Portal(CTP) api를 통한 문서 파일 다운로드 URL 반환(blob-storage)
@@ -34,7 +35,7 @@ public class CtpFileDownloadService {
         // 파일 경로 검증
         if(path.startsWith("CTP")){
             // url + param 조합 하기
-            apiUrlWithParam = apiUrl + "?code=" + code + "&filePath=" + path;
+            apiUrlWithParam = apiUrl + "?code=" + code + "&filePath=" + UriEncoder.encode(path);
 
             // CTP 파일 다운로드 API 호출
             ApiCallRequest request = ApiCallRequest.get(apiUrlWithParam).header("Content-Type", "application/json").build();
