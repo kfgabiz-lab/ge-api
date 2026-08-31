@@ -30,10 +30,10 @@ public class AdminUser {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-  @Column(nullable = false, unique = true, length = 100)
+  @Column(length = 100)
     private String email;
 
-  @Column(name = "employee_id", length = 50)
+  @Column(name = "employee_id", nullable = false, unique = true, length = 50)
     private String employeeId;
 
   @Column(nullable = false, length = 50)

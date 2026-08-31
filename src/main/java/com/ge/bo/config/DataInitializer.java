@@ -6,7 +6,6 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-import com.ge.bo.entity.AdminUser;
 import com.ge.bo.repository.AdminRepository;
 
 @Component
@@ -23,20 +22,6 @@ public class DataInitializer implements ApplicationRunner {
 
   @Override
     public void run(ApplicationArguments args) {
-        /* 
-        insertAdminIfAbsent("admin@ge.com", "시스템 관리자", "P@ssw0rd123", "SUPER_ADMIN");
-        */
-  }
-
-  private void insertAdminIfAbsent(String email, String name, String password, String role) {
-    if (!adminRepository.existsByEmail(email)) {
-      adminRepository.save(AdminUser.builder()
-                    .email(email)
-                    .name(name)
-                    .passwordHash(passwordEncoder.encode(password))
-                    .role(role)
-                    .isActive(true)
-                    .build());
-    }
+        // 초기 관리자 시드가 필요하면 employeeId 기준으로 직접 추가할 것 (email은 더 이상 조회 키가 아님)
   }
 }
