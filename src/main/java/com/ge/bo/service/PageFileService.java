@@ -1,8 +1,10 @@
 package com.ge.bo.service;
 
 import com.ge.bo.common.file.FileStorageService;
+import com.ge.bo.dto.FoPageFileMetaResponse;
 import com.ge.bo.dto.PageFileDataIdRequest;
 import com.ge.bo.dto.PageFileResponse;
+import com.ge.bo.entity.PageData;
 import com.ge.bo.entity.PageFile;
 import com.ge.bo.exception.ErrorCode;
 import com.ge.bo.repository.PageDataRepository;
@@ -26,7 +28,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 파일 업로드/다운로드/삭제 비즈니스 로직
@@ -132,6 +137,42 @@ public class PageFileService {
     return pageFileRepository.findAllById(ids).stream()
                 .map(PageFileResponse::from)
                 .toList();
+  }
+
+  @Transactional(readOnly = true)
+  public List<FoPageFileMetaResponse> getMetaPublic(List<Long> ids, Long siteId) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+
+    List<PageFileResponse> files = getMeta(ids);
+
+    if (siteId == null) {
+      return files.stream().map(FoPageFileMetaResponse::from).toList();
+    }
+
+    List<Long> dataIds = files.stream()
+            .map(PageFileResponse::getDataId)
+            .filter(Objects::nonNull)
+            .distinct()
+            .toList();
+
+    Map<Long, Long> siteIdByDataId = dataIds.isEmpty()
+            ? Map.of()
+            : pageDataRepository.findAllById(dataIds).stream()
+                    .filter(pd -> pd.getSiteId() != null)
+                    .collect(Collectors.toMap(PageData::getId, PageData::getSiteId));
+
+    return files.stream()
+            .filter(f -> {
+              if (f.getDataId() == null) {
+                return true;
+              }
+              Long fileSiteId = siteIdByDataId.get(f.getDataId());
+              return fileSiteId == null || fileSiteId.equals(siteId);
+            })
+            .map(FoPageFileMetaResponse::from)
+            .toList();
   }
 
     // ── 다운로드 ──────────────────────────────────────────────

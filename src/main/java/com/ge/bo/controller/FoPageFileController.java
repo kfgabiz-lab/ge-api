@@ -1,5 +1,6 @@
 package com.ge.bo.controller;
 
+import com.ge.bo.dto.FoPageFileMetaResponse;
 import com.ge.bo.service.PageFileService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ContentDisposition;
@@ -10,9 +11,11 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * FO(비로그인 공개) 파일 인라인 조회 API 컨트롤러
@@ -35,6 +38,13 @@ public class FoPageFileController {
   private static final String SVG_CONTENT_SECURITY_POLICY = "script-src 'none'; sandbox";
 
   private final PageFileService pageFileService;
+
+  @GetMapping("/meta")
+  public ResponseEntity<List<FoPageFileMetaResponse>> meta(
+          @RequestParam(value = "ids", required = false) List<Long> ids,
+          @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    return ResponseEntity.ok(pageFileService.getMetaPublic(ids, siteId));
+  }
 
   /**
    * 파일 인라인 조회 (스트리밍)

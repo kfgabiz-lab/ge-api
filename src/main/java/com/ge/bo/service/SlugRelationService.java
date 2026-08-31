@@ -25,6 +25,7 @@ import java.util.List;
 public class SlugRelationService {
 
     private final SlugRelationRepository slugRelationRepository;
+    private final SlugRelationFetchCache slugRelationFetchCache;
 
     /* ══════════ 목록 조회 ══════════ */
 
@@ -69,7 +70,9 @@ public class SlugRelationService {
                 .includeLeaf(request.includeLeaf() != null ? request.includeLeaf() : false)
                 .description(trimOrNull(request.description()))
                 .build();
-        return SlugRelationResponse.from(slugRelationRepository.save(entity));
+        SlugRelationResponse response = SlugRelationResponse.from(slugRelationRepository.save(entity));
+        slugRelationFetchCache.reload();
+        return response;
     }
 
     /* ══════════ 수정 ══════════ */
@@ -91,7 +94,9 @@ public class SlugRelationService {
         entity.setCategoryDepthFrom(request.categoryDepthFrom());
         entity.setIncludeLeaf(request.includeLeaf() != null ? request.includeLeaf() : false);
         entity.setDescription(trimOrNull(request.description()));
-        return SlugRelationResponse.from(slugRelationRepository.save(entity));
+        SlugRelationResponse response = SlugRelationResponse.from(slugRelationRepository.save(entity));
+        slugRelationFetchCache.reload();
+        return response;
     }
 
     /* ══════════ 삭제 ══════════ */
@@ -102,6 +107,7 @@ public class SlugRelationService {
             throw ErrorCode.SLUG_RELATION_NOT_FOUND.toException();
         }
         slugRelationRepository.deleteById(id);
+        slugRelationFetchCache.reload();
     }
 
     /* ══════════ 내부 유틸 ══════════ */

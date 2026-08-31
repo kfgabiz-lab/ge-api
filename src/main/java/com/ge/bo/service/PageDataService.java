@@ -64,6 +64,7 @@ public class PageDataService {
   private final ObjectMapper objectMapper;
   private final PageFileService pageFileService;
   private final SlugRelationRepository slugRelationRepository;
+  private final SlugRelationFetchCache slugRelationFetchCache;
   private final ValidationRuleRepository validationRuleRepository;
   private final SiteTimeZoneResolver siteTimeZoneResolver;
   private final IntegrationContentsSyncService integrationContentsSyncService;
@@ -438,7 +439,7 @@ public class PageDataService {
     @SuppressWarnings("unchecked")
         List<Object[]> rows = dataQuery.getResultList();
 
-    Map<Long, String> userNameMap = buildUserNameMap(rows, 4, 6);
+    Map<Long, String> userNameMap = Collections.emptyMap();
 
     List<PageDataResponse> content = rows.stream()
                 .map(row -> mapRowToResponse(row, userNameMap))
@@ -759,6 +760,76 @@ public class PageDataService {
         query.setParameter("productId", productId);
         query.setParameter("nowValue", resolveNowParam(siteId));
         query.setParameter("siteId", siteId);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+        List<ProductInsightRowResponse> result = new ArrayList<>();
+        for (Object[] row : rows) {
+            result.add(new ProductInsightRowResponse(
+                row[0] != null ? ((Number) row[0]).longValue() : null,
+                row[1] != null ? row[1].toString() : null,
+                row[2] != null ? row[2].toString() : null,
+                row[3] != null ? row[3].toString() : null,
+                row[4] != null ? row[4].toString() : null,
+                row[5] != null ? row[5].toString() : null
+            ));
+        }
+        return result;
+    }
+
+    private String highlightWindowSql(String dataSlug, int windowSize, String gateSql, String siteCond, String marketCond) {
+        return "(SELECT id, data_slug, data_json"
+            + " FROM page_data"
+            + " WHERE data_slug = '" + dataSlug + "'"
+            + "  AND is_deleted = false"
+            + gateSql
+            + siteCond
+            + marketCond
+            + " ORDER BY created_at DESC"
+            + " LIMIT " + windowSize + ")";
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProductInsightRowResponse> findHighlightNews(String market, Long siteId) {
+        boolean hasMarket = market != null && market.matches("[0-9]{3}");
+        String gateSql = publishGateSql();
+        String siteCond = siteId != null ? "  AND (site_id = :siteId OR site_id IS NULL)" : "";
+        String marketCond = "";
+        if (hasMarket) {
+            String topLike = "(',' || COALESCE(data_json->>'markets','') || ',') LIKE :p_has_markets_markets";
+            String nestedLike = "(',' || COALESCE(kv.value->>'markets','') || ',') LIKE :p_has_markets_markets";
+            marketCond = "  AND (" + topLike
+                + " OR EXISTS (SELECT 1 FROM jsonb_each(data_json) kv"
+                + " WHERE jsonb_typeof(kv.value) = 'object'"
+                + " AND " + nestedLike + "))";
+        }
+
+        String section = "data_json->(replace(data_slug,'-data',''))";
+        String sql = "WITH win AS ("
+            + highlightWindowSql("press-data", 9, gateSql, siteCond, marketCond)
+            + " UNION ALL "
+            + highlightWindowSql("blog-data", 10, gateSql, siteCond, marketCond)
+            + " UNION ALL "
+            + highlightWindowSql("articles-data", 9, gateSql, siteCond, marketCond)
+            + ")"
+            + " SELECT id, data_slug,"
+            + "  " + section + "->>'title'        AS title,"
+            + "  " + section + "->>'publish_dttm' AS publish_dttm,"
+            + "  " + section + "->>'image'        AS image,"
+            + "  data_json->'seo'->>'slug'         AS slug"
+            + " FROM win"
+            + " ORDER BY " + section + "->>'publish_dttm' DESC, id DESC"
+            + " LIMIT 3";
+
+        Query query = entityManager.createNativeQuery(sql);
+        query.setParameter("nowValue", resolveNowParam(siteId));
+        if (siteId != null) {
+            query.setParameter("siteId", siteId);
+        }
+        if (hasMarket) {
+            query.setParameter("p_has_markets_markets", "%," + market + ",%");
+        }
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
@@ -1107,12 +1178,12 @@ public class PageDataService {
           + " JOIN page_data lv1"
           + "   ON lv1.data_slug = 'category-data'"
           + "  AND lv1.is_deleted = false"
-          + "  AND lv1.id::text = lv2.data_json->'category'->>'parentId'"
+          + "  AND (lv2.data_json->'category'->>'parentId')::bigint = lv1.id"
           + " JOIN page_data j"
           + "   ON j.data_slug = 'category-data'"
           + "  AND j.is_deleted = false"
           + "  AND j.data_json->'product'->>'depth' = '3'"
-          + "  AND j.data_json->'product'->>'parentId' = lv2.id::text"
+          + "  AND (j.data_json->'product'->>'parentId')::bigint = lv2.id"
           + "  AND (j.site_id = :siteId OR j.site_id IS NULL)"
           + " JOIN page_data p"
           + "   ON p.data_slug = 'product-data'"
@@ -4312,6 +4383,7 @@ public class PageDataService {
     }
 
     private List<PageDataResponse> applyFetch(String slug, List<PageDataResponse> content, Long siteId, Set<Long> restrictToRelationIds) {
+        if (!slugRelationFetchCache.hasFetch(slug)) return content;
         List<SlugRelation> allFetchRelations = slugRelationRepository.findByMasterSlugAndRelationDir(slug, "FETCH");
         List<SlugRelation> fetchRelations = restrictToRelationIds != null
             ? allFetchRelations.stream().filter(r -> restrictToRelationIds.contains(r.getId())).toList()
@@ -4324,6 +4396,7 @@ public class PageDataService {
            매핑(depth3) 고유 id를 relationId별로 병렬 보관 — MultiSelectRenderer가 행(row) 단위로 구분해 쓴다 */
         Map<Long, Map<String, Object>> categoryFetchMappingIdCache = new HashMap<>();
         Map<String, Map<String, List<Map<String, Object>>>> groupedFetchCache = new HashMap<>();
+        Map<String, CategoryChainResult> categoryChainCache = new HashMap<>();
         for (SlugRelation rel : fetchRelations) {
             boolean isArrayContains = "ARRAY_CONTAINS".equals(rel.getJoinType());
             boolean isCategory = "CATEGORY".equals(rel.getSlaveType());
@@ -4334,7 +4407,13 @@ public class PageDataService {
                         .filter(v -> v != null && !v.isBlank())
                         .distinct()
                         .toList();
-                    categoryFetchCache.put(rel.getId(), batchResolveCategoryFetch(rel, arrayValues, siteId).labels());
+                    boolean includeLeaf = Boolean.TRUE.equals(rel.getIncludeLeaf());
+                    String groupKey = buildCategoryGroupKey(rel, includeLeaf);
+                    CategoryChainResult chain = categoryChainCache.computeIfAbsent(groupKey,
+                        k -> resolveCategoryChain(rel.getSlaveSlug(), rel.getSlaveKey(), rel.getSlaveFilter(), includeLeaf, arrayValues, siteId));
+                    int targetDepth = rel.getCategoryDepth() != null ? rel.getCategoryDepth() : 1;
+                    int fromDepth = rel.getCategoryDepthFrom() != null ? rel.getCategoryDepthFrom() : targetDepth;
+                    categoryFetchCache.put(rel.getId(), sliceCategoryChain(chain, targetDepth, fromDepth, rel.getFetchFields()).labels());
                 }
                 continue;
             }
@@ -4347,7 +4426,13 @@ public class PageDataService {
 
             if (isCategory) {
                 if (StringUtils.hasText(rel.getFetchFields())) {
-                    CategoryFetchResult categoryResult = batchResolveCategoryFetch(rel, masterValues, siteId);
+                    boolean includeLeaf = Boolean.TRUE.equals(rel.getIncludeLeaf());
+                    String groupKey = buildCategoryGroupKey(rel, includeLeaf);
+                    CategoryChainResult chain = categoryChainCache.computeIfAbsent(groupKey,
+                        k -> resolveCategoryChain(rel.getSlaveSlug(), rel.getSlaveKey(), rel.getSlaveFilter(), includeLeaf, masterValues, siteId));
+                    int targetDepth = rel.getCategoryDepth() != null ? rel.getCategoryDepth() : 1;
+                    int fromDepth = rel.getCategoryDepthFrom() != null ? rel.getCategoryDepthFrom() : targetDepth;
+                    CategoryFetchResult categoryResult = sliceCategoryChain(chain, targetDepth, fromDepth, rel.getFetchFields());
                     categoryFetchCache.put(rel.getId(), categoryResult.labels());
                     categoryFetchMappingIdCache.put(rel.getId(), categoryResult.mappingIds());
                 }
@@ -4474,32 +4559,67 @@ public class PageDataService {
     /** labels = 화면 표시용 경로 텍스트(기존 동작 그대로), mappingIds = 같은 순서로 대응하는 매핑(depth3) 고유 id */
     private record CategoryFetchResult(Map<String, Object> labels, Map<String, Object> mappingIds) {}
 
+    /** DB 조회(리프 + 부모 훑기 + includeLeaf 시 product 조인) 결과 — fetchFields/targetDepth/fromDepth와 무관하게
+        동일 slaveSlug/slaveKey/slaveFilter/includeLeaf/masterValues 조합이면 재사용 가능하다.
+        ancestorChains는 각 row의 조상 dataJson을 루트에 가까운 순서대로 담아, 이름 추출(extractFieldMulti)은
+        relation별 fetchFields로 슬라이싱 단계(sliceCategoryChain)에서 수행한다 */
+    private record CategoryChainResult(
+        List<String> rowIds,
+        Map<String, List<Map<String, Object>>> ancestorChains,
+        Map<String, String> leafSuffixes,
+        Map<String, Map<String, Object>> leafRecords,
+        Map<String, String> rowMasterValue,
+        boolean includeLeaf
+    ) {}
+
+    private String buildCategoryGroupKey(SlugRelation rel, boolean includeLeaf) {
+        return rel.getSlaveSlug() + "#" + rel.getSlaveKey() + "#"
+            + rel.getMasterKey() + "#" + (rel.getSlaveFilter() == null ? "" : rel.getSlaveFilter())
+            + "#" + includeLeaf;
+    }
+
     private CategoryFetchResult batchResolveCategoryFetch(SlugRelation rel, List<String> masterValues, Long siteId) {
         if (masterValues.isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
-
+        boolean includeLeaf = Boolean.TRUE.equals(rel.getIncludeLeaf());
+        CategoryChainResult chain = resolveCategoryChain(rel.getSlaveSlug(), rel.getSlaveKey(), rel.getSlaveFilter(), includeLeaf, masterValues, siteId);
         int targetDepth = rel.getCategoryDepth() != null ? rel.getCategoryDepth() : 1;
         int fromDepth = rel.getCategoryDepthFrom() != null ? rel.getCategoryDepthFrom() : targetDepth;
+        return sliceCategoryChain(chain, targetDepth, fromDepth, rel.getFetchFields());
+    }
+
+    private CategoryChainResult resolveCategoryChain(String slaveSlug, String slaveKey, String slaveFilter,
+            boolean includeLeaf, List<String> masterValues, Long siteId) {
+        if (masterValues.isEmpty()) {
+            return new CategoryChainResult(Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap(),
+                Collections.emptyMap(), Collections.emptyMap(), includeLeaf);
+        }
 
         String masterIdList = masterValues.stream().distinct()
             .map(v -> "'" + v.replace("'", "''") + "'")
             .collect(java.util.stream.Collectors.joining(","));
 
         StringBuilder sql1 = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
-        appendSlaveKeyInCondition(sql1, rel.getSlaveKey(), masterIdList);
+        appendSlaveKeyInCondition(sql1, slaveKey, masterIdList);
         Map<String, String> filterParams = new LinkedHashMap<>();
-        if (rel.getSlaveFilter() != null && !rel.getSlaveFilter().isBlank()) {
-            appendSlaveFilter(sql1, rel.getSlaveFilter(), filterParams);
+        if (slaveFilter != null && !slaveFilter.isBlank()) {
+            appendSlaveFilter(sql1, slaveFilter, filterParams);
         }
 
         Query q1 = entityManager.createNativeQuery(sql1.toString());
-        q1.setParameter("slaveSlug", rel.getSlaveSlug());
+        q1.setParameter("slaveSlug", slaveSlug);
         filterParams.forEach(q1::setParameter);
 
         List<Object> r1 = q1.getResultList();
-        if (r1.isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
+        if (r1.isEmpty()) {
+            return new CategoryChainResult(Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap(),
+                Collections.emptyMap(), Collections.emptyMap(), includeLeaf);
+        }
 
-        Map<String, List<Map<String, Object>>> grouped = groupSlaveRecordsByKey(r1, rel.getSlaveKey());
-        if (grouped.isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
+        Map<String, List<Map<String, Object>>> grouped = groupSlaveRecordsByKey(r1, slaveKey);
+        if (grouped.isEmpty()) {
+            return new CategoryChainResult(Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap(),
+                Collections.emptyMap(), Collections.emptyMap(), includeLeaf);
+        }
 
         List<String> rowIds = new ArrayList<>();
         Map<String, Map<String, Object>> leafRecords = new LinkedHashMap<>();
@@ -4515,12 +4635,12 @@ public class PageDataService {
             }
         }
 
-        Map<String, List<String>> pathAccumulator = new LinkedHashMap<>();
+        Map<String, List<Map<String, Object>>> ancestorChains = new LinkedHashMap<>();
         Map<String, Map<String, Object>> cursor = new LinkedHashMap<>();
         Map<String, String> parentKeyPath = new LinkedHashMap<>();
         Set<String> active = new LinkedHashSet<>(rowIds);
         for (String rowId : rowIds) {
-            pathAccumulator.put(rowId, new ArrayList<>());
+            ancestorChains.put(rowId, new ArrayList<>());
             Map<String, Object> leaf = leafRecords.get(rowId);
             cursor.put(rowId, leaf);
             parentKeyPath.put(rowId, autoDetectParentKeyPath(leaf));
@@ -4543,7 +4663,7 @@ public class PageDataService {
             StringBuilder sqlLevel = new StringBuilder("SELECT data_json::text FROM page_data WHERE data_slug = :slaveSlug AND is_deleted = false");
             appendSlaveKeyInCondition(sqlLevel, "id", parentIdList);
             Query qLevel = entityManager.createNativeQuery(sqlLevel.toString());
-            qLevel.setParameter("slaveSlug", rel.getSlaveSlug());
+            qLevel.setParameter("slaveSlug", slaveSlug);
             List<Object> levelRows = qLevel.getResultList();
 
             Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
@@ -4565,8 +4685,7 @@ public class PageDataService {
                 Map<String, Object> parentDataJson = byId.get(pid);
                 if (parentDataJson == null) continue;
 
-                String name = extractFieldMulti(parentDataJson, rel.getFetchFields());
-                if (name != null) pathAccumulator.get(rowId).add(0, name);
+                ancestorChains.get(rowId).add(0, parentDataJson);
                 cursor.put(rowId, parentDataJson);
                 parentKeyPath.put(rowId, autoDetectParentKeyPath(parentDataJson));
                 nextActive.add(rowId);
@@ -4574,13 +4693,13 @@ public class PageDataService {
             active = nextActive;
         }
 
-        boolean includeLeaf = Boolean.TRUE.equals(rel.getIncludeLeaf());
+        Map<String, String> leafSuffixes = new LinkedHashMap<>();
         if (includeLeaf) {
             Set<String> resolvedByCategoryTitle = new LinkedHashSet<>();
             for (String rowId : rowIds) {
                 String categoryTitle = extractField(leafRecords.get(rowId), "category.title");
                 if (categoryTitle == null || categoryTitle.isBlank()) continue;
-                pathAccumulator.get(rowId).add(categoryTitle);
+                leafSuffixes.put(rowId, categoryTitle);
                 resolvedByCategoryTitle.add(rowId);
             }
 
@@ -4622,17 +4741,30 @@ public class PageDataService {
                     Map<String, Object> productDataJson = productById.get(productId);
                     if (productDataJson == null) continue;
                     String leafName = extractField(productDataJson, "product.product_name");
-                    if (leafName != null) pathAccumulator.get(rowId).add(leafName);
+                    if (leafName != null) leafSuffixes.put(rowId, leafName);
                 }
             }
         }
 
+        return new CategoryChainResult(rowIds, ancestorChains, leafSuffixes, leafRecords, rowMasterValue, includeLeaf);
+    }
+
+    private CategoryFetchResult sliceCategoryChain(CategoryChainResult chain, int targetDepth, int fromDepth, String fetchFields) {
+        if (chain.rowIds().isEmpty()) return new CategoryFetchResult(Collections.emptyMap(), Collections.emptyMap());
+
         Map<String, List<String>> resultsByMaster = new LinkedHashMap<>();
         /* 라벨과 같은 루프·같은 조건으로 쌓아 인덱스를 1:1로 맞춘다 (leafRecords가 곧 매핑(depth3) 자신) */
         Map<String, List<String>> mappingIdsByMaster = new LinkedHashMap<>();
-        for (String rowId : rowIds) {
-            List<String> fullPath = pathAccumulator.get(rowId);
-            if (isCategoryChainBroken(leafRecords.get(rowId), fullPath.size(), includeLeaf)) continue;
+        for (String rowId : chain.rowIds()) {
+            List<String> fullPath = new ArrayList<>();
+            for (Map<String, Object> ancestor : chain.ancestorChains().get(rowId)) {
+                String name = extractFieldMulti(ancestor, fetchFields);
+                if (name != null) fullPath.add(name);
+            }
+            String leafSuffix = chain.leafSuffixes().get(rowId);
+            if (leafSuffix != null) fullPath.add(leafSuffix);
+
+            if (isCategoryChainBroken(chain.leafRecords().get(rowId), fullPath.size(), chain.includeLeaf())) continue;
             if (fullPath.isEmpty()) continue;
             int availableDepth = Math.min(fullPath.size(), targetDepth);
             List<String> rangeNames = new ArrayList<>();
@@ -4640,10 +4772,10 @@ public class PageDataService {
                 rangeNames.add(fullPath.get(d - 1));
             }
             if (!rangeNames.isEmpty()) {
-                resultsByMaster.computeIfAbsent(rowMasterValue.get(rowId), k -> new ArrayList<>())
+                resultsByMaster.computeIfAbsent(chain.rowMasterValue().get(rowId), k -> new ArrayList<>())
                     .add(String.join(" > ", rangeNames));
-                mappingIdsByMaster.computeIfAbsent(rowMasterValue.get(rowId), k -> new ArrayList<>())
-                    .add(extractField(leafRecords.get(rowId), "id"));
+                mappingIdsByMaster.computeIfAbsent(chain.rowMasterValue().get(rowId), k -> new ArrayList<>())
+                    .add(extractField(chain.leafRecords().get(rowId), "id"));
             }
         }
 
