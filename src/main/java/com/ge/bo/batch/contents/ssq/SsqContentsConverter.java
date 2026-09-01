@@ -58,6 +58,7 @@ public class SsqContentsConverter {
         String createDatetime = first.createDatetime();
         String updateDatetime = first.updateDatetime();
         String deleteYn = ContentsNormalizer.trimToNull(first.deleteYn());
+        String docDescription = first.docDescription();
 
         for (SsqDocumentRow row : categoryRows) {
             boolean conflict = !eq(docTitle, ContentsNormalizer.trimToNull(row.docTitle()))
@@ -66,11 +67,12 @@ public class SsqContentsConverter {
                 || !eq(siteLanguage, row.siteLanguage())
                 || !eq(createDatetime, row.createDatetime())
                 || !eq(updateDatetime, row.updateDatetime())
-                || !eq(deleteYn, ContentsNormalizer.trimToNull(row.deleteYn()));
+                || !eq(deleteYn, ContentsNormalizer.trimToNull(row.deleteYn()))
+                || !eq(docDescription, row.docDescription());
             if (conflict) {
                 return documentLevelFailure(SOURCE_TABLE_DOC, docId,
                     "같은 doc_id의 문서 반복 행 사이에 문서 레벨 값(doc_title/doc_type/expose/site_language/"
-                        + "create_datetime/update_datetime/delete_yn)이 서로 다름", rawRow(row));
+                        + "create_datetime/update_datetime/delete_yn/doc_description)이 서로 다름", rawRow(row));
             }
         }
 
@@ -164,7 +166,7 @@ public class SsqContentsConverter {
 
         List<VersionItem> versions = new ArrayList<>();
         for (Map.Entry<Integer, List<SsqFileInfoRow>> entry : byVersionId.entrySet()) {
-            VersionBuildOutcome outcome = buildVersion(docId, docType, entry.getKey(), entry.getValue());
+            VersionBuildOutcome outcome = buildVersion(docId, docType, entry.getKey(), entry.getValue(), docDescription);
             if (outcome.documentFailure != null) {
                 return outcome.documentFailure;
             }
@@ -215,7 +217,8 @@ public class SsqContentsConverter {
         return new ConversionResult(document, rowFailures, List.of());
     }
 
-    private VersionBuildOutcome buildVersion(int docId, String docType, int versionId, List<SsqFileInfoRow> rows) {
+    private VersionBuildOutcome buildVersion(int docId, String docType, int versionId, List<SsqFileInfoRow> rows,
+                                              String docDescription) {
         SsqFileInfoRow first = rows.get(0);
         String versionName = first.versionName();
         String versionDesc = first.versionDesc();
@@ -244,11 +247,16 @@ public class SsqContentsConverter {
         String versionDescForStorage = null;
         if (VIDEO_TYPE.equals(docType)) {
             var extracted = htmlSupport.extractVideoUrl(versionDesc);
+            if (extracted.isEmpty()) {
+                // version_desc(버전별 값)에서 못 찾으면 문서 레벨 doc_description(if_r_ssq_document, version_desc와
+                // 동일 형식으로 옴)에서 재시도한다.
+                extracted = htmlSupport.extractVideoUrl(docDescription);
+            }
             if (extracted.isPresent()) {
                 videoUrl = extracted.get();
             } else {
                 rowFailures.add(new RowFailure(SOURCE_TABLE_FILE, "doc_id=" + docId + ", version_id=" + versionId, "PARSE_URL",
-                    "영상 URL(version_desc 내 data-oembed-url) 추출 실패 또는 허용되지 않은 도메인",
+                    "영상 URL(version_desc, doc_description 내 data-oembed-url) 추출 실패 또는 허용되지 않은 도메인",
                     Map.of("docId", docId, "versionId", versionId)));
             }
         } else {

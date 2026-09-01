@@ -28,7 +28,7 @@ public class SsqContentsReader {
         rs.getString("level_3"), rs.getString("level_4"), rs.getString("doc_title"), rs.getString("doc_type"),
         (Boolean) rs.getObject("expose"), rs.getString("site_language"), rs.getString("create_datetime"),
         rs.getString("update_datetime"), rs.getString("delete_yn"), rs.getString("nahp_display_flag"),
-        rs.getString("if_trc_id"), toLocalDateTime(rs.getTimestamp("if_date")));
+        rs.getString("if_trc_id"), toLocalDateTime(rs.getTimestamp("if_date")), rs.getString("doc_description"));
 
     private static final RowMapper<SsqFileInfoRow> FILE_ROW_MAPPER = (rs, rowNum) -> new SsqFileInfoRow(
         rs.getInt("doc_id"), rs.getString("doc_type"), rs.getString("doc_title"),
@@ -87,7 +87,8 @@ public class SsqContentsReader {
         Map<Integer, List<SsqDocumentRow>> groups = new LinkedHashMap<>();
         List<SsqDocumentRow> rows = jdbcTemplate.query(
             "SELECT doc_id, spec_group, level_1, level_2, level_3, level_4, doc_title, doc_type, expose, "
-                + "site_language, create_datetime, update_datetime, delete_yn, nahp_display_flag, if_trc_id, if_date "
+                + "site_language, create_datetime, update_datetime, delete_yn, nahp_display_flag, if_trc_id, if_date, "
+                + "doc_description "
                 + "FROM if_r_ssq_document WHERE if_result = ? ORDER BY doc_id",
             DOCUMENT_ROW_MAPPER, PENDING);
         for (SsqDocumentRow row : rows) {
