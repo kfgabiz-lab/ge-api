@@ -108,7 +108,8 @@ ls:
         grantType: client_credentials
       # 통합챗봇 검색 API
       chatbotSearch:
-        apiUrl: https://cxai-dev.ls-electric.com/api/v1/search/stream?include_keywords=true
+#        apiUrl: https://cxai-dev.ls-electric.com/api/v1/search/stream?include_keywords=true    테스트로 인해 임시 주석 후 운영 URL 적용. 테스트 후 원복 필요.
+        apiUrl: https://cxai.ls-electric.com/api/v1/search/stream?include_keywords=true
         apiKey: ${CHATBOT_SEACH_API_KEY:}
       # Azure AI Search API
       azureSearch:

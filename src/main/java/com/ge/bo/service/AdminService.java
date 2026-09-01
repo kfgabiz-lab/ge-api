@@ -135,7 +135,8 @@ public class AdminService {
   private AdminDto.Response convertToResponse(AdminUser user) {
     return AdminDto.Response.builder()
         .id(user.getId())
-        .email(user.getEmail())
+        // 응답 필드명은 FE 호환을 위해 email 유지 — 값은 인증 기준인 employeeId(사번)로 조회
+        .email(user.getEmployeeId())
         .name(user.getName())
         .deptCode(user.getDeptCode())
         .deptName(user.getDeptName())

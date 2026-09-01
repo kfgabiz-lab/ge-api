@@ -16,11 +16,12 @@ public record LoginLogResponse(
         String clientIp,
         OffsetDateTime createdAt) {
 
-    public static LoginLogResponse from(LoginLog e) {
+    /** loginEmail 필드명은 FE 호환을 위해 유지 — 값은 admin_user_id로 조회한 employeeId(사번) */
+    public static LoginLogResponse from(LoginLog e, String employeeId) {
         return new LoginLogResponse(
                 e.getId(),
                 e.getAdminUserId(),
-                e.getLoginEmail(),
+                employeeId,
                 e.getStatus(),
                 e.getFailReason(),
                 e.getClientIp(),

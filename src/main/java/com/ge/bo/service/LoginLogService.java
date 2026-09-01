@@ -2,8 +2,10 @@ package com.ge.bo.service;
 
 import com.ge.bo.dto.LoginLogDetailResponse;
 import com.ge.bo.dto.LoginLogResponse;
+import com.ge.bo.entity.AdminUser;
 import com.ge.bo.entity.LoginLog;
 import com.ge.bo.exception.ErrorCode;
+import com.ge.bo.repository.AdminRepository;
 import com.ge.bo.repository.LoginLogRepository;
 import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +20,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 접속이력 서비스
@@ -29,14 +35,17 @@ import java.util.List;
 public class LoginLogService {
 
     private final LoginLogRepository loginLogRepository;
+    private final AdminRepository adminRepository;
 
     /* ══════════ 목록 조회 ══════════ */
 
     /**
      * 동적 필터 + 페이징 목록 조회
+     * loginEmail은 더 이상 login_log에 저장되지 않으므로, admin_user.employee_id를
+     * 먼저 키워드로 찾아 그 admin_user_id 목록으로 필터링한다.
      *
      * @param status     로그인 결과 (SUCCESS / FAIL, null이면 전체)
-     * @param loginEmail 이메일 키워드 (null이면 전체)
+     * @param loginEmail 계정(employee_id) 키워드 (null이면 전체)
      * @param startDate  시작일시 (null이면 전체)
      * @param endDate    종료일시 (null이면 전체)
      * @param pageable   페이지 정보
@@ -45,8 +54,20 @@ public class LoginLogService {
     public Page<LoginLogResponse> getList(String status, String loginEmail,
                                           OffsetDateTime startDate, OffsetDateTime endDate,
                                           Pageable pageable) {
-        Specification<LoginLog> spec = buildSpec(status, loginEmail, startDate, endDate);
-        return loginLogRepository.findAll(spec, pageable).map(LoginLogResponse::from);
+        List<Long> matchedAdminIds = null;
+        if (loginEmail != null && !loginEmail.isBlank()) {
+            matchedAdminIds = adminRepository.findByEmployeeIdContainingIgnoreCase(loginEmail.trim())
+                    .stream().map(AdminUser::getId).toList();
+            if (matchedAdminIds.isEmpty()) {
+                return Page.empty(pageable);
+            }
+        }
+
+        Specification<LoginLog> spec = buildSpec(status, matchedAdminIds, startDate, endDate);
+        Page<LoginLog> page = loginLogRepository.findAll(spec, pageable);
+        Map<Long, String> employeeIdByAdminId = employeeIdByAdminId(page.getContent());
+
+        return page.map(log -> LoginLogResponse.from(log, employeeIdByAdminId.get(log.getAdminUserId())));
     }
 
     /* ══════════ 단건 조회 ══════════ */
@@ -58,7 +79,23 @@ public class LoginLogService {
     public LoginLogDetailResponse getOne(Long id) {
         LoginLog loginLog = loginLogRepository.findById(id)
                 .orElseThrow(ErrorCode.LOGIN_LOG_NOT_FOUND::toException);
-        return LoginLogDetailResponse.from(loginLog);
+        String employeeId = loginLog.getAdminUserId() == null ? null
+                : adminRepository.findById(loginLog.getAdminUserId())
+                        .map(AdminUser::getEmployeeId).orElse(null);
+        return LoginLogDetailResponse.from(loginLog, employeeId);
+    }
+
+    /** admin_user_id → employee_id 일괄 조회 (목록 페이지당 1쿼리) */
+    private Map<Long, String> employeeIdByAdminId(List<LoginLog> logs) {
+        Set<Long> adminIds = logs.stream()
+                .map(LoginLog::getAdminUserId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (adminIds.isEmpty()) {
+            return Map.of();
+        }
+        return adminRepository.findAllById(adminIds).stream()
+                .collect(Collectors.toMap(AdminUser::getId, AdminUser::getEmployeeId));
     }
 
     /* ══════════ 비동기 저장 ══════════ */
@@ -71,7 +108,7 @@ public class LoginLogService {
      *   loginLogService.saveAsync(null, request.getEmail(), "FAIL", "USER_NOT_FOUND", clientIp, userAgent, siteId);
      *
      * @param adminUserId 관리자 ID (이메일 미존재 시 null)
-     * @param loginEmail  로그인 시도 이메일
+     * @param loginEmail  (미사용 — 더 이상 저장하지 않음, 항상 null로 기록. 호출부 시그니처 호환을 위해 유지)
      * @param status      SUCCESS / FAIL
      * @param failReason  실패 사유 코드 (성공 시 null)
      * @param clientIp    클라이언트 IP
@@ -85,7 +122,7 @@ public class LoginLogService {
         try {
             LoginLog loginLog = LoginLog.builder()
                     .adminUserId(adminUserId)
-                    .loginEmail(loginEmail != null ? loginEmail : "")
+                    .loginEmail(null) // 로그인 시도 계정 문자열은 더 이상 기록하지 않음 (요청에 의해 null 고정)
                     .status(status)
                     .failReason(failReason)
                     .siteId(siteId)
@@ -105,7 +142,7 @@ public class LoginLogService {
 
     /* ══════════ 동적 필터 ══════════ */
 
-    private Specification<LoginLog> buildSpec(String status, String loginEmail,
+    private Specification<LoginLog> buildSpec(String status, List<Long> matchedAdminIds,
                                               OffsetDateTime startDate, OffsetDateTime endDate) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
@@ -113,9 +150,8 @@ public class LoginLogService {
             if (status != null && !status.isBlank()) {
                 predicates.add(cb.equal(root.get("status"), status.trim().toUpperCase()));
             }
-            if (loginEmail != null && !loginEmail.isBlank()) {
-                predicates.add(cb.like(cb.lower(root.get("loginEmail")),
-                        "%" + loginEmail.trim().toLowerCase() + "%"));
+            if (matchedAdminIds != null) {
+                predicates.add(root.get("adminUserId").in(matchedAdminIds));
             }
             if (startDate != null) {
                 predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), startDate));

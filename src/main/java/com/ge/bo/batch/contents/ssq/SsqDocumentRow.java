@@ -8,5 +8,8 @@ package com.ge.bo.batch.contents.ssq;
 public record SsqDocumentRow(Integer docId, String specGroup, String level1, String level2, String level3,
                               String level4, String docTitle, String docType, Boolean expose, String siteLanguage,
                               String createDatetime, String updateDatetime, String deleteYn, String nahpDisplayFlag,
-                              String ifTrcId, java.time.LocalDateTime ifDate) {
+                              String ifTrcId, java.time.LocalDateTime ifDate,
+                              // 영상(doc_type='V')에서 version_desc로 영상 URL 추출이 안 될 때 대체로 보는 값 —
+                              // SsqContentsConverter#buildVersion() 참고. 원천에서 version_desc와 동일한 형식(HTML)으로 옴.
+                              String docDescription) {
 }

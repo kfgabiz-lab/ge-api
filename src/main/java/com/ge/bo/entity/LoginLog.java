@@ -25,8 +25,8 @@ public class LoginLog {
     @Column(name = "admin_user_id")
     private Long adminUserId;
 
-    /** 로그인 시도 이메일 (FK가 null 되어도 보존) */
-    @Column(nullable = false, length = 100)
+    /** 로그인 시도 계정 — 더 이상 저장하지 않음(항상 null), 컬럼만 이력 호환을 위해 유지 */
+    @Column(length = 100)
     private String loginEmail;
 
     /** 로그인 결과: SUCCESS / FAIL */

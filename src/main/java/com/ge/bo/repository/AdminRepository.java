@@ -9,11 +9,9 @@ import java.util.List;
 import java.util.Optional;
 
 public interface AdminRepository extends JpaRepository<AdminUser, Long> {
-  Optional<AdminUser> findByEmail(String email);
-
-  boolean existsByEmail(String email);
-
   Optional<AdminUser> findByEmployeeId(String employeeId);
+
+  List<AdminUser> findByEmployeeIdContainingIgnoreCase(String employeeId);
 
   long countByRole(String role);
 
