@@ -66,9 +66,9 @@ public class FoDownloadCenterController {
     /**
      * LV1/LV2 카테고리별 콘텐츠 건수(필터 아코디언 숫자)
      * GET /api/v1/fo/download-center/category-counts?q={키워드}&categories={LV2코드,콤마}&parentCategories={LV1코드,콤마}&docTypes={유형코드,콤마}&productCodes={LV3제품코드,콤마}
-     * - 문서 1건은 항상 대표 카테고리(LV1/LV2) 1개로만 집계된다(다중 카테고리 소속이어도 대표 1개로 통일).
-     * - 파라미터 의미는 /contents 와 동일(미지정 시 전체 기준). 응답의 l1Counts 합계/l2Counts 합계는
-     *   해당 필터 기준 total 과 항상 일치한다.
+     * - 문서 1건이 여러 카테고리에 속하면 각 카테고리에서 모두 집계된다(대표 카테고리 없음).
+     * - 파라미터 의미는 /contents 와 동일(미지정 시 전체 기준). 다중 카테고리 소속 문서가 있으면
+     *   l1Counts/l2Counts 합계가 total 보다 클 수 있다(정상 동작).
      * - 응답 구조: { l1Counts: [{categoryL1Id, count}], l2Counts: [{categoryL1Id, categoryL2Id, count}] }
      * - includeFileContent: true 일 때만 Azure AI Search 파일내용 매칭을 q 조건에 OR 로 포함한다.
      *   Download Center 전용이며, 제품상세 Downloads 는 미사용(false). /contents 와 반드시 동일 값으로 호출해야
@@ -97,7 +97,7 @@ public class FoDownloadCenterController {
      * - 6개 문서유형(C/M/D/R/S/T) 전체를 항상 반환(매칭 없으면 count=0). doc_type='V'(Video)와
      *   code_detail(DOC_TYPE)에 정의되지 않은 값(예: 'O')은 MASTER_GATE 단계에서부터 제외된다.
      * - OS/Firmware 는 대응 doc_type 이 없어 미포함.
-     * - 파라미터 의미는 /contents 와 동일(미지정 시 전체 기준). categories/parentCategories 는 대표 카테고리 기준.
+     * - 파라미터 의미는 /contents 와 동일(미지정 시 전체 기준). categories/parentCategories 는 실제 소속 카테고리 전부 기준(OR).
      * - productCodes: LV3 제품코드(contents_category.category_l3_id, 예: L02-01-01) 콤마구분.
      *   지정 시 해당 제품에 연계된 콘텐츠만 유형별 집계 → 제품상세 Downloads 섹션의 Document Type 필터 유형별 검색결과 수.
      * - includeFileContent: true 일 때만 Azure AI Search 파일내용 매칭을 q 조건에 OR 로 포함한다.

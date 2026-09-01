@@ -3,6 +3,7 @@ package com.ge.bo.service;
 import com.ge.bo.common.search.SearchSqlSupport;
 import com.ge.bo.dto.AzureAiSearchDocument;
 import com.ge.bo.dto.AzureAiSearchResponse;
+import com.ge.bo.dto.CategoryRef;
 import com.ge.bo.dto.DownloadCenterCategoryCountResponse;
 import com.ge.bo.dto.DownloadCenterCategoryCountsResponse;
 import com.ge.bo.dto.DownloadCenterDocTypeCountResponse;
@@ -88,36 +89,11 @@ public class DownloadCenterService {
       + "   AND cc3.nahp_display_flag = true AND cc3.is_deleted = false"
       + "   AND cc3.category_l3_id IN (:productCodes))";
 
-    /** 문서 1건이 여러 카테고리(contents_category)에 걸쳐 있어도 카드 표시/카운트/필터가 항상 같은 값을
-     *  가리키도록, 문서당 대표 카테고리(LV1/LV2) 1개를 고정 선정하는 LATERAL 서브쿼리.
-     *  nahp_level_seq(소스 NAHP 가 부여한 문서 내 카테고리 우선순위, 0/1부터 시작)를 1순위로 삼아
-     *  가장 우선순위가 높은(값이 작은) 카테고리를 대표로 선정하고, 값이 같거나 없는 경우를 대비해
-     *  category_l1_id/category_l2_id/id 순으로 결정적으로 정렬한다. */
-    private static final String REPRESENTATIVE_CATEGORY_JOIN =
-        " LEFT JOIN LATERAL ("
-      + "   SELECT cc.category_l1_id, cc.category_l2_id FROM contents_category cc"
-      + "   WHERE cc.contents_id = m.id"
-      + "     AND cc.nahp_display_flag = true AND cc.is_deleted = false"
-      + "   ORDER BY cc.nahp_level_seq ASC NULLS LAST,"
-      + "            cc.category_l1_id ASC, cc.category_l2_id ASC NULLS LAST, cc.id ASC"
-      + "   LIMIT 1"
-      + " ) rc ON true";
-
-    /** getContents/getCategoryCounts/getDocTypeCounts 가 공유하는 WHERE 절 빌더 결과.
-     *  needsCategoryJoin 이 true 인 경우에만 REPRESENTATIVE_CATEGORY_JOIN 을 FROM 절에 붙이면 된다. */
     private record FilterClause(
             String where, boolean hasQ, boolean hasDocTypes,
             boolean hasCats, boolean hasParentCats, boolean hasProductCodes,
-            boolean hasContentIds) {
-        boolean needsCategoryJoin() {
-            return hasCats || hasParentCats;
-        }
-    }
+            boolean hasContentIds) {}
 
-    /** q(제목검색)/categories(LV2)/parentCategories(LV1-only)/docTypes/productCodes 필터를
-     *  MASTER_GATE 에 이어붙인 WHERE 절을 만든다. categories/parentCategories 는 대표 카테고리(rc) 기준으로
-     *  판정하므로, 반환된 FilterClause.needsCategoryJoin() 이 true 이면 호출부에서 REPRESENTATIVE_CATEGORY_JOIN 을
-     *  FROM contents_master m 뒤에 추가해야 한다. */
     private static FilterClause buildFilterClause(
             String q, List<String> categories, List<String> parentCategories,
             List<String> docTypes, List<String> productCodes, List<Long> contentIds) {
@@ -143,10 +119,14 @@ public class DownloadCenterService {
         }
         List<String> categoryClauses = new ArrayList<>();
         if (hasCats) {
-            categoryClauses.add("rc.category_l2_id IN (:cats)");
+            categoryClauses.add("EXISTS (SELECT 1 FROM contents_category cc2 WHERE cc2.contents_id = m.id"
+                + " AND cc2.nahp_display_flag = true AND cc2.is_deleted = false"
+                + " AND cc2.category_l2_id IN (:cats))");
         }
         if (hasParentCats) {
-            categoryClauses.add("(rc.category_l1_id IN (:parentCats) AND rc.category_l2_id IS NULL)");
+            categoryClauses.add("EXISTS (SELECT 1 FROM contents_category cc2 WHERE cc2.contents_id = m.id"
+                + " AND cc2.nahp_display_flag = true AND cc2.is_deleted = false"
+                + " AND cc2.category_l1_id IN (:parentCats) AND cc2.category_l2_id IS NULL)");
         }
         if (!categoryClauses.isEmpty()) {
             where.append(" AND (").append(String.join(" OR ", categoryClauses)).append(")");
@@ -187,17 +167,15 @@ public class DownloadCenterService {
                 : List.of();
 
         FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes, contentIds);
-        String categoryJoin = fc.needsCategoryJoin() ? REPRESENTATIVE_CATEGORY_JOIN : "";
 
         Query countQuery = entityManager.createNativeQuery(
-            "SELECT count(*) FROM contents_master m" + categoryJoin + fc.where());
+            "SELECT count(*) FROM contents_master m" + fc.where());
         applyFilterParams(countQuery, fc, q, categories, parentCategories, docTypes, productCodes, contentIds);
         long total = ((Number) countQuery.getSingleResult()).longValue();
 
         Query idQuery = entityManager.createNativeQuery(
             "SELECT m.id FROM contents_master m"
             + (isDocTypeSort(sort) ? DOC_TYPE_CODE_JOIN : "")
-            + categoryJoin
             + fc.where() + orderByClause(sort, contentIds)
             + " LIMIT :size OFFSET :offset");
         applyFilterParams(idQuery, fc, q, categories, parentCategories, docTypes, productCodes, contentIds);
@@ -433,7 +411,6 @@ public class DownloadCenterService {
         String sql = "SELECT m.id, m.doc_type,"
             + "  COALESCE(m.nahp_title, m.doc_title)          AS title,"
             + "  to_char(m.source_updated_at, 'YYYY-MM-DD')   AS content_date,"
-            + "  rc.category_l1_id, rc.category_l2_id,"
             + "  v.id            AS version_id, v.version_name, v.sort_key,"
             + "  f.id            AS file_id, f.file_name, f.file_ext, f.file_size,"
             + "  f.source_system, f.file_path, f.source_file_path"
@@ -442,7 +419,6 @@ public class DownloadCenterService {
             + "   AND v.version_expose = true AND v.is_deleted = false"
             + " JOIN contents_file f ON f.contents_version_id = v.id"
             + "   AND f.file_expose = true AND f.is_deleted = false"
-            + REPRESENTATIVE_CATEGORY_JOIN
             + " WHERE m.id IN (:pageIds)"
             + " ORDER BY m.id, v.sort_key DESC, f.id";
 
@@ -452,6 +428,7 @@ public class DownloadCenterService {
         List<Object[]> rows = query.getResultList();
 
         Map<String, String> docTypeLabels = loadDocTypeLabels();
+        Map<Long, List<CategoryRef>> categoriesByMasterId = loadCategoryRefs(pageIds);
 
         Map<Long, ContentAcc> masterMap = new LinkedHashMap<>();
         for (Object[] r : rows) {
@@ -464,25 +441,24 @@ public class DownloadCenterService {
                     docTypeLabels.get(docType),
                     r[2] != null ? r[2].toString() : null,
                     r[3] != null ? r[3].toString() : null,
-                    r[4] != null ? r[4].toString() : null,
-                    r[5] != null ? r[5].toString() : null);
+                    categoriesByMasterId.getOrDefault(masterId, List.of()));
             });
 
-            Long versionId = ((Number) r[6]).longValue();
+            Long versionId = ((Number) r[4]).longValue();
             VersionAcc ver = acc.versions.computeIfAbsent(versionId, k -> new VersionAcc(
                 versionId,
-                r[7] != null ? r[7].toString() : null,
-                r[8] != null ? ((Number) r[8]).intValue() : 0));
+                r[5] != null ? r[5].toString() : null,
+                r[6] != null ? ((Number) r[6]).intValue() : 0));
 
             ver.files.add(new DownloadCenterFileResponse(
-                r[9] != null ? ((Number) r[9]).longValue() : null,
-                r[10] != null ? r[10].toString() : null,
+                r[7] != null ? ((Number) r[7]).longValue() : null,
+                r[8] != null ? r[8].toString() : null,
+                r[9] != null ? r[9].toString() : null,
+                r[10] != null ? ((Number) r[10]).longValue() : null,
+                r[10] != null ? formatFileSize(((Number) r[10]).longValue()) : null,
                 r[11] != null ? r[11].toString() : null,
-                r[12] != null ? ((Number) r[12]).longValue() : null,
-                r[12] != null ? formatFileSize(((Number) r[12]).longValue()) : null,
-                r[13] != null ? r[13].toString() : null,
-                r[14] != null ? r[14].toString() : null,
-                r[15] != null ? r[15].toString() : null));
+                r[12] != null ? r[12].toString() : null,
+                r[13] != null ? r[13].toString() : null));
         }
 
         List<DownloadCenterContentResponse> result = new ArrayList<>();
@@ -495,7 +471,28 @@ public class DownloadCenterService {
             }
             result.add(new DownloadCenterContentResponse(
                 acc.id, acc.docType, acc.docTypeLabel, acc.title, acc.date,
-                acc.categoryL1Id, acc.categoryL2Id, versions));
+                acc.categories, versions));
+        }
+        return result;
+    }
+
+    private Map<Long, List<CategoryRef>> loadCategoryRefs(List<Long> pageIds) {
+        Query query = entityManager.createNativeQuery(
+            "SELECT DISTINCT cc.contents_id, cc.category_l1_id, cc.category_l2_id"
+            + " FROM contents_category cc"
+            + " WHERE cc.contents_id IN (:pageIds)"
+            + "   AND cc.nahp_display_flag = true AND cc.is_deleted = false");
+        query.setParameter("pageIds", pageIds);
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+        Map<Long, List<CategoryRef>> result = new LinkedHashMap<>();
+        for (Object[] r : rows) {
+            Long contentsId = ((Number) r[0]).longValue();
+            result.computeIfAbsent(contentsId, k -> new ArrayList<>())
+                .add(new CategoryRef(
+                    r[1] != null ? r[1].toString() : null,
+                    r[2] != null ? r[2].toString() : null));
         }
         return result;
     }
@@ -510,11 +507,12 @@ public class DownloadCenterService {
 
         FilterClause fc = buildFilterClause(q, categories, parentCategories, docTypes, productCodes, contentIds);
 
-        String l2Sql = "SELECT rc.category_l1_id, rc.category_l2_id, count(*)::int"
+        String l2Sql = "SELECT cc.category_l1_id, cc.category_l2_id, count(DISTINCT m.id)::int"
             + " FROM contents_master m"
-            + REPRESENTATIVE_CATEGORY_JOIN
+            + " JOIN contents_category cc ON cc.contents_id = m.id"
+            + "   AND cc.nahp_display_flag = true AND cc.is_deleted = false"
             + fc.where()
-            + " GROUP BY rc.category_l1_id, rc.category_l2_id";
+            + " GROUP BY cc.category_l1_id, cc.category_l2_id";
         Query l2Query = entityManager.createNativeQuery(l2Sql);
         applyFilterParams(l2Query, fc, q, categories, parentCategories, docTypes, productCodes, contentIds);
         @SuppressWarnings("unchecked")
@@ -527,11 +525,12 @@ public class DownloadCenterService {
                 r[2] != null ? ((Number) r[2]).intValue() : 0));
         }
 
-        String l1Sql = "SELECT rc.category_l1_id, count(*)::int"
+        String l1Sql = "SELECT cc.category_l1_id, count(DISTINCT m.id)::int"
             + " FROM contents_master m"
-            + REPRESENTATIVE_CATEGORY_JOIN
+            + " JOIN contents_category cc ON cc.contents_id = m.id"
+            + "   AND cc.nahp_display_flag = true AND cc.is_deleted = false"
             + fc.where()
-            + " GROUP BY rc.category_l1_id";
+            + " GROUP BY cc.category_l1_id";
         Query l1Query = entityManager.createNativeQuery(l1Sql);
         applyFilterParams(l1Query, fc, q, categories, parentCategories, docTypes, productCodes, contentIds);
         @SuppressWarnings("unchecked")
@@ -558,7 +557,6 @@ public class DownloadCenterService {
 
         String sql = "SELECT m.doc_type, count(*)::int"
             + " FROM contents_master m"
-            + (fc.needsCategoryJoin() ? REPRESENTATIVE_CATEGORY_JOIN : "")
             + fc.where()
             + " GROUP BY m.doc_type";
 
@@ -603,19 +601,17 @@ public class DownloadCenterService {
         final String docTypeLabel;
         final String title;
         final String date;
-        final String categoryL1Id;
-        final String categoryL2Id;
+        final List<CategoryRef> categories;
         final Map<Long, VersionAcc> versions = new LinkedHashMap<>();
 
         ContentAcc(Long id, String docType, String docTypeLabel, String title,
-                   String date, String categoryL1Id, String categoryL2Id) {
+                   String date, List<CategoryRef> categories) {
             this.id = id;
             this.docType = docType;
             this.docTypeLabel = docTypeLabel;
             this.title = title;
             this.date = date;
-            this.categoryL1Id = categoryL1Id;
-            this.categoryL2Id = categoryL2Id;
+            this.categories = categories;
         }
     }
 

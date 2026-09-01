@@ -1,6 +1,7 @@
 package com.ge.bo.service;
 
 import com.ge.bo.common.search.SearchSqlSupport;
+import com.ge.bo.dto.CategoryRef;
 import com.ge.bo.dto.TechHubCategoryCountResponse;
 import com.ge.bo.dto.TechHubCertCountResponse;
 import com.ge.bo.dto.TechHubChapterResponse;
@@ -43,33 +44,8 @@ public class TechHubService {
 
     private static final List<String> CERT_ORDER = List.of("ul", "iec");
 
-    /** 문서 1건이 여러 카테고리(contents_category)에 걸쳐 있어도 카드 표시/카운트/필터가 항상 같은 값을
-     *  가리키도록, 문서당 대표 카테고리(LV1/LV2) 1개를 고정 선정하는 LATERAL 서브쿼리.
-     *  nahp_level_seq(소스 NAHP 가 부여한 문서 내 카테고리 우선순위, 0/1부터 시작)를 1순위로 삼아
-     *  가장 우선순위가 높은(값이 작은) 카테고리를 대표로 선정하고, 값이 같거나 없는 경우를 대비해
-     *  category_l1_id/category_l2_id/id 순으로 결정적으로 정렬한다(DownloadCenterService와 동일 패턴). */
-    private static final String REPRESENTATIVE_CATEGORY_JOIN =
-        " LEFT JOIN LATERAL ("
-      + "   SELECT cc.category_l1_id, cc.category_l2_id FROM contents_category cc"
-      + "   WHERE cc.contents_id = m.id AND cc.category_l2_id IS NOT NULL"
-      + "     AND cc.nahp_display_flag = true AND cc.is_deleted = false"
-      + "   ORDER BY cc.nahp_level_seq ASC NULLS LAST,"
-      + "            cc.category_l1_id ASC, cc.category_l2_id ASC, cc.id ASC"
-      + "   LIMIT 1"
-      + " ) cat ON true";
+    private record FilterClause(String where, boolean hasQ, boolean hasCats, boolean hasCerts) {}
 
-    /** getContents/getCategoryCounts/getCertCounts/findRelatedVideos 가 공유하는 WHERE 절 빌더 결과.
-     *  needsCategoryJoin() 이 true 인 경우에만 REPRESENTATIVE_CATEGORY_JOIN 을 FROM 절에 붙이면 된다. */
-    private record FilterClause(String where, boolean hasQ, boolean hasCats, boolean hasCerts) {
-        boolean needsCategoryJoin() {
-            return hasCats;
-        }
-    }
-
-    /** q(제목검색)/categoryL2Ids/certStds(이미 resolveCertStandardCodes 로 변환된 표준 코드) 필터를
-     *  MASTER_GATE 에 이어붙인 WHERE 절을 만든다. categoryL2Ids 는 대표 카테고리(cat) 기준으로 판정하므로,
-     *  반환된 FilterClause.needsCategoryJoin() 이 true 이면 호출부에서 REPRESENTATIVE_CATEGORY_JOIN 을
-     *  FROM contents_master m 뒤에 추가해야 한다. */
     private static FilterClause buildFilterClause(String q, List<String> categoryL2Ids, List<String> certStds) {
         boolean hasQ = q != null && !q.isBlank();
         boolean hasCats = categoryL2Ids != null && !categoryL2Ids.isEmpty();
@@ -80,7 +56,10 @@ public class TechHubService {
             where.append(" AND (m.nahp_title ILIKE :q ESCAPE '\\' OR m.doc_title ILIKE :q ESCAPE '\\')");
         }
         if (hasCats) {
-            where.append(" AND cat.category_l2_id IN (:cats)");
+            where.append(" AND EXISTS (SELECT 1 FROM contents_category cc2 WHERE cc2.contents_id = m.id"
+                + " AND cc2.category_l2_id IS NOT NULL"
+                + " AND cc2.nahp_display_flag = true AND cc2.is_deleted = false"
+                + " AND cc2.category_l2_id IN (:cats))");
         }
         if (hasCerts) {
             where.append(" AND ").append(CERT_STANDARD_EXPR).append(" IN (:certStds)");
@@ -102,17 +81,15 @@ public class TechHubService {
         int safePage = Math.max(page, 0);
         List<String> certStds = resolveCertStandardCodes(certs);
         FilterClause fc = buildFilterClause(q, categoryL2Ids, certStds);
-        String categoryJoin = fc.needsCategoryJoin() ? REPRESENTATIVE_CATEGORY_JOIN : "";
 
         Query countQuery = entityManager.createNativeQuery(
-            "SELECT count(*) FROM contents_master m" + categoryJoin + fc.where());
+            "SELECT count(*) FROM contents_master m" + fc.where());
         applyFilterParams(countQuery, fc, q, categoryL2Ids, certStds);
         long total = ((Number) countQuery.getSingleResult()).longValue();
 
         String sql = "SELECT m.id,"
             + "  COALESCE(m.nahp_title, m.doc_title)                 AS title,"
             + "  to_char(m.source_updated_at, 'YYYY-MM-DD')          AS source_updated_at,"
-            + "  cat.category_l1_id, cat.category_l2_id,"
             + "  rep.video_url, vc.version_count"
             + " FROM contents_master m"
             + " JOIN LATERAL ("
@@ -126,7 +103,6 @@ public class TechHubService {
             + "   WHERE v2.contents_id = m.id AND v2.version_expose = true AND v2.is_deleted = false"
             + "     AND v2.video_url IS NOT NULL AND v2.video_url <> ''"
             + " ) vc ON true"
-            + REPRESENTATIVE_CATEGORY_JOIN
             + fc.where()
             + " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC"
             + " LIMIT :size OFFSET :offset";
@@ -138,16 +114,22 @@ public class TechHubService {
 
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
+        List<Long> ids = new ArrayList<>();
+        for (Object[] r : rows) {
+            ids.add(((Number) r[0]).longValue());
+        }
+        Map<Long, List<CategoryRef>> categoriesById = loadCategoryRefs(ids);
+
         List<TechHubContentResponse> content = new ArrayList<>();
         for (Object[] r : rows) {
+            Long id = ((Number) r[0]).longValue();
             content.add(new TechHubContentResponse(
-                r[0] != null ? ((Number) r[0]).longValue() : null,
+                id,
                 r[1] != null ? r[1].toString() : null,
                 r[2] != null ? r[2].toString() : null,
+                categoriesById.getOrDefault(id, List.of()),
                 r[3] != null ? r[3].toString() : null,
-                r[4] != null ? r[4].toString() : null,
-                r[5] != null ? r[5].toString() : null,
-                r[6] != null ? ((Number) r[6]).intValue() : 0
+                r[4] != null ? ((Number) r[4]).intValue() : 0
             ));
         }
 
@@ -159,10 +141,8 @@ public class TechHubService {
     public TechHubDetailResponse getContentDetail(Long masterId) {
         String masterSql = "SELECT m.id,"
             + "  COALESCE(m.nahp_title, m.doc_title)         AS title,"
-            + "  to_char(m.source_updated_at, 'YYYY-MM-DD')  AS source_updated_at,"
-            + "  cat.category_l1_id, cat.category_l2_id"
+            + "  to_char(m.source_updated_at, 'YYYY-MM-DD')  AS source_updated_at"
             + " FROM contents_master m"
-            + REPRESENTATIVE_CATEGORY_JOIN
             + " WHERE m.id = :id AND m.doc_type = 'V' AND m.expose = true AND m.is_deleted = false";
         Query masterQuery = entityManager.createNativeQuery(masterSql);
         masterQuery.setParameter("id", masterId);
@@ -173,8 +153,12 @@ public class TechHubService {
         Object[] mr = masterRows.get(0);
         String title = mr[1] != null ? mr[1].toString() : null;
         String sourceUpdatedAt = mr[2] != null ? mr[2].toString() : null;
-        String categoryL1Id = mr[3] != null ? mr[3].toString() : null;
-        String categoryL2Id = mr[4] != null ? mr[4].toString() : null;
+        List<CategoryRef> categories = loadCategoryRefs(List.of(masterId)).getOrDefault(masterId, List.of());
+        String categoryL2Id = categories.stream()
+            .map(CategoryRef::categoryL2Id)
+            .filter(id -> id != null)
+            .findFirst()
+            .orElse(null);
 
         String chapterSql = "SELECT v.id, v.version_name, v.sort_key, v.video_url"
             + " FROM contents_version v"
@@ -205,7 +189,7 @@ public class TechHubService {
 
         return new TechHubDetailResponse(
             mr[0] != null ? ((Number) mr[0]).longValue() : null,
-            title, sourceUpdatedAt, categoryL1Id, categoryL2Id,
+            title, sourceUpdatedAt, categories,
             versionCount, chapters, relatedVideos);
     }
 
@@ -214,7 +198,6 @@ public class TechHubService {
         String sql = "SELECT m.id,"
             + "  COALESCE(m.nahp_title, m.doc_title)                 AS title,"
             + "  to_char(m.source_updated_at, 'YYYY-MM-DD')          AS source_updated_at,"
-            + "  cat.category_l1_id, cat.category_l2_id,"
             + "  rep.video_url, vc.version_count"
             + " FROM contents_master m"
             + " JOIN LATERAL ("
@@ -228,7 +211,6 @@ public class TechHubService {
             + "   WHERE v2.contents_id = m.id AND v2.version_expose = true AND v2.is_deleted = false"
             + "     AND v2.video_url IS NOT NULL AND v2.video_url <> ''"
             + " ) vc ON true"
-            + REPRESENTATIVE_CATEGORY_JOIN
             + fc.where()
             + " AND m.id <> :selfId"
             + " ORDER BY m.source_updated_at DESC NULLS LAST, m.id DESC"
@@ -238,17 +220,48 @@ public class TechHubService {
         query.setParameter("selfId", selfId);
         @SuppressWarnings("unchecked")
         List<Object[]> rows = query.getResultList();
+        List<Long> ids = new ArrayList<>();
+        for (Object[] r : rows) {
+            ids.add(((Number) r[0]).longValue());
+        }
+        Map<Long, List<CategoryRef>> categoriesById = loadCategoryRefs(ids);
+
         List<TechHubContentResponse> result = new ArrayList<>();
         for (Object[] r : rows) {
+            Long id = ((Number) r[0]).longValue();
             result.add(new TechHubContentResponse(
-                r[0] != null ? ((Number) r[0]).longValue() : null,
+                id,
                 r[1] != null ? r[1].toString() : null,
                 r[2] != null ? r[2].toString() : null,
+                categoriesById.getOrDefault(id, List.of()),
                 r[3] != null ? r[3].toString() : null,
-                r[4] != null ? r[4].toString() : null,
-                r[5] != null ? r[5].toString() : null,
-                r[6] != null ? ((Number) r[6]).intValue() : 0
+                r[4] != null ? ((Number) r[4]).intValue() : 0
             ));
+        }
+        return result;
+    }
+
+    private Map<Long, List<CategoryRef>> loadCategoryRefs(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Map.of();
+        }
+        Query query = entityManager.createNativeQuery(
+            "SELECT DISTINCT cc.contents_id, cc.category_l1_id, cc.category_l2_id"
+            + " FROM contents_category cc"
+            + " WHERE cc.contents_id IN (:ids)"
+            + "   AND cc.nahp_display_flag = true AND cc.is_deleted = false"
+            + " ORDER BY cc.contents_id, cc.category_l1_id, cc.category_l2_id");
+        query.setParameter("ids", ids);
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+        Map<Long, List<CategoryRef>> result = new LinkedHashMap<>();
+        for (Object[] r : rows) {
+            Long contentsId = ((Number) r[0]).longValue();
+            result.computeIfAbsent(contentsId, k -> new ArrayList<>())
+                .add(new CategoryRef(
+                    r[1] != null ? r[1].toString() : null,
+                    r[2] != null ? r[2].toString() : null));
         }
         return result;
     }
@@ -258,11 +271,13 @@ public class TechHubService {
         List<String> certStds = resolveCertStandardCodes(certs);
         FilterClause fc = buildFilterClause(q, categoryL2Ids, certStds);
 
-        String sql = "SELECT cat.category_l2_id, count(*)::int"
+        String sql = "SELECT cc.category_l2_id, count(DISTINCT m.id)::int"
             + " FROM contents_master m"
-            + REPRESENTATIVE_CATEGORY_JOIN
+            + " JOIN contents_category cc ON cc.contents_id = m.id"
+            + "   AND cc.category_l2_id IS NOT NULL"
+            + "   AND cc.nahp_display_flag = true AND cc.is_deleted = false"
             + fc.where()
-            + " GROUP BY cat.category_l2_id";
+            + " GROUP BY cc.category_l2_id";
 
         Query query = entityManager.createNativeQuery(sql);
         applyFilterParams(query, fc, q, categoryL2Ids, certStds);
@@ -283,11 +298,9 @@ public class TechHubService {
     public List<TechHubCertCountResponse> getCertCounts(String q, List<String> categoryL2Ids, List<String> certs) {
         List<String> certStds = resolveCertStandardCodes(certs);
         FilterClause fc = buildFilterClause(q, categoryL2Ids, certStds);
-        String categoryJoin = fc.needsCategoryJoin() ? REPRESENTATIVE_CATEGORY_JOIN : "";
 
         String sql = "SELECT " + CERT_STANDARD_EXPR + " AS cert_std, count(*)::int"
             + " FROM contents_master m"
-            + categoryJoin
             + fc.where()
             + " GROUP BY " + CERT_STANDARD_EXPR;
 
