@@ -71,7 +71,7 @@ public class LoginLogService {
      *   loginLogService.saveAsync(null, request.getEmail(), "FAIL", "USER_NOT_FOUND", clientIp, userAgent, siteId);
      *
      * @param adminUserId 관리자 ID (이메일 미존재 시 null)
-     * @param loginEmail  로그인 시도 이메일
+     * @param loginEmail  (미사용 — 더 이상 저장하지 않음, 항상 null로 기록. 호출부 시그니처 호환을 위해 유지)
      * @param status      SUCCESS / FAIL
      * @param failReason  실패 사유 코드 (성공 시 null)
      * @param clientIp    클라이언트 IP
@@ -85,7 +85,7 @@ public class LoginLogService {
         try {
             LoginLog loginLog = LoginLog.builder()
                     .adminUserId(adminUserId)
-                    .loginEmail(loginEmail != null ? loginEmail : "")
+                    .loginEmail(null) // 로그인 시도 계정 문자열은 더 이상 기록하지 않음 (요청에 의해 null 고정)
                     .status(status)
                     .failReason(failReason)
                     .siteId(siteId)
