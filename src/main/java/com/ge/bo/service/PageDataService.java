@@ -3165,30 +3165,37 @@ public class PageDataService {
   }
 
   private String buildOrderByClause(String sortParam, String slug, Long siteId, String relationValuePath) {
-    String orderBy = " ORDER BY created_at DESC";
+    // 정렬 컬럼이 동값인 행들의 순서는 DB가 보장하지 않으므로(같은 publish_dttm 등)
+    // 항상 PK(id)를 마지막 tie-breaker로 붙여 정렬을 결정적으로 만든다.
+    // 이렇게 해야 size=1(대표글)과 size=N(목록) 조회가 동일한 선두 순서를 갖는다.
     if (sortParam == null || sortParam.isBlank()) {
-      return orderBy;
+      return " ORDER BY created_at DESC, id DESC";
     }
     String[] parts = sortParam.split(",", 2);
     String sortCol = parts[0].trim();
     String sortDir = parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()) ? "DESC" : "ASC";
+    String primary = null;
     String relationExpr = buildRelationSortExpr(sortCol, slug, siteId, relationValuePath);
     if (relationExpr != null) {
-      orderBy = " ORDER BY " + buildNumericAwareOrderByExpr(relationExpr, sortDir);
+      primary = buildNumericAwareOrderByExpr(relationExpr, sortDir);
     } else if (sortCol.contains(".")) {
       String[] segs = sortCol.split("\\.");
       if (isValidSegments(segs)) {
-        orderBy = " ORDER BY " + buildNumericAwareOrderByExpr(buildJsonPath(segs), sortDir);
+        primary = buildNumericAwareOrderByExpr(buildJsonPath(segs), sortDir);
       }
     } else if (sortCol.matches("[a-zA-Z0-9_]+")) {
       String auditCol = toAuditColumn(sortCol);
       if (auditCol != null) {
-        orderBy = " ORDER BY " + auditCol + " " + sortDir;
+        primary = auditCol + " " + sortDir;
       } else {
-        orderBy = " ORDER BY " + buildNumericAwareOrderByExpr(buildNestedOrderByExpr(sortCol), sortDir);
+        primary = buildNumericAwareOrderByExpr(buildNestedOrderByExpr(sortCol), sortDir);
       }
     }
-    return orderBy;
+    if (primary == null) {
+      // 인식되지 않은 정렬 컬럼 — 기본 정렬로 폴백
+      return " ORDER BY created_at DESC, id DESC";
+    }
+    return " ORDER BY " + primary + ", id " + sortDir;
   }
 
   private String buildNumericAwareOrderByExpr(String jsonTextExpr, String sortDir) {
@@ -3219,7 +3226,9 @@ public class PageDataService {
       Map<String, Object> exprParams = new LinkedHashMap<>();
       String exprSql = buildExpressionOrderByExpr(sortExpr, exprParams, new AtomicInteger(0), slug, siteId);
       if (exprSql != null) {
-        return new OrderByClause(" ORDER BY " + buildNumericAwareOrderByExpr(exprSql, sortDir), exprParams);
+        // buildOrderByClause 와 동일하게 PK(id)를 tie-breaker로 붙여 정렬을 결정적으로 만든다.
+        return new OrderByClause(
+            " ORDER BY " + buildNumericAwareOrderByExpr(exprSql, sortDir) + ", id " + sortDir, exprParams);
       }
     }
     return new OrderByClause(buildOrderByClause(sortParam, slug, siteId, relationValuePath), Map.of());
