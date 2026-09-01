@@ -11,6 +11,8 @@ import java.util.Optional;
 public interface AdminRepository extends JpaRepository<AdminUser, Long> {
   Optional<AdminUser> findByEmployeeId(String employeeId);
 
+  List<AdminUser> findByEmployeeIdContainingIgnoreCase(String employeeId);
+
   long countByRole(String role);
 
   List<AdminUser> findByRoleNot(String role, Sort sort);
