@@ -444,7 +444,22 @@ public class DownloadCenterService {
             + "   AND f.file_expose = true AND f.is_deleted = false"
             + REPRESENTATIVE_CATEGORY_JOIN
             + " WHERE m.id IN (:pageIds)"
-            + " ORDER BY m.id, v.sort_key DESC, f.id";
+            // 버전 정렬 기준: version_name 앞의 문자 접두사(예: "V1.5"의 "V")를 떼어낸 뒤 점 개수로 분기한다.
+            // - 점이 0~1개(예: "1.5", "4.80")면 진짜 소수(decimal)로 보고 numeric 캐스팅 그대로 비교한다
+            //   ("1.10"은 실제로 1.1을 뜻하므로 1.2보다 작아야 맞다 — 정수쌍으로 보면 반대로 나옴).
+            // - 점이 2개 이상(예: "3.90.1414")이면 소수 하나로 볼 수 없는 major.minor.build 형식이므로,
+            //   각 구간을 정수 배열로 캐스팅해 사전식 비교한다("3.90.1414" vs "3.80.0605"가 자릿수 때문에
+            //   문자열 비교로 틀어지는 문제 방지). 두 분기 모두 numeric[]로 반환 타입을 맞춰 ORDER BY에서
+            // 함께 비교 가능하게 한다. CATALOG("YYYYMM vNN" 형식, 공백 포함)/CERTI(항상 NULL)처럼 두 형식
+            // 다 아닌 버전명은 NULL로 처리해 뒤로 미룬다 — 두 소스 모두 문서당 버전이 항상 1건뿐이라 순서
+            // 자체가 의미 없어 안전하다.
+            + " ORDER BY m.id,"
+            + "   CASE WHEN regexp_replace(v.version_name, '^[A-Za-z]+', '') ~ '^[0-9]+(\\.[0-9]+){2,}$'"
+            + "        THEN string_to_array(regexp_replace(v.version_name, '^[A-Za-z]+', ''), '.')::numeric[]"
+            + "        WHEN regexp_replace(v.version_name, '^[A-Za-z]+', '') ~ '^[0-9]+(\\.[0-9]+)?$'"
+            + "        THEN ARRAY[regexp_replace(v.version_name, '^[A-Za-z]+', '')::numeric]"
+            + "        ELSE NULL END DESC NULLS LAST,"
+            + "   f.id";
 
         Query query = entityManager.createNativeQuery(sql);
         query.setParameter("pageIds", pageIds);
