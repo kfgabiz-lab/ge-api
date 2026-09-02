@@ -12,6 +12,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+
 
 /**
  * Connect Portal(CTP) api를 통한 문서 파일 다운로드 URL 반환(blob-storage)
@@ -38,10 +41,11 @@ public class CtpFileDownloadService {
 
             // url + param 조합 하기
 //            apiUrlWithParam = apiUrl + "?code=" + code + "&filePath=" + path;
+            String encPath = URLEncoder.encode(path, StandardCharsets.UTF_8);
 
             String url = UriComponentsBuilder.fromUriString(apiUrl)
                     .queryParam("code", code)
-                    .queryParam("filePath", path)
+                    .queryParam("filePath", encPath)
                     .build()
                     .toUriString();
 
