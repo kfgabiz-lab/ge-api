@@ -37,7 +37,8 @@ public class CtpFileDownloadService {
         // 파일 경로 검증
         if(path.startsWith("CTP")){
             // url + param 조합 하기
-            apiUrlWithParam = apiUrl + "?code=" + code + "&filePath=" + URLEncoder.encode(path, StandardCharsets.UTF_8);
+//            apiUrlWithParam = apiUrl + "?code=" + code + "&filePath=" + URLEncoder.encode(path, StandardCharsets.UTF_8);
+            apiUrlWithParam = apiUrl + "?code=" + code + "&filePath=" + path;
 
             // CTP 파일 다운로드 API 호출
             ApiCallRequest request = ApiCallRequest.get(apiUrlWithParam).header("Content-Type", "application/json").build();
