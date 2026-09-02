@@ -76,53 +76,51 @@ public class PageDataService {
 
   private static final Set<String> RESERVED_PARAMS = Set.of("page", "size", "sort", "sortExpr", "unpaged", "exclude", "fetchRelationIds", "previewToken", "drsKeys");
 
-  /**
-   * FO 공개 API(FoPageDataController)에서 게시상태를 클라이언트 파라미터가 아니라 서버가 직접 강제하는 slug.
-   * findProductInsights()/queryCategoryInsights()가 이미 쓰던 것과 동일한 방식(JSON 섹션 안의 is_visible/publish_dttm을
-   * 서버측 SQL에 하드코딩)을 press/blog/articles/events에도 동일하게 적용한다.
-   */
-  private static final Set<String> FO_PUBLISH_GATED_SLUGS =
-      Set.of("press-data", "blog-data", "articles-data", "events-data");
+  private enum FoPeriodKind { NONE, PUBLISH_FROM, POST_PERIOD }
 
-  private String publishGateSql() {
-    String fromExpr = toRangeBoundExpr("data_json->(replace(data_slug,'-data',''))->>'publish_dttm'", false);
-    return " AND data_json->(replace(data_slug,'-data','')) ->> 'is_visible' = '001'"
-        + " AND " + fromExpr + " <= :nowValue";
+  private record FoPublicGate(String section, boolean visibility, FoPeriodKind period) {}
+
+  private static final Map<String, FoPublicGate> FO_PUBLIC_GATES = Map.ofEntries(
+      Map.entry("press-data",             new FoPublicGate("press",              true,  FoPeriodKind.PUBLISH_FROM)),
+      Map.entry("blog-data",              new FoPublicGate("blog",               true,  FoPeriodKind.PUBLISH_FROM)),
+      Map.entry("articles-data",          new FoPublicGate("articles",           true,  FoPeriodKind.PUBLISH_FROM)),
+      Map.entry("events-data",            new FoPublicGate("events",             true,  FoPeriodKind.PUBLISH_FROM)),
+      Map.entry("wheretobuy-agency-data", new FoPublicGate("agency",             true,  FoPeriodKind.NONE)),
+      Map.entry("currMgmt-data",          new FoPublicGate("curriculum",         true,  FoPeriodKind.NONE)),
+      Map.entry("currDtlMgmt-data",       new FoPublicGate("curriculum_detail3", true,  FoPeriodKind.NONE)),
+      Map.entry("banner-data",            new FoPublicGate("banner",             true,  FoPeriodKind.POST_PERIOD)),
+      Map.entry("hero-data",              new FoPublicGate("hero",               false, FoPeriodKind.POST_PERIOD)));
+
+  private String buildGateSql(FoPublicGate g, String sectionExpr) {
+    StringBuilder sb = new StringBuilder();
+    if (g.visibility()) {
+      sb.append(" AND ").append(sectionExpr).append("->>'is_visible' = '001'");
+    }
+    switch (g.period()) {
+      case PUBLISH_FROM -> sb.append(" AND ")
+          .append(toRangeBoundExpr(sectionExpr + "->>'publish_dttm'", false)).append(" <= :nowValue");
+      case POST_PERIOD -> sb.append(" AND ")
+          .append(toRangeBoundExpr(sectionExpr + "->>'post_period_from'", false)).append(" <= :nowValue")
+          .append(" AND ")
+          .append(toRangeBoundExpr(sectionExpr + "->>'post_period_to'", true)).append(" >= :nowValue");
+      case NONE -> { }
+    }
+    return sb.toString();
   }
 
-  /**
-   * FO 공개 API에서 게시일(publish_dttm) 없이 노출여부(is_visible)만 서버가 강제하는 slug → JSON 섹션명 매핑.
-   * FO_PUBLISH_GATED_SLUGS와 동일한 목적이나, 섹션명이 slug명에서 유도되지 않아 별도 매핑이 필요하다.
-   */
-  private static final Map<String, String> FO_VISIBILITY_GATED_SLUGS =
-      Map.of(
-          "wheretobuy-agency-data", "agency",
-          "currMgmt-data", "curriculum",
-          "currDtlMgmt-data", "curriculum_detail3",
-          "banner-data", "banner");
-
-  private String visibilityGateSql(String slug) {
-    String section = FO_VISIBILITY_GATED_SLUGS.get(slug);
-    return section == null ? "" : " AND data_json->'" + section + "'->>'is_visible' = '001'";
+  private String foPublicGateSql(String slug) {
+    FoPublicGate g = FO_PUBLIC_GATES.get(slug);
+    return g == null ? "" : buildGateSql(g, "data_json->'" + g.section() + "'");
   }
 
-  /**
-   * FO 공개 API에서 노출기간(post_period_from~to)을 클라이언트 파라미터(drs_post_period)가 아니라
-   * 서버가 직접 강제하는 slug → JSON 섹션명 매핑. hero-data/banner-data처럼 is_visible 없이
-   * 기간으로만 노출여부를 결정하는 데이터가 대상.
-   */
-  private static final Map<String, String> FO_PERIOD_GATED_SLUGS =
-      Map.of(
-          "hero-data", "hero",
-          "banner-data", "banner");
-
-  private String periodGateSql(String slug) {
-    String section = FO_PERIOD_GATED_SLUGS.get(slug);
-    if (section == null) return "";
-    String fromExpr = toRangeBoundExpr("data_json->'" + section + "'->>'post_period_from'", false);
-    String toExpr = toRangeBoundExpr("data_json->'" + section + "'->>'post_period_to'", true);
-    return " AND " + fromExpr + " <= :nowValue AND " + toExpr + " >= :nowValue";
+  private String foPublicGateSql(String slug, String previewToken, Long id) {
+    return isValidPreviewToken(previewToken, slug, id) ? "" : foPublicGateSql(slug);
   }
+
+  private static final FoPublicGate MEDIA_HIGHLIGHT_GATE =
+      new FoPublicGate(null, true, FoPeriodKind.PUBLISH_FROM);
+
+  private static final String DYNAMIC_SECTION_EXPR = "data_json->(replace(data_slug,'-data',''))";
 
   private static final String PRODUCT_DATA_SLUG_COND = "#slug == 'product-data'";
 
@@ -211,12 +209,8 @@ public class PageDataService {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
     appendWhereConditions(whereClause, searchParams);
-    if (enforcePublishGate && FO_PUBLISH_GATED_SLUGS.contains(slug)) {
-      whereClause.append(publishGateSql());
-    }
     if (enforcePublishGate) {
-      whereClause.append(visibilityGateSql(slug));
-      whereClause.append(periodGateSql(slug));
+      whereClause.append(foPublicGateSql(slug));
     }
 
     if ("currDtlMgmt-data".equals(slug) && relFilterParams.containsKey("rel_4")) {
@@ -360,11 +354,7 @@ public class PageDataService {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
     appendWhereConditionsDatetime(whereClause, searchParams);
-    if (FO_PUBLISH_GATED_SLUGS.contains(slug)) {
-      whereClause.append(publishGateSql());
-    }
-    whereClause.append(visibilityGateSql(slug));
-    whereClause.append(periodGateSql(slug));
+    whereClause.append(foPublicGateSql(slug));
 
     if (!relFilterParams.isEmpty()) {
       Set<Long> filterIds = resolveFilterRelationIds(relFilterParams);
@@ -484,10 +474,7 @@ public class PageDataService {
       whereClause.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
     appendWhereConditions(whereClause, statusParams);
-    if (FO_PUBLISH_GATED_SLUGS.contains(slug) && !isValidPreviewToken(allParams.get("previewToken"), slug, id)) {
-      whereClause.append(publishGateSql());
-    }
-    whereClause.append(visibilityGateSql(slug));
+    whereClause.append(foPublicGateSql(slug, allParams.get("previewToken"), id));
     if ("product-data".equals(slug)) {
       whereClause.append(" AND data_json->'product'->>'order_status' <> '99'");
     }
@@ -547,10 +534,7 @@ public class PageDataService {
       baseWhere.append(" AND (site_id = :siteId OR site_id IS NULL)");
     }
     appendWhereConditions(baseWhere, statusParams);
-    if (FO_PUBLISH_GATED_SLUGS.contains(slug)) {
-      baseWhere.append(publishGateSql());
-    }
-    baseWhere.append(visibilityGateSql(slug));
+    baseWhere.append(foPublicGateSql(slug));
 
     String curVal = "(SELECT " + sortExpr + " FROM page_data WHERE data_slug = :slug AND id = :id)";
 
@@ -793,7 +777,7 @@ public class PageDataService {
     @Transactional(readOnly = true)
     public List<ProductInsightRowResponse> findHighlightNews(String market, Long siteId) {
         boolean hasMarket = market != null && market.matches("[0-9]{3}");
-        String gateSql = publishGateSql();
+        String gateSql = buildGateSql(MEDIA_HIGHLIGHT_GATE, DYNAMIC_SECTION_EXPR);
         String siteCond = siteId != null ? "  AND (site_id = :siteId OR site_id IS NULL)" : "";
         String marketCond = "";
         if (hasMarket) {

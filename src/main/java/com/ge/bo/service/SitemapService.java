@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>스냅샷은 인메모리 보관(AtomicReference). 콜드스타트 시 첫 요청에서 1회 생성하고,
  * {@code SitemapScheduler}가 매일 refresh() 한다(멀티 인스턴스는 각자 생성 — write 없음, 락 불필요).</p>
  *
- * <p>공개 게이트 SQL(미디어 publish_dttm 정규화 CASE식)은 {@code PageDataService.publishGateSql()} /
+ * <p>공개 게이트 SQL(미디어 publish_dttm 정규화 CASE식)은 {@code PageDataService.buildGateSql()} /
  * {@code toRangeBoundExpr(expr, false)} 와 동일하게 유지해야 한다. 변경 시 양쪽을 함께 수정할 것.</p>
  */
 @Slf4j
@@ -175,7 +175,7 @@ public class SitemapService {
 
     /**
      * 미디어(blog/press/articles/events) — /company/{type}/{id}/{seo.slug}.
-     * 서버측 게시 게이트(is_visible=001 AND publish_dttm<=now)는 PageDataService.publishGateSql()와 동일.
+     * 서버측 게시 게이트(is_visible=001 AND publish_dttm<=now)는 PageDataService.buildGateSql()와 동일.
      */
     private List<Entry> collectMedia() {
         String nowValue = LocalDateTime.now(zone()).format(NOW_FMT);
