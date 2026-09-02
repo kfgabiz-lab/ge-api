@@ -71,10 +71,10 @@ codegen:
     service-dir: "src/main/java/com/ge/bo/service"
     controller-dir: "src/main/java/com/ge/bo/controller"
 
-# 배포 환경 — WARN 수준만 출력
+# 배포 환경 — ERROR 수준만 출력
 logging:
   level:
-    root: WARN
+    root: ERROR
     com.ge.bo: WARN
 
 
@@ -103,6 +103,13 @@ ls:
         clientId: ${CTP_CLIENT_ID:}
         clientSecret: ${CTP_CLIENT_SECRET:}
         grantType: client_credentials
+        # 운영 정보(현재 해당 운영 시스템에 배포전. 실제 바꿔야 할 시점까지 주석 처리)
+#        tokenUrl: https://connect-lse.my.salesforce.com/services/oauth2/token
+#        apiUrl: https://connect-lse.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0001
+#        detailApiUrl: https://connect-lse.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0002
+#        clientId: ${CTP_CLIENT_ID:}
+#        clientSecret: ${CTP_CLIENT_SECRET:}
+#        grantType: client_credentials
       # 통합챗봇 검색 API
       chatbotSearch:
         apiUrl: https://cxai.ls-electric.com/api/v1/search/stream?include_keywords=true
