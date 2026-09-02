@@ -33,14 +33,13 @@ public class CtpFileDownloadService {
     private String code;
 
     public String ctpFileDownApi(String path){
-//        String apiUrlWithParam;
+
         String downloadUrl = "";
 
         // 파일 경로 검증
         if(path.startsWith("CTP")){
 
             // url + param 조합 하기
-//            apiUrlWithParam = apiUrl + "?code=" + code + "&filePath=" + path;
             String encPath = URLEncoder.encode(path, StandardCharsets.UTF_8);
 
             String url = UriComponentsBuilder.fromUriString(apiUrl)
