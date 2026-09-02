@@ -51,7 +51,7 @@ public class CtpFileDownloadService {
 
             // CTP 파일 다운로드 API 호출
             ApiCallRequest request = ApiCallRequest.get(url).header("Content-Type", "application/json").build();
-            ApiCallResult<CtpFileDownResponse> result = externalApiClient.call(request, CtpFileDownResponse.class);
+            ApiCallResult<CtpFileDownResponse> result = externalApiClient.callEncUrl(request, CtpFileDownResponse.class);
 
             if (!result.isSuccess()) {
                 log.warn("CTP 파일 다운로드 URL 발급 실패 status={} error={} path={}",

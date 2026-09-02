@@ -11,13 +11,13 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.core.env.Environment;
 import org.springframework.web.client.RestClient;
 
-import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -112,6 +112,60 @@ public class ExternalApiClient {
             log.warn("외부 API 서버 오류 [{}] url={} body={}",
                 e.getStatusCode().value(), SensitiveDataMasker.mask(request.getUrl()),
                 SensitiveDataMasker.mask(e.getResponseBodyAsString()));
+            return ApiCallResult.failure(e.getStatusCode().value(), "외부 서버 오류");
+        } catch (ResourceAccessException e) {
+            // 네트워크 오류 (타임아웃, 연결 거부 등)
+            log.warn("외부 API 연결 실패 url={}", SensitiveDataMasker.mask(request.getUrl()));
+            return ApiCallResult.failure(0, "외부 서버 연결 실패");
+        } catch (Exception e) {
+            log.error("외부 API 호출 오류 url={}", SensitiveDataMasker.mask(request.getUrl()), e);
+            return ApiCallResult.failure(0, "외부 API 호출 오류");
+        }
+    }
+
+    /**
+     * 외부 API 호출(URL encode version)
+     *
+     * @param request      요청 정보 (url, method, headers, body)
+     * @param responseType 응답 바디 매핑 타입
+     * @return ApiCallResult — 성공/실패 여부, 상태코드, 데이터, 오류 메시지 포함
+     */
+    public <T> ApiCallResult<T> callEncUrl(ApiCallRequest request, Class<T> responseType) {
+        if (log.isDebugEnabled()) {
+            log.debug("외부 API 요청 method={} url={} body={}", request.getMethod(),
+                    SensitiveDataMasker.mask(request.getUrl()), SensitiveDataMasker.mask(request.getBody()));
+        }
+        try {
+            RestClient.RequestBodySpec spec = restClient
+                    .method(request.getMethod())
+                    .uri(URI.create(request.getUrl()));
+
+            // 요청 헤더 추가
+            request.getHeaders().forEach(spec::header);
+
+            // 바디 유무에 따라 분기
+            ResponseEntity<T> response = (request.getBody() != null)
+                    ? spec.body(request.getBody()).retrieve().toEntity(responseType)
+                    : spec.retrieve().toEntity(responseType);
+
+            if (log.isDebugEnabled()) {
+                log.debug("외부 API 응답 url={} status={} body={}",
+                        SensitiveDataMasker.mask(request.getUrl()), response.getStatusCode().value(),
+                        SensitiveDataMasker.mask(response.getBody()));
+            }
+            return ApiCallResult.success(response.getStatusCode().value(), response.getBody());
+
+        } catch (HttpClientErrorException e) {
+            // 4xx 오류 (잘못된 요청, 인증 실패 등)
+            log.warn("외부 API 클라이언트 오류 [{}] url={} body={}",
+                    e.getStatusCode().value(), SensitiveDataMasker.mask(request.getUrl()),
+                    SensitiveDataMasker.mask(e.getResponseBodyAsString()));
+            return ApiCallResult.failure(e.getStatusCode().value(), e.getMessage());
+        } catch (HttpServerErrorException e) {
+            // 5xx 오류 (외부 서버 문제)
+            log.warn("외부 API 서버 오류 [{}] url={} body={}",
+                    e.getStatusCode().value(), SensitiveDataMasker.mask(request.getUrl()),
+                    SensitiveDataMasker.mask(e.getResponseBodyAsString()));
             return ApiCallResult.failure(e.getStatusCode().value(), "외부 서버 오류");
         } catch (ResourceAccessException e) {
             // 네트워크 오류 (타임아웃, 연결 거부 등)
