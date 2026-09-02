@@ -11,6 +11,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+
 /**
  * Connect Portal(CTP) api를 통한 문서 파일 다운로드 URL 반환(blob-storage)
  */
@@ -36,9 +39,9 @@ public class CtpFileDownloadService {
         if(path.startsWith("CTP")){
 
             // get 방식 전달 시 오류 발생 특수문자 치환
-            paramPath = path.replace("+", "%2B")
-                        .replace("&", "%26")
-                        .replace("#", "%23");
+            paramPath = path.replace("+", URLEncoder.encode("+", StandardCharsets.UTF_8))
+                        .replace("&", URLEncoder.encode("&", StandardCharsets.UTF_8))
+                        .replace("#", URLEncoder.encode("#", StandardCharsets.UTF_8));
 
             // url + param 조합 하기
             apiUrlWithParam = apiUrl + "?code=" + code + "&filePath=" + paramPath;
