@@ -1,6 +1,7 @@
 package com.ge.bo.batch.contents.log;
 
 
+import com.ge.bo.repository.ErrorLogRepository;
 import com.ge.bo.repository.LoginLogRepository;
 import com.ge.bo.repository.TransactionLogRepository;
 import lombok.RequiredArgsConstructor;
@@ -36,12 +37,16 @@ public class LogCleanupBatchService {
     /** 계정/권한 생성·변경·삭제 로그 보관기간 — 3년 */
     private static final long ACCOUNT_RETENTION_YEARS = 3L;
 
+    /** 에러 로그 보관기간 — 1개월 */
+    private static final long ERROR_RETENTION_MONTHS = 1L;
+
     /** 계정/권한 관리 API URL */
     private static final String ADMIN_URL = "/api/v1/admins";
     private static final String ADMIN_URL_PATTERN = "/api/v1/admins/%";
 
     private final TransactionLogRepository transactionLogRepository;
     private final LoginLogRepository loginLogRepository;
+    private final ErrorLogRepository errorLogRepository;
 
     /**
      * 보관기간이 지난 로그인 로그 및 트랜잭션 로그를 삭제한다.
@@ -55,15 +60,21 @@ public class LogCleanupBatchService {
 
         LocalDate today = LocalDate.now(ZONE_ID);
 
-        // 일반 접속/행위 로그의 삭제 기준일시를 계산한다.
+        // 일반 접속/행위 로그의 삭제 기준일시를 계산.
         OffsetDateTime oneYearCutoff = today
                 .minusYears(GENERAL_RETENTION_YEARS)
                 .atStartOfDay(ZONE_ID)
                 .toOffsetDateTime();
 
-        // 계정/권한 생성·변경·삭제 로그의 삭제 기준일시를 계산한다.
+        // 계정/권한 생성·변경·삭제 로그의 삭제 기준일시를 계산.
         OffsetDateTime threeYearCutoff = today
                 .minusYears(ACCOUNT_RETENTION_YEARS)
+                .atStartOfDay(ZONE_ID)
+                .toOffsetDateTime();
+
+        // 에러 로그의 삭제 기준일시를 계산.
+        OffsetDateTime oneMonthCutoff = today
+                .minusMonths(ERROR_RETENTION_MONTHS)
                 .atStartOfDay(ZONE_ID)
                 .toOffsetDateTime();
 
@@ -145,6 +156,20 @@ public class LogCleanupBatchService {
                         cb.lessThan(root.get("createdAt"), oneYearCutoff)
         );
 
+
+        /*
+         * 에러 로그 삭제
+         *
+         * - 에러 로그는 1개월간 보관한다.
+         * - 1개월이 지난 에러 로그를 삭제한다.
+         */
+        long errorCount = errorLogRepository.delete(
+                (root, query, cb) ->
+                        cb.lessThan(root.get("createdAt"), oneMonthCutoff)
+        );
+
     }
+
+
 }
 
