@@ -30,7 +30,7 @@ public class AdminController {
    * @return 관리자 응답 DTO 목록
    */
   @GetMapping
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<List<AdminDto.Response>> getAllAdmins() {
     return ResponseEntity.ok(adminService.getAllAdmins());
   }
@@ -42,7 +42,7 @@ public class AdminController {
    * @return 관리자 응답 DTO
    */
   @GetMapping("/{id}")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<AdminDto.Response> getAdmin(@PathVariable Long id) {
     return ResponseEntity.ok(adminService.getAdminById(id));
   }
@@ -55,7 +55,7 @@ public class AdminController {
    * @return 수정된 관리자 응답 DTO
    */
   @PatchMapping("/{id}")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<AdminDto.Response> updateAdmin(
       @PathVariable Long id,
       @Valid @RequestBody AdminDto.UpdateRequest request) {
@@ -70,7 +70,7 @@ public class AdminController {
    * @return 상태가 변경된 관리자 응답 DTO
    */
   @PatchMapping("/{id}/status")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<AdminDto.Response> toggleStatus(
       @PathVariable Long id,
       @RequestBody AdminDto.UpdateRequest request) {
@@ -84,7 +84,7 @@ public class AdminController {
    * @return 매핑된 홈페이지 응답 DTO 목록
    */
   @GetMapping("/{id}/sites")
-  @PreAuthorize("@securityService.isSelf(authentication, #id) or @securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSelf(authentication, #id) or @securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<List<SiteDto.Response>> getAdminSites(@PathVariable Long id) {
     return ResponseEntity.ok(siteService.getSitesByAdminUser(id));
   }
@@ -97,7 +97,7 @@ public class AdminController {
    * @return 변경 후 매핑된 홈페이지 응답 DTO 목록
    */
   @PutMapping("/{id}/sites")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<List<SiteDto.Response>> updateAdminSites(
       @PathVariable Long id,
       @Valid @RequestBody SiteDto.SiteMappingRequest request) {

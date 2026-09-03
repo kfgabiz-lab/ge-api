@@ -17,7 +17,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/sitemap")
 @RequiredArgsConstructor
-@PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+@PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
 public class SitemapAdminController {
 
     private final SitemapService sitemapService;

@@ -40,6 +40,10 @@ public class TransactionLogFilter extends OncePerRequestFilter {
   /** 로그 저장 제외 URL 접두사 (로그인·인증 관련 민감 요청) */
   private static final String EXCLUDE_AUTH_PREFIX = "/api/v1/auth/";
 
+  private static final String FO_PREFIX = "/api/v1/fo/";
+  private static final String PUBLIC_PREFIX = "/api/v1/public/";
+  private static final String BATCH_PREFIX = "/api/v1/contents-batch/";
+
   @Value("${ls.redis-enabled:false}")
   private boolean redisEnabled;
 
@@ -84,10 +88,11 @@ public class TransactionLogFilter extends OncePerRequestFilter {
       // SiteContext는 SiteContextFilter(HIGHEST_PRECEDENCE)가 바깥에서 감싸므로 이 시점에도 살아있다.
       // @Async 스레드에는 ThreadLocal이 전파되지 않으므로 요청 스레드인 여기서 꺼내 파라미터로 전달한다.
       Long siteId = SiteContext.getSiteId().orElse(null);
+      String source = resolveSource(requestUri);
 
       transactionLogService.saveAsync(
           method, requestUrl, requestBody,
-          response.getStatus(), clientIp, durationMs, loginUser, siteId);
+          response.getStatus(), clientIp, durationMs, loginUser, siteId, source);
     }
   }
 
@@ -99,6 +104,16 @@ public class TransactionLogFilter extends OncePerRequestFilter {
     }
     String body = new String(content, StandardCharsets.UTF_8);
     return StringUtils.isBlank(body) ? null : body;
+  }
+
+  private String resolveSource(String requestUri) {
+    if (requestUri.startsWith(FO_PREFIX) || requestUri.startsWith(PUBLIC_PREFIX)) {
+      return "FO";
+    }
+    if (requestUri.startsWith(BATCH_PREFIX)) {
+      return "BATCH";
+    }
+    return "BO";
   }
 
   /** 전체 URL 조합 (쿼리스트링 포함, 500자 초과 시 잘라냄) */

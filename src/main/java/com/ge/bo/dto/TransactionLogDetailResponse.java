@@ -17,6 +17,8 @@ public record TransactionLogDetailResponse(
         String loginUser,
         String clientIp,
         Long durationMs,
+        String source,
+        Long siteId,
         OffsetDateTime createdAt) {
 
     public static TransactionLogDetailResponse from(TransactionLog t, String decryptedRequestBody) {
@@ -30,6 +32,8 @@ public record TransactionLogDetailResponse(
                 t.getLoginUser(),
                 t.getClientIp(),
                 t.getDurationMs(),
+                t.getSource(),
+                t.getSiteId(),
                 t.getCreatedAt());
     }
 }

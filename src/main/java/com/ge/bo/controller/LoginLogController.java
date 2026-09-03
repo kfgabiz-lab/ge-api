@@ -32,6 +32,7 @@ public class LoginLogController {
      * @param loginEmail 이메일 키워드 필터
      * @param startDate  시작일시 필터
      * @param endDate    종료일시 필터
+     * @param siteId     사이트 ID (X-Site-Id 헤더, 없으면 전체)
      * @param pageable   페이지 정보 (기본: createdAt DESC, 20건)
      */
     @GetMapping
@@ -40,16 +41,19 @@ public class LoginLogController {
             @RequestParam(required = false) String loginEmail,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime endDate,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
         return ResponseEntity.ok(
-                loginLogService.getList(status, loginEmail, startDate, endDate, pageable));
+                loginLogService.getList(status, loginEmail, startDate, endDate, siteId, pageable));
     }
 
     /**
      * 접속이력 단건 상세 조회 — userAgent 포함
      */
     @GetMapping("/{id}")
-    public ResponseEntity<LoginLogDetailResponse> getOne(@PathVariable Long id) {
-        return ResponseEntity.ok(loginLogService.getOne(id));
+    public ResponseEntity<LoginLogDetailResponse> getOne(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+        return ResponseEntity.ok(loginLogService.getOne(id, siteId));
     }
 }

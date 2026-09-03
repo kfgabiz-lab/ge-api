@@ -44,4 +44,6 @@ public interface MenuRepository extends JpaRepository<Menu, Long> {
 
   List<Menu> findByUrl(String url);
 
+  boolean existsByMenuTypeAndSiteIdAndUrl(String menuType, Long siteId, String url);
+
 }

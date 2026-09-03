@@ -48,12 +48,13 @@ public class LoginLogService {
      * @param loginEmail 계정(employee_id) 키워드 (null이면 전체)
      * @param startDate  시작일시 (null이면 전체)
      * @param endDate    종료일시 (null이면 전체)
+     * @param siteId     사이트 ID (X-Site-Id 헤더, null이면 전체)
      * @param pageable   페이지 정보
      */
     @Transactional(readOnly = true)
     public Page<LoginLogResponse> getList(String status, String loginEmail,
                                           OffsetDateTime startDate, OffsetDateTime endDate,
-                                          Pageable pageable) {
+                                          Long siteId, Pageable pageable) {
         List<Long> matchedAdminIds = null;
         if (loginEmail != null && !loginEmail.isBlank()) {
             matchedAdminIds = adminRepository.findByEmployeeIdContainingIgnoreCase(loginEmail.trim())
@@ -63,7 +64,7 @@ public class LoginLogService {
             }
         }
 
-        Specification<LoginLog> spec = buildSpec(status, matchedAdminIds, startDate, endDate);
+        Specification<LoginLog> spec = buildSpec(status, matchedAdminIds, startDate, endDate, siteId);
         Page<LoginLog> page = loginLogRepository.findAll(spec, pageable);
         Map<Long, String> employeeIdByAdminId = employeeIdByAdminId(page.getContent());
 
@@ -76,9 +77,12 @@ public class LoginLogService {
      * 접속이력 단건 상세 조회 — userAgent 포함
      */
     @Transactional(readOnly = true)
-    public LoginLogDetailResponse getOne(Long id) {
+    public LoginLogDetailResponse getOne(Long id, Long siteId) {
         LoginLog loginLog = loginLogRepository.findById(id)
                 .orElseThrow(ErrorCode.LOGIN_LOG_NOT_FOUND::toException);
+        if (siteId != null && !siteId.equals(loginLog.getSiteId())) {
+            throw ErrorCode.LOGIN_LOG_NOT_FOUND.toException();
+        }
         String employeeId = loginLog.getAdminUserId() == null ? null
                 : adminRepository.findById(loginLog.getAdminUserId())
                         .map(AdminUser::getEmployeeId).orElse(null);
@@ -143,7 +147,8 @@ public class LoginLogService {
     /* ══════════ 동적 필터 ══════════ */
 
     private Specification<LoginLog> buildSpec(String status, List<Long> matchedAdminIds,
-                                              OffsetDateTime startDate, OffsetDateTime endDate) {
+                                              OffsetDateTime startDate, OffsetDateTime endDate,
+                                              Long siteId) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
 
@@ -158,6 +163,9 @@ public class LoginLogService {
             }
             if (endDate != null) {
                 predicates.add(cb.lessThanOrEqualTo(root.get("createdAt"), endDate));
+            }
+            if (siteId != null) {
+                predicates.add(cb.equal(root.get("siteId"), siteId));
             }
 
             return cb.and(predicates.toArray(new Predicate[0]));

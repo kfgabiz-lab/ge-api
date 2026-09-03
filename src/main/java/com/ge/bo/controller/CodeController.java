@@ -31,14 +31,14 @@ public class CodeController {
   }
 
   @PostMapping
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<CodeGroupResponse> createGroup(
       @Valid @RequestBody CodeGroupRequest request) {
     return ResponseEntity.status(HttpStatus.CREATED).body(codeService.createGroup(request));
   }
 
   @PutMapping("/{id}")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<CodeGroupResponse> updateGroup(
       @PathVariable Long id,
       @Valid @RequestBody CodeGroupRequest request) {
@@ -46,14 +46,14 @@ public class CodeController {
   }
 
   @DeleteMapping("/{id}")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<Void> deleteGroup(@PathVariable Long id) {
     codeService.deleteGroup(id);
     return ResponseEntity.noContent().build();
   }
 
   @PostMapping("/{groupId}/details")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<CodeDetailResponse> createDetail(
       @PathVariable Long groupId,
       @Valid @RequestBody CodeDetailRequest request) {
@@ -61,7 +61,7 @@ public class CodeController {
   }
 
   @PutMapping("/{groupId}/details/{detailId}")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<CodeDetailResponse> updateDetail(
       @PathVariable Long groupId,
       @PathVariable Long detailId,
@@ -70,7 +70,7 @@ public class CodeController {
   }
 
   @DeleteMapping("/{groupId}/details/{detailId}")
-  @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+  @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
   public ResponseEntity<Void> deleteDetail(
       @PathVariable Long groupId,
       @PathVariable Long detailId) {

@@ -24,6 +24,7 @@ public record MenuResponse(
     Integer sortOrder,
     Boolean visible,
     Boolean isSystem,
+    Long siteId,
     LocalDateTime createdAt,
     LocalDateTime updatedAt,
     List<MenuResponse> children
@@ -45,6 +46,7 @@ public record MenuResponse(
             menu.getSortOrder(),
             menu.getVisible(),
             menu.isSystem(),
+            menu.getSiteId(),
             menu.getCreatedAt(),
             menu.getUpdatedAt(),
             menu.getChildren() != null
@@ -79,6 +81,7 @@ public record MenuResponse(
             menu.getSortOrder(),
             menu.getVisible(),
             menu.isSystem(),
+            menu.getSiteId(),
             menu.getCreatedAt(),
             menu.getUpdatedAt(),
             filteredChildren

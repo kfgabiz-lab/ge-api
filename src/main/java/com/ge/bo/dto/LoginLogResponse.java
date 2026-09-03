@@ -14,6 +14,7 @@ public record LoginLogResponse(
         String status,
         String failReason,
         String clientIp,
+        Long siteId,
         OffsetDateTime createdAt) {
 
     /** loginEmail 필드명은 FE 호환을 위해 유지 — 값은 admin_user_id로 조회한 employeeId(사번) */
@@ -25,6 +26,7 @@ public record LoginLogResponse(
                 e.getStatus(),
                 e.getFailReason(),
                 e.getClientIp(),
+                e.getSiteId(),
                 e.getCreatedAt());
     }
 }

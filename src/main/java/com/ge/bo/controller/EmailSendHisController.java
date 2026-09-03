@@ -23,7 +23,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/email-send-his")
 @RequiredArgsConstructor
-@PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+@PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
 public class EmailSendHisController {
 
     private final EmailSendHisService emailSendHisService;

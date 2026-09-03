@@ -37,7 +37,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
           String email = jwtTokenProvider.getEmailFromToken(token);
           String role = jwtTokenProvider.getRoleFromToken(token);
 
-                    // 토큰에서 role 클레임 추출하여 권한 설정 (ROLE_ 접두사 중복 방지)
           String authority = role.startsWith("ROLE_") ? role : "ROLE_" + role;
 
           UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(email, null,

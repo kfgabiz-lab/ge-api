@@ -56,6 +56,10 @@ public class TransactionLog {
   @Column(name = "site_id")
   private Long siteId;
 
+  /** 요청 출처: BO / FO / BATCH / EXTERNAL */
+  @Column(length = 10)
+  private String source;
+
   /** 발생일시 */
   @Column(nullable = false, updatable = false)
   private OffsetDateTime createdAt;
@@ -63,7 +67,7 @@ public class TransactionLog {
   @Builder
   public TransactionLog(String actionType, String method, String requestUrl,
       String requestBody, Integer httpStatus, String loginUser,
-      String clientIp, Long durationMs, Long siteId) {
+      String clientIp, Long durationMs, Long siteId, String source) {
     this.actionType = actionType;
     this.method = method;
     this.requestUrl = requestUrl;
@@ -73,6 +77,7 @@ public class TransactionLog {
     this.clientIp = clientIp;
     this.durationMs = durationMs;
     this.siteId = siteId;
+    this.source = source;
     this.createdAt = OffsetDateTime.now();
   }
 }

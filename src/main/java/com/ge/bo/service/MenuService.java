@@ -1,7 +1,10 @@
 package com.ge.bo.service;
 
+import com.ge.bo.common.context.EffectiveSiteResolver;
 import com.ge.bo.dto.FoGnbMenuResponse;
 import com.ge.bo.dto.FoMenuMetaResponse;
+import com.ge.bo.dto.MenuImportRequest;
+import com.ge.bo.dto.MenuImportResponse;
 import com.ge.bo.dto.MenuRequest;
 import com.ge.bo.dto.MenuResponse;
 import com.ge.bo.dto.MenuSortBatchItem;
@@ -16,6 +19,7 @@ import com.ge.bo.repository.MenuApiRepository;
 import com.ge.bo.repository.MenuRepository;
 import com.ge.bo.repository.RoleMenuRepository;
 import com.ge.bo.repository.RoleRepository;
+import com.ge.bo.repository.SiteRepository;
 import com.ge.bo.security.MenuApiAuthorizationCache;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,8 +27,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import java.util.ArrayDeque;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -45,6 +54,8 @@ public class MenuService {
   private final MenuApiRepository menuApiRepository;
   private final ApiInfoRepository apiInfoRepository;
   private final MenuApiAuthorizationCache menuApiAuthorizationCache;
+  private final EffectiveSiteResolver effectiveSiteResolver;
+  private final SiteRepository siteRepository;
 
   private static final Pattern XSS_PATTERN = Pattern.compile("[<>\"']");
 
@@ -53,16 +64,17 @@ public class MenuService {
 
   private static final String SYSTEM_ADMIN_CODE = "SYSTEM_ADMIN";
 
+  private static final String SUPER_ADMIN_CODE = "SUPER_ADMIN";
+
     /* ══════════════════════════════════════ */
     /*  조회                                  */
     /* ══════════════════════════════════════ */
 
     /**
      * 메뉴 트리 조회
-     * - BO: 공통 관리 — 사이트 무관하게 전체 조회
-     * - FO: 사이트별 분리 — siteId 필터링 적용
+     * - BO/FO 공통: 사이트별 분리 — siteId 필터링 적용 (siteId IS NULL = 공통 메뉴)
      * - 시스템관리자(role.is_system=true)가 아닌 경우 isSystem=true 메뉴 제외
-     * @param forNav true = 사이드바 네비게이션용 (FO 전용 분기), false = 관리 페이지용
+     * @param forNav true = 사이드바 네비게이션용, false = 관리 페이지용
      */
   @Transactional(readOnly = true)
     public List<MenuResponse> getMenuTree(String menuType, Long siteId, boolean forNav) {
@@ -70,9 +82,16 @@ public class MenuService {
 
     boolean isSystemAdmin = isCurrentUserSystemAdmin();
 
-        /* BO는 사이트 무관 — 공통 메뉴 전체 반환 */
     if ("BO".equals(menuType)) {
-      List<Menu> allMenus = menuRepository.findByMenuTypeAndParentIsNullOrderBySortOrderAsc(menuType);
+      Long effectiveSiteId = resolveEffectiveSiteId(siteId);
+
+      if (effectiveSiteId == null && !isSystemAdmin) {
+        return List.of();
+      }
+
+      List<Menu> allMenus = effectiveSiteId != null
+          ? menuRepository.findNavMenusByTypeAndSite(menuType, effectiveSiteId)
+          : menuRepository.findByMenuTypeAndParentIsNullOrderBySortOrderAsc(menuType);
 
             /* 시스템관리자(role.is_system=true): 전체 반환 */
       if (isSystemAdmin) {
@@ -81,7 +100,7 @@ public class MenuService {
 
             /* 사이드바 네비게이션용 — role_menu 기반 필터링 적용 */
       if (forNav) {
-        Set<Long> allowedMenuIds = resolveAllowedMenuIds();
+        Set<Long> allowedMenuIds = resolveAllowedMenuIds(effectiveSiteId);
         return allMenus.stream()
                     .filter(m -> !m.isSystem())
                     .filter(m -> MenuResponse.isAllowed(m, allowedMenuIds))
@@ -116,6 +135,20 @@ public class MenuService {
                 .stream()
                 .filter(m -> isSystemAdmin || !m.isSystem())
                 .map(MenuResponse::from).toList();
+  }
+
+  @Transactional(readOnly = true)
+    public List<MenuResponse> getMenuTreeForSite(String menuType, Long siteId) {
+    validateMenuType(menuType);
+    if (siteId == null) {
+      throw ErrorCode.SITE_NOT_FOUND.toException();
+    }
+
+    List<Menu> allMenus = "BO".equals(menuType)
+            ? menuRepository.findNavMenusByTypeAndSite(menuType, siteId)
+            : menuRepository.findByMenuTypeAndSiteIdAndParentIsNullOrderBySortOrderAsc(menuType, siteId);
+
+    return allMenus.stream().map(MenuResponse::from).toList();
   }
 
     /**
@@ -164,8 +197,8 @@ public class MenuService {
 
     /** 메뉴 단건 조회 */
   @Transactional(readOnly = true)
-    public MenuResponse getMenu(Long id) {
-    Menu menu = findMenuOrThrow(id);
+    public MenuResponse getMenu(Long id, Long siteId) {
+    Menu menu = findMenuOrThrow(id, siteId);
     return MenuResponse.from(menu);
   }
 
@@ -217,14 +250,112 @@ public class MenuService {
     return MenuResponse.from(menuRepository.save(menu));
   }
 
+  @Transactional
+    public MenuImportResponse importMenus(MenuImportRequest request, Long targetSiteId) {
+    if (targetSiteId == null) {
+      throw ErrorCode.MENU_IMPORT_TARGET_SITE_REQUIRED.toException();
+    }
+
+    Long sourceSiteId = request.sourceSiteId();
+    if (sourceSiteId.equals(targetSiteId)) {
+      throw ErrorCode.MENU_IMPORT_SAME_SITE.toException();
+    }
+    if (!siteRepository.existsById(sourceSiteId)) {
+      throw ErrorCode.SITE_NOT_FOUND.toException();
+    }
+    if (!siteRepository.existsById(targetSiteId)) {
+      throw ErrorCode.SITE_NOT_FOUND.toException();
+    }
+
+    Map<Long, Menu> sourceMenusById = new LinkedHashMap<>();
+    ArrayDeque<Long> queue = new ArrayDeque<>(new LinkedHashSet<>(request.menuIds()));
+    while (!queue.isEmpty()) {
+      Long id = queue.poll();
+      if (sourceMenusById.containsKey(id)) {
+        continue;
+      }
+      Menu menu = menuRepository.findById(id)
+                .orElseThrow(ErrorCode.MENU_NOT_FOUND::toException);
+      if (!"BO".equals(menu.getMenuType()) || !sourceSiteId.equals(menu.getSiteId())) {
+        throw ErrorCode.MENU_IMPORT_INVALID_SOURCE.toException();
+      }
+      sourceMenusById.put(id, menu);
+      if (menu.getParent() != null && !sourceMenusById.containsKey(menu.getParent().getId())) {
+        queue.add(menu.getParent().getId());
+      }
+    }
+
+    List<Menu> orderedSourceMenus = sourceMenusById.values().stream()
+            .sorted(Comparator.comparingInt(this::depthOf))
+            .toList();
+
+    Map<Long, Long> oldIdToNewId = new HashMap<>();
+    List<MenuResponse> importedMenus = new ArrayList<>();
+    List<Long> skippedMenuIds = new ArrayList<>();
+
+    for (Menu source : orderedSourceMenus) {
+      Long originalParentId = source.getParent() != null ? source.getParent().getId() : null;
+
+      if (originalParentId != null && !oldIdToNewId.containsKey(originalParentId)) {
+        skippedMenuIds.add(source.getId());
+        continue;
+      }
+
+      String url = source.getUrl();
+      if (url != null && !url.isBlank()
+                    && menuRepository.existsByMenuTypeAndSiteIdAndUrl(source.getMenuType(), targetSiteId, url)) {
+        skippedMenuIds.add(source.getId());
+        continue;
+      }
+      validateUrlFormat(url);
+
+      Menu parent = originalParentId != null
+                ? menuRepository.getReferenceById(oldIdToNewId.get(originalParentId))
+                : null;
+
+      Menu copy = Menu.builder()
+                .name(source.getName())
+                .nameMsgKey(source.getNameMsgKey())
+                .description(source.getDescription())
+                .descriptionMsgKey(source.getDescriptionMsgKey())
+                .url(url)
+                .metaTitle(source.getMetaTitle())
+                .metaDescription(source.getMetaDescription())
+                .icon(source.getIcon())
+                .parent(parent)
+                .menuType(source.getMenuType())
+                .sortOrder(source.getSortOrder())
+                .visible(source.getVisible())
+                .siteId(targetSiteId)
+                .isSystem(false)
+                .build();
+
+      Menu saved = menuRepository.save(copy);
+      oldIdToNewId.put(source.getId(), saved.getId());
+      importedMenus.add(MenuResponse.from(saved));
+    }
+
+    return new MenuImportResponse(importedMenus.size(), skippedMenuIds.size(), importedMenus, skippedMenuIds);
+  }
+
+  private int depthOf(Menu menu) {
+    int depth = 0;
+    Menu current = menu.getParent();
+    while (current != null) {
+      depth++;
+      current = current.getParent();
+    }
+    return depth;
+  }
+
     /* ══════════════════════════════════════ */
     /*  수정                                  */
     /* ══════════════════════════════════════ */
 
     /** 메뉴 수정 */
   @Transactional
-    public MenuResponse updateMenu(Long id, MenuRequest request) {
-    Menu menu = findMenuOrThrow(id);
+    public MenuResponse updateMenu(Long id, MenuRequest request, Long siteId) {
+    Menu menu = findMenuOrThrow(id, siteId);
     String cleanUrl = sanitizeUrl(request.url());
 
         /* menuType 변경 차단 */
@@ -278,8 +409,8 @@ public class MenuService {
 
     /** 메뉴 삭제 (하위 + role_menu 연쇄 삭제) */
   @Transactional
-    public void deleteMenu(Long id) {
-    Menu menu = findMenuOrThrow(id);
+    public void deleteMenu(Long id, Long siteId) {
+    Menu menu = findMenuOrThrow(id, siteId);
     if (menu.isMenuManagement()) {
       throw ErrorCode.MENU_SYSTEM_DELETE.toException();
     }
@@ -292,15 +423,15 @@ public class MenuService {
 
     /** 정렬 순서 변경 */
   @Transactional
-    public void updateSortOrder(Long id, Integer sortOrder) {
-    findMenuOrThrow(id).setSortOrder(sortOrder);
+    public void updateSortOrder(Long id, Integer sortOrder, Long siteId) {
+    findMenuOrThrow(id, siteId).setSortOrder(sortOrder);
   }
 
     /** 드래그 정렬 일괄 변경 — sortOrder + parentId 동시 업데이트 */
   @Transactional
-    public void updateSortBatch(List<MenuSortBatchItem> items) {
+    public void updateSortBatch(List<MenuSortBatchItem> items, Long siteId) {
     for (MenuSortBatchItem item : items) {
-      Menu menu = findMenuOrThrow(item.id());
+      Menu menu = findMenuOrThrow(item.id(), siteId);
       if (item.sortOrder() != null) {
         menu.setSortOrder(item.sortOrder());
       }
@@ -323,12 +454,13 @@ public class MenuService {
 
     /** 메뉴별 역할 매핑 조회 */
   @Transactional(readOnly = true)
-    public List<RoleMenuResponse> getRoleMenuMappings(Long menuId) {
-    findMenuOrThrow(menuId);
+    public List<RoleMenuResponse> getRoleMenuMappings(Long menuId, Long siteId) {
+    findMenuOrThrow(menuId, siteId);
+    Long effectiveSiteId = resolveEffectiveSiteId(siteId);
     List<Role> roles = roleRepository.findByCodeNot(SYSTEM_ADMIN_CODE,
         org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Order.asc("id")));
-    Set<Long> mappedRoleIds = roleMenuRepository.findByMenuId(menuId)
-                .stream().map(RoleMenu::getRoleId).collect(Collectors.toSet());
+    Set<Long> mappedRoleIds = Set.copyOf(
+        roleMenuRepository.findRoleIdsByMenuIdAndSite(menuId, effectiveSiteId));
 
     return roles.stream()
             .map(role -> new RoleMenuResponse(
@@ -339,8 +471,8 @@ public class MenuService {
 
     /** 역할 매핑 변경 (멱등성 보장) */
   @Transactional
-    public void updateRoleMenuMapping(Long menuId, Long roleId, boolean hasAccess) {
-    findMenuOrThrow(menuId);
+    public void updateRoleMenuMapping(Long menuId, Long roleId, boolean hasAccess, Long siteId) {
+    findMenuOrThrow(menuId, siteId);
     Role role = roleRepository.findById(roleId)
                 .orElseThrow(ErrorCode.ROLE_NOT_FOUND::toException);
 
@@ -348,11 +480,18 @@ public class MenuService {
       throw ErrorCode.MENU_ROLE_PROTECTED.toException();
     }
 
-    boolean exists = roleMenuRepository.existsByRoleIdAndMenuId(roleId, menuId);
-    if (hasAccess && !exists) {
-      roleMenuRepository.save(RoleMenu.builder().roleId(roleId).menuId(menuId).build());
-    } else if (!hasAccess && exists) {
-      roleMenuRepository.deleteByRoleIdAndMenuId(roleId, menuId);
+    Long effectiveSiteId = resolveEffectiveSiteId(siteId);
+    List<RoleMenu> rows = effectiveSiteId == null
+        ? roleMenuRepository.findByRoleIdAndMenuIdAndSiteIdIsNull(roleId, menuId)
+        : roleMenuRepository.findByRoleIdAndMenuIdAndSiteId(roleId, menuId, effectiveSiteId);
+
+    if (hasAccess) {
+      if (rows.isEmpty()) {
+        roleMenuRepository.save(RoleMenu.builder()
+            .roleId(roleId).menuId(menuId).siteId(effectiveSiteId).build());
+      }
+    } else if (!rows.isEmpty()) {
+      roleMenuRepository.deleteAll(rows);
     }
   }
 
@@ -362,16 +501,16 @@ public class MenuService {
 
     /** 메뉴가 사용하는 API 매핑 조회 (apiInfoId 목록) */
   @Transactional(readOnly = true)
-    public List<Long> getMenuApiMappings(Long menuId) {
-    findMenuOrThrow(menuId);
+    public List<Long> getMenuApiMappings(Long menuId, Long siteId) {
+    findMenuOrThrow(menuId, siteId);
     return menuApiRepository.findByMenuId(menuId).stream()
                 .map(MenuApi::getApiInfoId).toList();
   }
 
     /** API 매핑 전체 치환 (멱등성 보장) */
   @Transactional
-    public void updateMenuApiMapping(Long menuId, List<Long> apiInfoIds) {
-    findMenuOrThrow(menuId);
+    public void updateMenuApiMapping(Long menuId, List<Long> apiInfoIds, Long siteId) {
+    findMenuOrThrow(menuId, siteId);
     Set<Long> requested = apiInfoIds == null ? Set.of() : new java.util.HashSet<>(apiInfoIds);
 
     if (!requested.isEmpty() && apiInfoRepository.findAllById(requested).size() != requested.size()) {
@@ -408,43 +547,60 @@ public class MenuService {
             .orElseThrow(ErrorCode.MENU_NOT_FOUND::toException);
   }
 
+  private Menu findMenuOrThrow(Long id, Long siteId) {
+    Menu menu = findMenuOrThrow(id);
+    if (siteId != null && menu.getSiteId() != null
+        && !siteId.equals(menu.getSiteId()) && !isGlobalAdmin()) {
+      throw ErrorCode.MENU_NOT_FOUND.toException();
+    }
+    return menu;
+  }
+
     /** 현재 로그인한 사용자가 시스템관리자인지 확인 — role.is_system 기반 */
   private boolean isCurrentUserSystemAdmin() {
-    String roleCode = SecurityContextHolder.getContext().getAuthentication()
-            .getAuthorities().stream()
+    return roleRepository.findByCode(currentRoleCode())
+            .map(role -> role.isSystem())
+            .orElse(false);
+  }
+
+  private boolean isGlobalAdmin() {
+    String roleCode = currentRoleCode();
+    if (SUPER_ADMIN_CODE.equals(roleCode)) {
+      return true;
+    }
+    return roleRepository.findByCode(roleCode).map(Role::isSystem).orElse(false);
+  }
+
+    /**
+     * 현재 로그인한 사용자의 역할이 해당 사이트에서 접근 가능한 menuId Set 반환
+     * SecurityContextHolder → role 코드 → Role ID → role_menu 조회
+     * 공통(site_id IS NULL) 매핑 + 해당 사이트 전용 매핑을 함께 포함한다
+     * 역할이 없거나 매핑이 없으면 빈 Set 반환 (메뉴 전체 숨김)
+     */
+  private Set<Long> resolveAllowedMenuIds(Long siteId) {
+    return roleRepository.findByCode(currentRoleCode())
+            .map(role -> Set.copyOf(
+                roleMenuRepository.findMenuIdsByRoleIdAndSite(role.getId(), siteId)))
+            .orElse(Set.of());
+  }
+
+  private String currentRoleCode() {
+    org.springframework.security.core.Authentication authentication =
+        SecurityContextHolder.getContext().getAuthentication();
+    if (authentication == null || !authentication.isAuthenticated()) {
+      return "";
+    }
+    return authentication.getAuthorities().stream()
             .findFirst()
             .map(a -> {
               String auth = a.getAuthority();
               return auth.startsWith("ROLE_") ? auth.substring(5) : auth;
             })
             .orElse("");
-
-    return roleRepository.findByCode(roleCode)
-            .map(role -> role.isSystem())
-            .orElse(false);
   }
 
-    /**
-     * 현재 로그인한 사용자의 역할에 허용된 menuId Set 반환
-     * SecurityContextHolder → role 코드 → Role ID → role_menu 조회
-     * 역할이 없거나 매핑이 없으면 빈 Set 반환 (메뉴 전체 숨김)
-     */
-  private Set<Long> resolveAllowedMenuIds() {
-    String authority = SecurityContextHolder.getContext().getAuthentication()
-            .getAuthorities().stream()
-            .findFirst()
-            .map(a -> a.getAuthority())
-            .orElse("");
-
-        /* "ROLE_SUPER_ADMIN" → "SUPER_ADMIN" 변환 */
-    String roleCode = authority.startsWith("ROLE_") ? authority.substring(5) : authority;
-
-    return roleRepository.findByCode(roleCode)
-            .map(role -> roleMenuRepository.findByRoleId(role.getId())
-                .stream()
-                .map(RoleMenu::getMenuId)
-                .collect(Collectors.toSet()))
-            .orElse(Set.of());
+  private Long resolveEffectiveSiteId(Long siteId) {
+    return effectiveSiteResolver.resolve(siteId);
   }
 
     /* ══════════════════════════════════════ */

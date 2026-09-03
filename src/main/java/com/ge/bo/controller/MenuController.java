@@ -1,6 +1,8 @@
 package com.ge.bo.controller;
 
 import com.ge.bo.annotation.ApiLinkedEntity;
+import com.ge.bo.dto.MenuImportRequest;
+import com.ge.bo.dto.MenuImportResponse;
 import com.ge.bo.dto.MenuRequest;
 import com.ge.bo.dto.MenuResponse;
 import com.ge.bo.dto.MenuSortBatchItem;
@@ -25,7 +27,7 @@ public class MenuController {
   private final MenuService menuService;
 
   @GetMapping
-    @PreAuthorize("#forNav or @securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+    @PreAuthorize("#forNav or @securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
     public ResponseEntity<List<MenuResponse>> getMenuTree(
             @RequestParam String type,
             @RequestParam(defaultValue = "false") boolean forNav,
@@ -33,14 +35,32 @@ public class MenuController {
     return ResponseEntity.ok(menuService.getMenuTree(type, siteId, forNav));
   }
 
+  @GetMapping("/site/{siteId}")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<List<MenuResponse>> getMenuTreeBySite(
+            @PathVariable Long siteId,
+            @RequestParam String type) {
+    return ResponseEntity.ok(menuService.getMenuTreeForSite(type, siteId));
+  }
+
+  @PostMapping("/import")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<MenuImportResponse> importMenus(
+            @Valid @RequestBody MenuImportRequest request,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    return ResponseEntity.ok(menuService.importMenus(request, siteId));
+  }
+
   @GetMapping("/{id}")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
-    public ResponseEntity<MenuResponse> getMenu(@PathVariable Long id) {
-    return ResponseEntity.ok(menuService.getMenu(id));
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<MenuResponse> getMenu(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    return ResponseEntity.ok(menuService.getMenu(id, siteId));
   }
 
   @PostMapping
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
     public ResponseEntity<MenuResponse> createMenu(
             @Valid @RequestBody MenuRequest request,
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
@@ -49,67 +69,85 @@ public class MenuController {
   }
 
   @PutMapping("/{id}")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
-    public ResponseEntity<MenuResponse> updateMenu(@PathVariable Long id, @Valid @RequestBody MenuRequest request) {
-    return ResponseEntity.ok(menuService.updateMenu(id, request));
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<MenuResponse> updateMenu(
+            @PathVariable Long id,
+            @Valid @RequestBody MenuRequest request,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    return ResponseEntity.ok(menuService.updateMenu(id, request, siteId));
   }
 
   @DeleteMapping("/{id}")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
-    public ResponseEntity<Void> deleteMenu(@PathVariable Long id) {
-    menuService.deleteMenu(id);
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<Void> deleteMenu(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    menuService.deleteMenu(id, siteId);
     return ResponseEntity.noContent().build();
   }
 
   @PatchMapping("/{id}/sort")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
-    public ResponseEntity<Void> updateSortOrder(@PathVariable Long id, @RequestBody Map<String, Integer> body) {
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<Void> updateSortOrder(
+            @PathVariable Long id,
+            @RequestBody Map<String, Integer> body,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
     Integer sortOrder = body.get("sortOrder");
     if (sortOrder == null || sortOrder < 1 || sortOrder > 999) {
       return ResponseEntity.badRequest().build();
     }
-    menuService.updateSortOrder(id, sortOrder);
+    menuService.updateSortOrder(id, sortOrder, siteId);
     return ResponseEntity.ok().build();
   }
 
   @PatchMapping("/sort-batch")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
-    public ResponseEntity<Void> updateSortBatch(@RequestBody List<MenuSortBatchItem> items) {
-    menuService.updateSortBatch(items);
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<Void> updateSortBatch(
+            @RequestBody List<MenuSortBatchItem> items,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    menuService.updateSortBatch(items, siteId);
     return ResponseEntity.ok().build();
   }
 
   @GetMapping("/{id}/roles")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
-    public ResponseEntity<List<RoleMenuResponse>> getRoleMenuMappings(@PathVariable Long id) {
-    return ResponseEntity.ok(menuService.getRoleMenuMappings(id));
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<List<RoleMenuResponse>> getRoleMenuMappings(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    return ResponseEntity.ok(menuService.getRoleMenuMappings(id, siteId));
   }
 
   @PutMapping("/{menuId}/roles/{roleId}")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
     public ResponseEntity<Void> updateRoleMenuMapping(
             @PathVariable Long menuId,
             @PathVariable Long roleId,
-            @RequestBody Map<String, Boolean> body) {
+            @RequestBody Map<String, Boolean> body,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
     Boolean hasAccess = body.get("hasAccess");
     if (hasAccess == null) {
       return ResponseEntity.badRequest().build();
     }
-    menuService.updateRoleMenuMapping(menuId, roleId, hasAccess);
+    menuService.updateRoleMenuMapping(menuId, roleId, hasAccess, siteId);
     return ResponseEntity.ok().build();
   }
 
   @GetMapping("/{id}/apis")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
-    public ResponseEntity<List<Long>> getMenuApiMappings(@PathVariable Long id) {
-    return ResponseEntity.ok(menuService.getMenuApiMappings(id));
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<List<Long>> getMenuApiMappings(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
+    return ResponseEntity.ok(menuService.getMenuApiMappings(id, siteId));
   }
 
   @PutMapping("/{id}/apis")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
-    public ResponseEntity<Void> updateMenuApiMapping(@PathVariable Long id, @RequestBody Map<String, List<Long>> body) {
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
+    public ResponseEntity<Void> updateMenuApiMapping(
+            @PathVariable Long id,
+            @RequestBody Map<String, List<Long>> body,
+            @RequestHeader(value = "X-Site-Id", required = false) Long siteId) {
     List<Long> apiInfoIds = body.get("apiInfoIds");
-    menuService.updateMenuApiMapping(id, apiInfoIds);
+    menuService.updateMenuApiMapping(id, apiInfoIds, siteId);
     return ResponseEntity.noContent().build();
   }
 }

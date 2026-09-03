@@ -1,0 +1,2 @@
+ALTER TABLE transaction_log
+    ADD COLUMN IF NOT EXISTS source VARCHAR(10);

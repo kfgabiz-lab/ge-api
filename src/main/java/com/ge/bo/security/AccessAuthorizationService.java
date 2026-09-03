@@ -51,8 +51,9 @@ public class AccessAuthorizationService {
     AdminUser admin = adminRepository.findByEmployeeId(employeeId)
                 .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "인증 정보를 확인할 수 없습니다."));
 
-    validateSiteAccess(request, admin);
-    validateMenuAccess(request, authentication);
+    Long siteId = parseSiteId(request.getHeader(HEADER_SITE_ID));
+    validateSiteAccess(siteId, admin);
+    validateMenuAccess(request, authentication, siteId);
   }
 
     /**
@@ -61,7 +62,7 @@ public class AccessAuthorizationService {
      * 매칭 키는 Spring이 핸들러 결정 시 이미 확정한 BEST_MATCHING_PATTERN_ATTRIBUTE를 쓴다 —
      * 클라이언트 입력이 아니며, api_info.url_pattern과 같은 출처(RequestMappingHandlerMapping)에서 나온 값이다.
      */
-  private void validateMenuAccess(HttpServletRequest request, Authentication authentication) {
+  private void validateMenuAccess(HttpServletRequest request, Authentication authentication, Long siteId) {
     if (securityService.isSuperAdmin(authentication)) {
       return;
     }
@@ -81,15 +82,14 @@ public class AccessAuthorizationService {
       return;
     }
 
-    boolean hasAccess = menuIds.stream().anyMatch(menuId -> securityService.hasMenu(authentication, menuId));
+    boolean hasAccess = menuIds.stream().anyMatch(menuId -> securityService.hasMenu(authentication, menuId, siteId));
     if (!hasAccess) {
       throw ErrorCode.MENU_ACCESS_DENIED.toException();
     }
   }
 
     /** X-Site-Id 헤더 기반 사이트 접근 권한 검증 — 헤더 필수, admin_user_site 매핑 존재 여부로 판단 */
-  private void validateSiteAccess(HttpServletRequest request, AdminUser admin) {
-    Long siteId = parseSiteId(request.getHeader(HEADER_SITE_ID));
+  private void validateSiteAccess(Long siteId, AdminUser admin) {
     if (siteId == null) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "SITE_ID_REQUIRED", "X-Site-Id 헤더가 필요합니다.");
     }

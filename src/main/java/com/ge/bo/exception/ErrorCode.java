@@ -28,6 +28,11 @@ public enum ErrorCode {
     MENU_TYPE_INVALID(HttpStatus.BAD_REQUEST, "MENU_TYPE_INVALID", "메뉴 구분은 BO 또는 FO만 가능합니다."),
     MENU_NAME_REQUIRED(HttpStatus.BAD_REQUEST, "MENU_NAME_REQUIRED", "메뉴명 또는 다국어 키를 입력해주세요."),
 
+    SITE_NOT_FOUND(HttpStatus.NOT_FOUND, "SITE_NOT_FOUND", "해당 홈페이지를 찾을 수 없습니다."),
+    MENU_IMPORT_TARGET_SITE_REQUIRED(HttpStatus.BAD_REQUEST, "MENU_IMPORT_TARGET_SITE_REQUIRED", "대상 사이트를 지정해주세요."),
+    MENU_IMPORT_SAME_SITE(HttpStatus.BAD_REQUEST, "MENU_IMPORT_SAME_SITE", "원본 사이트와 대상 사이트가 동일합니다."),
+    MENU_IMPORT_INVALID_SOURCE(HttpStatus.BAD_REQUEST, "MENU_IMPORT_INVALID_SOURCE", "선택한 메뉴가 원본 사이트의 BO 메뉴가 아닙니다."),
+
     /* 역할 */
     ROLE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "해당 역할을 찾을 수 없습니다."),
     MENU_ROLE_PROTECTED(HttpStatus.BAD_REQUEST, "MENU_ROLE_PROTECTED", "해당 메뉴는 최고 관리자 역할에만 매핑할 수 있습니다."),

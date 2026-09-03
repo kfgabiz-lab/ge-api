@@ -22,7 +22,7 @@ import java.time.OffsetDateTime;
 @RestController
 @RequestMapping("/api/v1/error-logs")
 @RequiredArgsConstructor
-@PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+@PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
 public class ErrorLogController {
 
     private final ErrorLogService errorLogService;

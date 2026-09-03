@@ -1,5 +1,6 @@
 package com.ge.bo.security;
 
+import com.ge.bo.common.context.EffectiveSiteResolver;
 import com.ge.bo.entity.Menu;
 import com.ge.bo.repository.AdminRepository;
 import com.ge.bo.repository.MenuRepository;
@@ -19,6 +20,7 @@ public class SecurityService {
   private final AdminRepository adminRepository;
   private final RoleMenuRepository roleMenuRepository;
   private final MenuRepository menuRepository;
+  private final EffectiveSiteResolver effectiveSiteResolver;
 
   public boolean isSystemAdmin(Authentication authentication) {
     if (authentication == null || !authentication.isAuthenticated()) {
@@ -48,6 +50,10 @@ public class SecurityService {
   }
 
   public boolean hasMenu(Authentication authentication, Long menuId) {
+    return hasMenu(authentication, menuId, effectiveSiteResolver.resolveCurrent());
+  }
+
+  public boolean hasMenu(Authentication authentication, Long menuId, Long siteId) {
     if (authentication == null || !authentication.isAuthenticated()) {
       return false;
     }
@@ -61,7 +67,7 @@ public class SecurityService {
                 .orElse("");
 
     return roleRepository.findByCode(roleCode)
-                .map(role -> roleMenuRepository.existsByRoleIdAndMenuId(role.getId(), menuId))
+                .map(role -> roleMenuRepository.existsByRoleIdAndMenuIdAndSite(role.getId(), menuId, siteId))
                 .orElse(false);
   }
 
@@ -85,11 +91,12 @@ public class SecurityService {
       return true;
     }
 
+    Long siteId = effectiveSiteResolver.resolveCurrent();
     List<Long> candidateIds = candidates.stream().map(Menu::getId).toList();
-    if (menuId != null && candidateIds.contains(menuId) && hasMenu(authentication, menuId)) {
+    if (menuId != null && candidateIds.contains(menuId) && hasMenu(authentication, menuId, siteId)) {
       return true;
     }
 
-    return candidateIds.stream().anyMatch(id -> hasMenu(authentication, id));
+    return candidateIds.stream().anyMatch(id -> hasMenu(authentication, id, siteId));
   }
 }

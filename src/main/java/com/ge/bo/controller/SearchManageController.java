@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/search-manage")
 @RequiredArgsConstructor
 @ApiLinkedEntity("SearchManage")
-@PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+@PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
 public class SearchManageController {
 
     private final SearchManageService searchManageService;

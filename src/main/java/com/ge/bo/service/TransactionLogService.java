@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  * - @Async: 메인 응답과 분리하여 비동기로 DB에 저장
  *
  * 사용법:
- *   transactionLogService.saveAsync(method, requestUrl, requestBody, httpStatus, clientIp, durationMs, loginUser, siteId);
+ *   transactionLogService.saveAsync(method, requestUrl, requestBody, httpStatus, clientIp, durationMs, loginUser, siteId, source);
  */
 @Slf4j
 @Service
@@ -49,13 +49,14 @@ public class TransactionLogService {
      * @param endDate     종료일시 (null이면 전체)
      * @param actionType  변경유형 키워드 (null이면 전체)
      * @param loginUser   사용자 키워드 (null이면 전체)
+     * @param siteId      사이트 ID (X-Site-Id 헤더, null이면 전체)
      * @param pageable    페이지 정보
      */
     @Transactional(readOnly = true)
     public Page<TransactionLogResponse> getList(Integer httpStatus, OffsetDateTime startDate,
                                                 OffsetDateTime endDate, String actionType,
-                                                String loginUser, Pageable pageable) {
-        Specification<TransactionLog> spec = buildSpec(httpStatus, startDate, endDate, actionType, loginUser);
+                                                String loginUser, Long siteId, Pageable pageable) {
+        Specification<TransactionLog> spec = buildSpec(httpStatus, startDate, endDate, actionType, loginUser, siteId);
         return transactionLogRepository.findAll(spec, pageable).map(TransactionLogResponse::from);
     }
 
@@ -65,9 +66,12 @@ public class TransactionLogService {
      * 트랜잭션 로그 단건 상세 조회 — requestBody 포함
      */
     @Transactional(readOnly = true)
-    public TransactionLogDetailResponse getOne(Long id) {
+    public TransactionLogDetailResponse getOne(Long id, Long siteId) {
         TransactionLog transactionLog = transactionLogRepository.findById(id)
                 .orElseThrow(ErrorCode.TRANSACTION_LOG_NOT_FOUND::toException);
+        if (siteId != null && !siteId.equals(transactionLog.getSiteId())) {
+            throw ErrorCode.TRANSACTION_LOG_NOT_FOUND.toException();
+        }
         return TransactionLogDetailResponse.from(transactionLog, decryptSensitiveFields(transactionLog.getRequestBody()));
     }
 
@@ -75,7 +79,7 @@ public class TransactionLogService {
 
     private Specification<TransactionLog> buildSpec(Integer httpStatus, OffsetDateTime startDate,
                                                     OffsetDateTime endDate, String actionType,
-                                                    String loginUser) {
+                                                    String loginUser, Long siteId) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
 
@@ -95,6 +99,9 @@ public class TransactionLogService {
             if (loginUser != null && !loginUser.isBlank()) {
                 predicates.add(cb.like(cb.lower(root.get("loginUser")),
                         "%" + loginUser.trim().toLowerCase() + "%"));
+            }
+            if (siteId != null) {
+                predicates.add(cb.equal(root.get("siteId"), siteId));
             }
 
             return cb.and(predicates.toArray(new Predicate[0]));
@@ -131,10 +138,11 @@ public class TransactionLogService {
    * @param durationMs  처리 시간(ms)
    * @param loginUser   로그인 사용자 이메일 (요청 스레드에서 미리 추출 — @Async 스레드 SecurityContext 미전파 방지)
    * @param siteId      요청 사이트 ID (요청 스레드에서 SiteContext.getSiteId()로 미리 추출 — 위와 동일 사유)
+   * @param source      요청 출처: BO / FO / BATCH (요청 스레드에서 requestUrl 기준으로 미리 판별)
    */
   @Async
   public void saveAsync(String method, String requestUrl, String requestBody,
-      int httpStatus, String clientIp, long durationMs, String loginUser, Long siteId) {
+      int httpStatus, String clientIp, long durationMs, String loginUser, Long siteId, String source) {
     try {
       TransactionLog transactionLog = TransactionLog.builder()
           .actionType(resolveActionType(method))
@@ -146,6 +154,7 @@ public class TransactionLogService {
           .clientIp(clientIp)
           .durationMs(durationMs)
           .siteId(siteId)
+          .source(source)
           .build();
 
       transactionLogRepository.save(transactionLog);
@@ -181,6 +190,7 @@ public class TransactionLogService {
           .clientIp(null)
           .durationMs(durationMs)
           .siteId(null)
+          .source("EXTERNAL")
           .build();
 
       transactionLogRepository.save(transactionLog);

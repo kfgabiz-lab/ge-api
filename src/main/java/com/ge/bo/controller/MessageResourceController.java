@@ -30,14 +30,14 @@ public class MessageResourceController {
   }
 
   @PostMapping
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
     public ResponseEntity<MessageResourceDto.Response> create(
             @Valid @RequestBody MessageResourceDto.CreateRequest request) {
     return ResponseEntity.ok(messageResourceService.create(request));
   }
 
   @PutMapping("/{id}")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
     public ResponseEntity<MessageResourceDto.Response> update(
             @PathVariable Long id,
             @Valid @RequestBody MessageResourceDto.UpdateRequest request) {
@@ -45,7 +45,7 @@ public class MessageResourceController {
   }
 
   @DeleteMapping("/{id}")
-    @PreAuthorize("@securityService.isSystemAdmin(authentication) or hasRole('SUPER_ADMIN')")
+    @PreAuthorize("@securityService.isSystemAdmin(authentication) or @securityService.isSuperAdmin(authentication)")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
     messageResourceService.delete(id);
     return ResponseEntity.noContent().build();
