@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.util.HtmlUtils;
 import jakarta.persistence.EntityManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.core.env.Environment;
 
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -30,6 +31,7 @@ public class NewsletterInsightsService {
     //공통코드(수신자 이메일) 조회용
     private final EntityManager entityManager;
     private final SiteTimeZoneResolver siteTimeZoneResolver;
+    private final Environment environment;
 
     //뉴스레터 메일 전송
     @Transactional
@@ -39,8 +41,13 @@ public class NewsletterInsightsService {
 
     	//메일 제목 및 내용 세팅
     	//운영 환경에서는 아래 subject 주석 해제 및 테스트 주석
-//        String subject = "New Newsletter Subscriber (%s)".formatted(now.format(SUBJECT_DATE_FORMAT));
-        String subject = "[테스트] New Newsletter Subscriber (%s)".formatted(now.format(SUBJECT_DATE_FORMAT));
+    	String subject = null;
+        if (environment.matchesProfiles("prod")) {
+        	subject = "New Newsletter Subscriber (%s)".formatted(now.format(SUBJECT_DATE_FORMAT));
+        } else {
+        	subject = "[테스트] New Newsletter Subscriber (%s)".formatted(now.format(SUBJECT_DATE_FORMAT));
+        }
+        
         String content = buildMailContent(request);
 
         //1. 공통코드 EMAIL_RECIPIENT 에서 CODE가 NEWSLETTER 인 수신자 이메일 조회
