@@ -18,6 +18,7 @@ public record FoGnbMenuResponse(
         String url,
         String icon,
         Integer sortOrder,
+        String gnbTemplate,
         List<FoGnbMenuResponse> children
 ) {
 
@@ -37,6 +38,7 @@ public record FoGnbMenuResponse(
                 menu.getUrl(),
                 menu.getIcon(),
                 menu.getSortOrder(),
+                menu.getGnbTemplate(),
                 childResponses
         );
     }
@@ -67,6 +69,7 @@ public record FoGnbMenuResponse(
                 menu.getUrl(),
                 menu.getIcon(),
                 menu.getSortOrder(),
+                menu.getGnbTemplate(),
                 childResponses
         );
     }

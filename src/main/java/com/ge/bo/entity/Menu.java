@@ -91,6 +91,10 @@ public class Menu {
     @Builder.Default
     private Integer sortOrder = 1;
 
+    /** GNB 최상위 메뉴 메가메뉴 템플릿 식별자 (devices/markets/services/support/company/careers, 값 없으면 평면 링크) */
+    @Column(name = "gnb_template", length = 20)
+    private String gnbTemplate;
+
     /** 노출 여부 */
   @Column(name = "is_visible", nullable = false)
     @Builder.Default

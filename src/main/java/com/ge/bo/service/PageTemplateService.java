@@ -160,7 +160,7 @@ public class PageTemplateService {
     String resolvedName = (customFileName != null && !customFileName.isBlank())
                 ? customFileName + ".tsx"
                 : ("LAYER".equals(templateType) ? "LayerPopup.tsx" : "page.tsx");
-    return "/admin/widgetSub/" + slug + "/" + resolvedName;
+    return "/admin/generated/" + slug + "/" + resolvedName;
   }
 
     /**
