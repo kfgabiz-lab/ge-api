@@ -1167,6 +1167,7 @@ public class PageDataService {
           + "   ON j.data_slug = 'category-data'"
           + "  AND j.is_deleted = false"
           + "  AND j.data_json->'product'->>'depth' = '3'"
+          + "  AND j.data_json->'product'->>'is_training_category' = 'true'"
           + "  AND (j.data_json->'product'->>'parentId')::bigint = lv2.id"
           + "  AND (j.site_id = :siteId OR j.site_id IS NULL)"
           + " JOIN page_data p"
