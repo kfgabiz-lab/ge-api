@@ -1,6 +1,7 @@
 package com.ge.bo.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.common.search.SearchSqlSupport;
 import com.ge.bo.dto.PageDataListResponse;
 import com.ge.bo.dto.PageDataResponse;
@@ -13,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -32,6 +34,7 @@ import java.util.Set;
 public class FoTrainingService {
 
     private final ObjectMapper objectMapper;
+    private final SiteTimeZoneResolver siteTimeZoneResolver;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -188,6 +191,10 @@ public class FoTrainingService {
                         + " WHERE data_slug = :slug"
                         + " AND is_deleted = false"
                         + " AND data_json->'curriculum_detail3'->>'is_visible' = '" + VISIBLE_CODE + "'"
+                        // 접수 시작일(register_period_from)이 오늘(사이트 기준)보다 미래인 세션은 제외 — 미설정/빈값은 게이트 미적용
+                        + " AND ( data_json->'curriculum_detail2'->>'register_period_from' IS NULL"
+                        + "       OR data_json->'curriculum_detail2'->>'register_period_from' = ''"
+                        + "       OR LEFT(data_json->'curriculum_detail2'->>'register_period_from', 10) <= :today )"
                         + " AND ("
                         + "   EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(data_json->'" + POWER_LIST_KEY + "', '[]'::jsonb)) el"
                         + "           WHERE (el->>'depth2') ~ '^[0-9]+$' AND (el->>'depth2')::bigint IN (:catIds))"
@@ -201,6 +208,7 @@ public class FoTrainingService {
         Query query = entityManager.createNativeQuery(sql.toString());
         query.setParameter("slug", CURR_DTL_SLUG);
         query.setParameter("catIds", categoryIds);
+        query.setParameter("today", LocalDate.now(siteTimeZoneResolver.resolve(siteId)).toString());
         if (siteId != null) {
             query.setParameter("siteId", siteId);
         }
