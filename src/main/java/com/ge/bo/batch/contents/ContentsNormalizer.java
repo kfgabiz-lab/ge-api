@@ -22,15 +22,24 @@ public final class ContentsNormalizer {
     private static final Set<String> FALSE_VALUES = Set.of("N", "NO", "FALSE", "F", "0");
     private static final DateTimeFormatter SSQ_DATETIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-M-d H:m[:s]");
 
+    /** 비분리공백(NBSP) — 유니코드 이스케이프로 명시해 소스에 눈에 안 보이는 문자가 섞이는 걸 방지한다 */
+    private static final char NBSP = (char) 0x00A0;
+
     private ContentsNormalizer() {
     }
 
-    /** 앞뒤 공백 제거, 빈 문자열은 null */
+    /**
+     * 앞뒤 공백 제거, 빈 문자열은 null.
+     * 비분리공백(U+00A0, NBSP)은 일반 공백으로 정규화한 뒤 처리한다 — 원천(예: CATALOG NAHP_TITLE)이 제목
+     * 단어 사이에 NBSP를 섞어 보내는 사례가 확인됨(2026-09-07). 화면상 일반 공백과 구분이 안 되지만 줄바꿈이
+     * 막혀 카드 타이틀이 부자연스러운 위치에서 강제로 줄바꿈되는 원인이라, 저장 전에 여기서 걸러낸다.
+     */
     public static String trimToNull(String value) {
         if (value == null) {
             return null;
         }
-        String trimmed = value.trim();
+        String normalized = value.replace(NBSP, ' ');
+        String trimmed = normalized.trim();
         return trimmed.isEmpty() ? null : trimmed;
     }
 
