@@ -41,7 +41,7 @@ public class FoSearchKeywordController {
             @Valid @RequestBody SearchKeywordLogRequest request,
             @RequestHeader(value = "X-Site-Id", required = false) Long siteId,
             HttpServletRequest httpRequest) {
-        searchKeywordLogService.logKeyword(request.source(), request.keyword(), siteId, ClientIpUtils.resolve(httpRequest));
+        searchKeywordLogService.logKeyword(request.source(), request.keyword(), request.userKeyword(), siteId, ClientIpUtils.resolve(httpRequest));
         return ResponseEntity.noContent().build();
     }
 

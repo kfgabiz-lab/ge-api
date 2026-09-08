@@ -38,13 +38,14 @@ public class SearchKeywordLogService {
      * 검색어 저장 — 원본 keyword + 정규화 keywordNorm 동시 적재
      * 검색 동작을 막지 않는 부가 기능이므로 빈 검색어는 예외 없이 저장만 건너뛴다
      *
-     * @param source  DOWNLOAD_CENTER / UNIFIED_SEARCH
-     * @param keyword 사용자가 입력한 원본 검색어
-     * @param siteId  X-Site-Id 헤더 (없으면 null)
-     * @param ip      요청자 IP (getRemoteAddr() 기준)
+     * @param source      DOWNLOAD_CENTER / UNIFIED_SEARCH
+     * @param keyword     사용자가 입력한 원본 검색어
+     * @param userKeyword 사용자가 실제 타이핑한 원문 검색어 (챗봇 AI 키워드와 별개, 없으면 null)
+     * @param siteId      X-Site-Id 헤더 (없으면 null)
+     * @param ip          요청자 IP (getRemoteAddr() 기준)
      */
     @Transactional
-    public void logKeyword(String source, String keyword, Long siteId, String ip) {
+    public void logKeyword(String source, String keyword, String userKeyword, Long siteId, String ip) {
         if (keyword == null || keyword.isBlank()) {
             return;
         }
@@ -66,6 +67,7 @@ public class SearchKeywordLogService {
                 // 원본 검색어는 입력값 그대로 보존(집계/표기는 keywordNorm 기준 그룹의 최신 원본 사용)
                 .keyword(keyword)
                 .keywordNorm(keywordNorm)
+                .userKeyword(userKeyword)
                 .siteId(siteId)
                 .createdIp(ip)
                 .build());

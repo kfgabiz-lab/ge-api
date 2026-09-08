@@ -44,6 +44,10 @@ public class SearchKeywordLog {
     @Column(name = "keyword_norm", nullable = false, length = 255)
     private String keywordNorm;
 
+    /** 사용자가 실제 타이핑한 원문 검색어 (챗봇 AI 키워드와 별개, 미지정 가능) */
+    @Column(name = "user_keyword", length = 255)
+    private String userKeyword;
+
     /** 사이트 ID (X-Site-Id 헤더, 미지정 가능) */
     @Column(name = "site_id")
     private Long siteId;
@@ -57,10 +61,11 @@ public class SearchKeywordLog {
     private OffsetDateTime createdAt;
 
     @Builder
-    public SearchKeywordLog(String source, String keyword, String keywordNorm, Long siteId, String createdIp) {
+    public SearchKeywordLog(String source, String keyword, String keywordNorm, String userKeyword, Long siteId, String createdIp) {
         this.source = source;
         this.keyword = keyword;
         this.keywordNorm = keywordNorm;
+        this.userKeyword = userKeyword;
         this.siteId = siteId;
         this.createdIp = createdIp;
         // 검색 시각은 서버가 채운다 (DownloadLog 패턴)
