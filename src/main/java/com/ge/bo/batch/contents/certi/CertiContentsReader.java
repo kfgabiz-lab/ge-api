@@ -63,7 +63,7 @@ public class CertiContentsReader {
                 + "FROM if_r_certi_master extra "
                 + "JOIN (SELECT DISTINCT ON (certi_no, bi, nahp_level_seq) certi_no, bi, nahp_level_seq, if_date, ctid "
                 + "      FROM if_r_certi_master WHERE if_result = 'N' "
-                + "      ORDER BY certi_no, bi, nahp_level_seq, if_date ASC NULLS LAST, ctid ASC"
+                + "      ORDER BY certi_no, bi, nahp_level_seq, if_date DESC NULLS LAST, ctid ASC"
                 + "     ) kept "
                 + "  ON kept.certi_no = extra.certi_no AND kept.bi = extra.bi "
                 + "  AND kept.nahp_level_seq IS NOT DISTINCT FROM extra.nahp_level_seq "
@@ -72,14 +72,14 @@ public class CertiContentsReader {
                 rs.getTimestamp("kept_if_date"), rs.getString("if_trc_id")});
     }
 
-    /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingGroups() 호출 전에 먼저 실행해야 한다 */
+    /** 복합키 중복 행(가장 최신 1건 제외) 격리(E) — loadPendingGroups() 호출 전에 먼저 실행해야 한다 */
     @Transactional
     public int quarantineDuplicateKeys() {
         return jdbcTemplate.update(
             "UPDATE if_r_certi_master SET if_result = 'E' "
                 + "WHERE if_result = 'N' AND ctid NOT IN ("
                 + "  SELECT DISTINCT ON (certi_no, bi, nahp_level_seq) ctid FROM if_r_certi_master"
-                + "  WHERE if_result = 'N' ORDER BY certi_no, bi, nahp_level_seq, if_date ASC NULLS LAST, ctid ASC)");
+                + "  WHERE if_result = 'N' ORDER BY certi_no, bi, nahp_level_seq, if_date DESC NULLS LAST, ctid ASC)");
     }
 
     /** key = "CERTI_NO|BI" — 인증서 자연키(source_doc_key)와 동일한 형식 */

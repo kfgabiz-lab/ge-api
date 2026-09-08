@@ -231,7 +231,7 @@ public class CertiContentsBatchService {
     /**
      * 원천에 동일 복합키(certi_no, bi, nahp_level_seq)로 중복 수신된 행이 있으면, Hibernate가 같은 엔티티로
      * 인식해 값이 조용히 유실될 위험이 있다. loadPendingGroups() 호출 전에 먼저 실행해
-     * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
+     * if_date가 가장 최신인 1건만 남기고 나머지(먼저 도착한 중복분)를 'E'로 격리한다.
      */
     private void quarantineDuplicateKeys(long batchId, BatchTally tally) {
         for (Object[] row : reader.findDuplicateKeyRows()) {
@@ -243,7 +243,7 @@ public class CertiContentsBatchService {
             String sourceDocKey = certiNo + "|" + bi;
             saveFailRow(batchId, "if_r_certi_master", sourceDocKey, sourceDocKey + ", nahp_level_seq=" + levelSeq,
                 ifTrcId, "CLEANSE", "DUPLICATE_KEY",
-                "동일 복합키(certi_no+bi+nahp_level_seq)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리"
+                "동일 복합키(certi_no+bi+nahp_level_seq)로 중복 수신된 행 — 먼저 도착분 격리, 최신 수신분만 처리"
                     + (keptIfDate != null ? " (채택된 행 if_date=" + keptIfDate + ")" : ""),
                 Map.of("certiNo", certiNo, "bi", bi, "nahpLevelSeq", String.valueOf(levelSeq), "keptIfDate", String.valueOf(keptIfDate)));
             tally.duplicateKeyCount++;

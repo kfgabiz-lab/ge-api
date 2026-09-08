@@ -58,7 +58,7 @@ public class CatalogContentsReader {
                 + "FROM if_r_catalog_info extra "
                 + "JOIN (SELECT DISTINCT ON (ctlg_code, nahp_level_seq) ctlg_code, nahp_level_seq, if_date, ctid "
                 + "      FROM if_r_catalog_info WHERE if_result = 'N' "
-                + "      ORDER BY ctlg_code, nahp_level_seq, if_date ASC NULLS LAST, ctid ASC"
+                + "      ORDER BY ctlg_code, nahp_level_seq, if_date DESC NULLS LAST, ctid ASC"
                 + "     ) kept "
                 + "  ON kept.ctlg_code = extra.ctlg_code AND kept.nahp_level_seq IS NOT DISTINCT FROM extra.nahp_level_seq "
                 + "WHERE extra.if_result = 'N' AND extra.ctid <> kept.ctid",
@@ -66,14 +66,14 @@ public class CatalogContentsReader {
                 rs.getString("if_trc_id")});
     }
 
-    /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingHeaderGroups() 호출 전에 먼저 실행해야 한다 */
+    /** 복합키 중복 행(가장 최신 1건 제외) 격리(E) — loadPendingHeaderGroups() 호출 전에 먼저 실행해야 한다 */
     @Transactional
     public int quarantineDuplicateKeys() {
         return jdbcTemplate.update(
             "UPDATE if_r_catalog_info SET if_result = 'E' "
                 + "WHERE if_result = 'N' AND ctid NOT IN ("
                 + "  SELECT DISTINCT ON (ctlg_code, nahp_level_seq) ctid FROM if_r_catalog_info"
-                + "  WHERE if_result = 'N' ORDER BY ctlg_code, nahp_level_seq, if_date ASC NULLS LAST, ctid ASC)");
+                + "  WHERE if_result = 'N' ORDER BY ctlg_code, nahp_level_seq, if_date DESC NULLS LAST, ctid ASC)");
     }
 
     public Map<String, List<CatalogHeaderRow>> loadPendingHeaderGroups() {

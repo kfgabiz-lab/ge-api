@@ -61,7 +61,7 @@ public class SsqContentsReader {
                 + "JOIN (SELECT DISTINCT ON (doc_id, spec_group, level_1, level_2, level_3, level_4) "
                 + "        doc_id, spec_group, level_1, level_2, level_3, level_4, if_date, ctid "
                 + "      FROM if_r_ssq_document WHERE if_result = 'N' "
-                + "      ORDER BY doc_id, spec_group, level_1, level_2, level_3, level_4, if_date ASC NULLS LAST, ctid ASC"
+                + "      ORDER BY doc_id, spec_group, level_1, level_2, level_3, level_4, if_date DESC NULLS LAST, ctid ASC"
                 + "     ) kept "
                 + "  ON kept.doc_id = extra.doc_id AND kept.spec_group IS NOT DISTINCT FROM extra.spec_group "
                 + "  AND kept.level_1 IS NOT DISTINCT FROM extra.level_1 AND kept.level_2 IS NOT DISTINCT FROM extra.level_2 "
@@ -72,7 +72,7 @@ public class SsqContentsReader {
                 rs.getString("if_trc_id")});
     }
 
-    /** 복합키 중복 행(가장 이른 1건 제외) 격리(E) — loadPendingDocumentGroups() 호출 전에 먼저 실행해야 한다 */
+    /** 복합키 중복 행(가장 최신 1건 제외) 격리(E) — loadPendingDocumentGroups() 호출 전에 먼저 실행해야 한다 */
     @Transactional
     public int quarantineDuplicateKeys() {
         return jdbcTemplate.update(
@@ -80,7 +80,7 @@ public class SsqContentsReader {
                 + "WHERE if_result = 'N' AND ctid NOT IN ("
                 + "  SELECT DISTINCT ON (doc_id, spec_group, level_1, level_2, level_3, level_4) ctid FROM if_r_ssq_document"
                 + "  WHERE if_result = 'N' ORDER BY doc_id, spec_group, level_1, level_2, level_3, level_4,"
-                + "    if_date ASC NULLS LAST, ctid ASC)");
+                + "    if_date DESC NULLS LAST, ctid ASC)");
     }
 
     public Map<Integer, List<SsqDocumentRow>> loadPendingDocumentGroups() {

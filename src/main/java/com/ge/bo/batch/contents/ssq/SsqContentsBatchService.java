@@ -273,7 +273,7 @@ public class SsqContentsBatchService {
     /**
      * 원천에 동일 복합키(doc_id, spec_group, level_1~4)로 중복 수신된 행이 있으면, Hibernate가 같은 엔티티로
      * 인식해 값이 조용히 유실될 위험이 있다. loadPendingDocumentGroups() 호출 전에 먼저 실행해
-     * if_date가 가장 이른 1건만 남기고 나머지(나중 도착한 중복분)를 'E'로 격리한다.
+     * if_date가 가장 최신인 1건만 남기고 나머지(먼저 도착한 중복분)를 'E'로 격리한다.
      */
     private void quarantineDuplicateKeys(long batchId, BatchTally tally) {
         for (Object[] row : reader.findDuplicateKeyRows()) {
@@ -283,7 +283,7 @@ public class SsqContentsBatchService {
             Object keptIfDate = row[6];
             String ifTrcId = (String) row[7];
             saveFailRow(batchId, "if_r_ssq_document", String.valueOf(docId), rowKey, ifTrcId, "CLEANSE", "DUPLICATE_KEY",
-                "동일 복합키(doc_id+spec_group+level_1~4)로 중복 수신된 행 — 나중 도착분 격리, 최초 수신분만 처리"
+                "동일 복합키(doc_id+spec_group+level_1~4)로 중복 수신된 행 — 먼저 도착분 격리, 최신 수신분만 처리"
                     + (keptIfDate != null ? " (채택된 행 if_date=" + keptIfDate + ")" : ""),
                 Map.of("docId", docId, "specGroup", String.valueOf(row[1]), "level1", String.valueOf(row[2]),
                     "level2", String.valueOf(row[3]), "level3", String.valueOf(row[4]), "level4", String.valueOf(row[5]),
