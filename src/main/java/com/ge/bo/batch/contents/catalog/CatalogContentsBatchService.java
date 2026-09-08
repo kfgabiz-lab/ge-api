@@ -250,30 +250,29 @@ public class CatalogContentsBatchService {
     }
 
     /**
-     * 동일 제품(PRT_ID) + 동일 발행월(PRT_YYMM)을 공유하는 문서 중 최신 PRT_VER만 남기고 나머지는
-     * 삭제 처리(is_deleted=true)한다. 제목(NAHP_TITLE)은 판단 기준으로 보지 않는다 — 같은 PRT_ID+PRT_YYMM
-     * 조합이면 제목이 서로 달라 보여도 구버전으로 간주하고 최신 PRT_VER 1건만 남긴다(업무 확정 규칙).
-     * PRT_ID는 attrs(jsonb)의 "prt_id" 키에서 읽는다. PRT_YYMM은 문서의 유일 버전
-     * source_version_key("PRT_YYMM|PRT_VER")에서 읽는다. attrs에 prt_id가 없거나 PRT_YYMM을 못 읽는 문서는
-     * 그룹핑 자체에서 제외한다 — 다음 배치에서 재전송되면 값이 채워져 정상적으로 잡힌다.
+     * 동일 제품(PRT_ID)을 공유하는 문서 중 최신 PRT_VER 1건만 남기고 나머지(낮은 PRT_VER)는
+     * 삭제 처리(is_deleted=true, expose=false)한다. 발행월(PRT_YYMM)이 서로 달라도 같은 제품이면
+     * 구버전으로 간주한다 — 카탈로그는 PRT_ID별로 PRT_VER가 가장 큰 1건만 유효(업무 확정 규칙).
+     * 제목(NAHP_TITLE)은 판단 기준으로 보지 않는다. PRT_VER가 동일한 문서가 둘 이상이면 PRT_YYMM이 큰 쪽을 남긴다.
+     * PRT_ID는 attrs(jsonb)의 "prt_id" 키에서, PRT_VER는 문서의 유일 버전
+     * source_version_key("PRT_YYMM|PRT_VER")에서 읽는다. attrs에 prt_id가 없거나 PRT_VER를 숫자로 못 읽는
+     * 문서는 그룹핑에서 제외한다(데이터 이상 — 섣불리 삭제하지 않음, 다음 배치에서 값이 채워지면 정상 처리).
      */
     private int applyLatestVersionOnly(BatchTally tally) {
-        Map<String, List<ContentsMaster>> byPrtIdAndYymm = new LinkedHashMap<>();
+        Map<String, List<ContentsMaster>> byPrtId = new LinkedHashMap<>();
         for (ContentsMaster doc : masterRepository.findBySourceSystemAndIsDeletedFalse(SOURCE_SYSTEM)) {
             Object prtId = jsonSupport.fromJson(doc.getAttrs()).get("prt_id");
             if (prtId == null) {
                 continue;
             }
-            String prtYymm = prtYymmOf(doc.getId());
-            if (prtYymm == null) {
+            if (prtVerOf(doc.getId()) == null) {
                 continue;
             }
-            String groupKey = prtId + "|" + prtYymm;
-            byPrtIdAndYymm.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(doc);
+            byPrtId.computeIfAbsent(String.valueOf(prtId), k -> new ArrayList<>()).add(doc);
         }
 
         int deletedVersionCount = 0;
-        for (List<ContentsMaster> group : byPrtIdAndYymm.values()) {
+        for (List<ContentsMaster> group : byPrtId.values()) {
             if (group.size() < 2) {
                 continue;
             }
@@ -295,23 +294,27 @@ public class CatalogContentsBatchService {
             }
         }
         if (deletedVersionCount > 0) {
-            tally.reportNotes.add("동일 제품(PRT_ID)+동일 발행월(PRT_YYMM) 내 구버전 " + deletedVersionCount
+            tally.reportNotes.add("동일 제품(PRT_ID) 내 구버전 " + deletedVersionCount
                 + "건 삭제 처리함(최신 PRT_VER만 유지)");
         }
         return deletedVersionCount;
     }
 
-    /** 문서의 유일 버전(source_version_key="PRT_YYMM|PRT_VER")에서 PRT_YYMM만 뽑는다 */
-    private String prtYymmOf(long contentsId) {
+    /** 문서의 유일 버전(source_version_key="PRT_YYMM|PRT_VER")에서 PRT_VER(정수)만 뽑는다 — 숫자로 못 읽으면 null */
+    private Integer prtVerOf(long contentsId) {
         List<ContentsVersion> versions = versionRepository.findByContentsId(contentsId);
         if (versions.isEmpty()) {
             return null;
         }
         String[] parts = versions.get(0).getSourceVersionKey().split("\\|", 2);
-        if (parts.length != 2 || parts[0].isBlank()) {
+        if (parts.length != 2 || parts[1].isBlank()) {
             return null;
         }
-        return parts[0];
+        try {
+            return Integer.parseInt(parts[1].trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** 문서의 유일 버전(source_version_key="PRT_YYMM|PRT_VER")에서 비교용 순위 키를 뽑는다 — [PRT_VER, PRT_YYMM] 순 */
