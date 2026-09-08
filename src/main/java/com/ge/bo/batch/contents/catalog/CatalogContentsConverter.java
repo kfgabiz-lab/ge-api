@@ -241,6 +241,16 @@ public class CatalogContentsConverter {
             expose = false;
         }
 
+        // NAHP_DISP_YN — 원래 카테고리별(nahp_display_flag) 플래그지만, 이 문서의 모든 헤더 행이 'N'이면
+        // NAHP 포털에 노출할 카테고리 배치가 하나도 없다는 뜻이므로(카테고리가 0건인 경우 포함) 문서 자체를
+        // 비노출 처리한다. 일부 행만 'N'이면(다른 배치는 노출) 문서는 그대로 두고 그 카테고리만 숨긴다.
+        boolean allNahpDispN = headerRows.stream()
+            .map(row -> ContentsNormalizer.trimToNull(row.nahpDispYn()))
+            .allMatch(v -> "N".equalsIgnoreCase(v));
+        if (allNahpDispN) {
+            expose = false;
+        }
+
         Map<String, Object> attrs = new LinkedHashMap<>();
         if (first.nahpVideoProdStandard() != null) {
             attrs.put("video_prod_standard", first.nahpVideoProdStandard());
