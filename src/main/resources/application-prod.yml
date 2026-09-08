@@ -90,7 +90,8 @@ ls:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
       connectPortalIv: ${CONNECT_PORTAL_IV:}
-      ctpFileDownApiUrl: https://func-lse-eus-prd-ctp-01-fnapeqa7hzbwcbbd.eastus-01.azurewebsites.net/api/download
+#      ctpFileDownApiUrl: https://func-lse-eus-prd-ctp-01-fnapeqa7hzbwcbbd.eastus-01.azurewebsites.net/api/download
+      ctpFileDownApiUrl: https://func-lse-eus-prd-ctp-01-fnapeqa7hzbwcbbd.eastus-01.azurewebsites.net/api/preview
       ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : abc
