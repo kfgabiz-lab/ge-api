@@ -2425,7 +2425,8 @@ public class PageDataService {
   private List<PageDataResponse> applyRegistrationState(String slug, List<PageDataResponse> content, Long siteId, boolean enforcePublishGate) {
     if (!enforcePublishGate || !"currDtlMgmt-data".equals(slug)) return content;
 
-    LocalDate today = LocalDate.now(resolveZone(siteId));
+    ZoneId zone = resolveZone(siteId);
+    LocalDate today = LocalDate.now(zone);
     List<PageDataResponse> result = new ArrayList<>(content.size());
     for (PageDataResponse item : content) {
       Map<String, Object> enriched = new LinkedHashMap<>(item.getDataJson());
@@ -2443,6 +2444,9 @@ public class PageDataService {
       enriched.put("_registrationClosed", daysLeft != null && daysLeft < 0);
       enriched.put("_registrationClosesToday", daysLeft != null && daysLeft == 0);
       enriched.put("_registrationNotYetOpen", notYetOpen);
+      // 접수가 마감되는 절대 시각(register_period_to 다음 날 00:00, 사이트 타임존) — _registrationClosed 전환 시점과 동일.
+      // FO 카운트다운이 접속자 타임존과 무관하게 이 값을 세도록 내려준다.
+      enriched.put("_registrationCloseAt", registrationCloseAt(registerPeriodTo, zone));
 
       result.add(item.withDataJson(enriched));
     }
@@ -2462,6 +2466,13 @@ public class PageDataService {
     LocalDate to = parseYmdOrNull(registerPeriodTo);
     if (to == null) return null;
     return (int) ChronoUnit.DAYS.between(today, to);
+  }
+
+  /** 접수 마감 순간(register_period_to 다음 날 00:00, 사이트 타임존)을 ISO-8601 UTC 문자열로 — 예: 2026-09-08T04:00:00Z */
+  private static String registrationCloseAt(String registerPeriodTo, ZoneId zone) {
+    LocalDate to = parseYmdOrNull(registerPeriodTo);
+    if (to == null) return null;
+    return to.plusDays(1).atStartOfDay(zone).toInstant().toString();
   }
 
   private static Boolean registrationNotYetOpen(String registerPeriodFrom, LocalDate today) {
