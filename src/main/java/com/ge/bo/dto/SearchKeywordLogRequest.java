@@ -15,5 +15,7 @@ public record SearchKeywordLogRequest(
         String source,
 
         @NotBlank(message = "검색어를 입력해주세요.")
-        @Size(max = 255) String keyword) {
+        @Size(max = 255) String keyword,
+
+        @Size(max = 255) String userKeyword) {
 }
