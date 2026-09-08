@@ -200,7 +200,7 @@ public class PageDataService {
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
       else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
       else if (key.startsWith("innerRel_")) innerRelParams.put(key, value);
-      else if (key.startsWith("exs_") || key.startsWith("exk_") || key.startsWith("exm_") || key.startsWith("exf_")) existsRelParams.put(key, value);
+      else if (key.startsWith("exs_") || key.startsWith("exk_") || key.startsWith("exm_") || key.startsWith("exf_") || key.startsWith("exd_")) existsRelParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -345,7 +345,7 @@ public class PageDataService {
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
       else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
       else if (key.startsWith("innerRel_")) innerRelParams.put(key, value);
-      else if (key.startsWith("exs_") || key.startsWith("exk_") || key.startsWith("exm_") || key.startsWith("exf_")) existsRelParams.put(key, value);
+      else if (key.startsWith("exs_") || key.startsWith("exk_") || key.startsWith("exm_") || key.startsWith("exf_") || key.startsWith("exd_")) existsRelParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -867,20 +867,20 @@ public class PageDataService {
             whereClause += buildProductKeywordCondition("pd");
         }
         if (hasCategories) {
+            // 대표 카테고리(정렬 1순위) 1개만 보던 방식은 제품이 카테고리를 여러 개(예: VFD처럼 Lv1이 다른 두 트리) 갖는 경우
+            // 대표가 아닌 쪽으로는 필터링이 안 되는 문제가 있어, 제품이 가진 모든 Lv3 카테고리 매핑 중 하나라도 선택된
+            // categoryIds에 속하면 매칭되도록 EXISTS로 바꾼다.
             String junctionSiteCond = siteId != null ? " AND (j.site_id = :siteId OR j.site_id IS NULL)" : "";
-            whereClause += " AND ("
-                + " SELECT (j.data_json->'product'->>'parentId')::bigint"
+            whereClause += " AND EXISTS ("
+                + " SELECT 1"
                 + " FROM page_data j"
                 + " WHERE j.data_slug = 'category-data'"
                 + "  AND j.is_deleted = false"
                 + "  AND j.data_json->'product'->>'depth' = '3'"
                 + "  AND (j.data_json->'product'->>'id')::bigint = pd.id"
+                + "  AND (j.data_json->'product'->>'parentId')::bigint IN (:categoryIds)"
                 + junctionSiteCond
-                + " ORDER BY"
-                + "  CASE WHEN j.data_json->>'sortOrder' ~ '^[0-9]+$' THEN (j.data_json->>'sortOrder')::int END ASC NULLS LAST,"
-                + "  j.id ASC"
-                + " LIMIT 1"
-                + " ) IN (:categoryIds)";
+                + " )";
         }
 
         String countSql = "SELECT COUNT(*)" + fromClause + categoryJoin + whereClause;
@@ -960,8 +960,11 @@ public class PageDataService {
         boolean hasKeyword = q != null && !q.isBlank();
 
         String productSiteCond = siteId != null ? " AND (p.site_id = :siteId OR p.site_id IS NULL)" : "";
-        String categoryJoin = buildProductCategoryJoin("p", siteId);
-        String sql = "SELECT pc.lv2_id AS category_l2_id,"
+        // 대표 카테고리 1개만 뽑는 buildProductCategoryJoin(LATERAL LIMIT 1)을 쓰면 제품이 카테고리를 여러 개
+        // 갖고 있어도(예: VFD처럼 Lv1이 다른 두 트리) 대표로 뽑힌 한쪽만 카운트된다. 여기서는 제품이 가진 모든
+        // Lv3 카테고리 매핑을 직접 JOIN해서, 매핑된 카테고리마다 각각 카운트되도록 한다.
+        String categoryJoin = buildProductCategoryCountsJoin("p", siteId);
+        String sql = "SELECT (j3.data_json->'product'->>'parentId')::bigint AS category_l2_id,"
             + "       count(*)::int AS cnt"
             + " FROM page_data p"
             + categoryJoin
@@ -973,7 +976,7 @@ public class PageDataService {
         if (hasKeyword) {
             sql += buildProductKeywordCondition("p");
         }
-        sql += " GROUP BY pc.lv2_id";
+        sql += " GROUP BY (j3.data_json->'product'->>'parentId')::bigint";
 
         Query query = entityManager.createNativeQuery(sql);
         if (hasKeyword) {
@@ -991,6 +994,24 @@ public class PageDataService {
                 r[1] != null ? ((Number) r[1]).intValue() : 0));
         }
         return result;
+    }
+
+    /**
+     * getProductCategoryCounts() 전용 — 대표 카테고리 1개만 뽑는 buildProductCategoryJoin(LATERAL LIMIT 1)과 달리,
+     * 제품이 가진 모든 Lv3 카테고리 매핑(category-data)을 직접 JOIN한다. 제품 하나가 카테고리를 여러 개 가지면
+     * 매핑 개수만큼 행이 늘어나므로, 호출부는 그 결과를 카테고리별로 GROUP BY해서 집계해야 한다.
+     */
+    private String buildProductCategoryCountsJoin(String productAlias, Long siteId) {
+        String j3SiteCond = siteId != null ? " AND (j3.site_id = :siteId OR j3.site_id IS NULL)" : "";
+        String lv2SiteCond = siteId != null ? " AND (lv2.site_id = :siteId OR lv2.site_id IS NULL)" : "";
+        String lv1SiteCond = siteId != null ? " AND (lv1.site_id = :siteId OR lv1.site_id IS NULL)" : "";
+        return " JOIN page_data j3 ON j3.data_slug = 'category-data'"
+            + "  AND j3.is_deleted = false"
+            + "  AND j3.data_json->'product'->>'depth' = '3'"
+            + "  AND (j3.data_json->'product'->>'id')::bigint = " + productAlias + ".id"
+            + j3SiteCond
+            + " LEFT JOIN page_data lv2 ON lv2.id = (j3.data_json->'product'->>'parentId')::bigint AND lv2.data_slug = 'category-data' AND lv2.is_deleted = false" + lv2SiteCond
+            + " LEFT JOIN page_data lv1 ON lv1.id = (lv2.data_json->'category'->>'parentId')::bigint AND lv1.data_slug = 'category-data' AND lv1.is_deleted = false" + lv1SiteCond;
     }
 
     private String buildProductCategoryJoin(String productAlias, Long siteId) {
@@ -1825,7 +1846,7 @@ public class PageDataService {
       if (key.startsWith("rel_")) relFilterParams.put(key, value);
       else if (key.startsWith("joinr_") || key.startsWith("joink_") || key.startsWith("joinv_")) joinFilterParams.put(key, value);
       else if (key.startsWith("innerRel_")) innerRelParams.put(key, value);
-      else if (key.startsWith("exs_") || key.startsWith("exk_") || key.startsWith("exm_") || key.startsWith("exf_")) existsRelParams.put(key, value);
+      else if (key.startsWith("exs_") || key.startsWith("exk_") || key.startsWith("exm_") || key.startsWith("exf_") || key.startsWith("exd_")) existsRelParams.put(key, value);
       else searchParams.put(key, value);
     });
 
@@ -2404,7 +2425,8 @@ public class PageDataService {
   private List<PageDataResponse> applyRegistrationState(String slug, List<PageDataResponse> content, Long siteId, boolean enforcePublishGate) {
     if (!enforcePublishGate || !"currDtlMgmt-data".equals(slug)) return content;
 
-    LocalDate today = LocalDate.now(resolveZone(siteId));
+    ZoneId zone = resolveZone(siteId);
+    LocalDate today = LocalDate.now(zone);
     List<PageDataResponse> result = new ArrayList<>(content.size());
     for (PageDataResponse item : content) {
       Map<String, Object> enriched = new LinkedHashMap<>(item.getDataJson());
@@ -2422,6 +2444,9 @@ public class PageDataService {
       enriched.put("_registrationClosed", daysLeft != null && daysLeft < 0);
       enriched.put("_registrationClosesToday", daysLeft != null && daysLeft == 0);
       enriched.put("_registrationNotYetOpen", notYetOpen);
+      // 접수가 마감되는 절대 시각(register_period_to 다음 날 00:00, 사이트 타임존) — _registrationClosed 전환 시점과 동일.
+      // FO 카운트다운이 접속자 타임존과 무관하게 이 값을 세도록 내려준다.
+      enriched.put("_registrationCloseAt", registrationCloseAt(registerPeriodTo, zone));
 
       result.add(item.withDataJson(enriched));
     }
@@ -2441,6 +2466,13 @@ public class PageDataService {
     LocalDate to = parseYmdOrNull(registerPeriodTo);
     if (to == null) return null;
     return (int) ChronoUnit.DAYS.between(today, to);
+  }
+
+  /** 접수 마감 순간(register_period_to 다음 날 00:00, 사이트 타임존)을 ISO-8601 UTC 문자열로 — 예: 2026-09-08T04:00:00Z */
+  private static String registrationCloseAt(String registerPeriodTo, ZoneId zone) {
+    LocalDate to = parseYmdOrNull(registerPeriodTo);
+    if (to == null) return null;
+    return to.plusDays(1).atStartOfDay(zone).toInstant().toString();
   }
 
   private static Boolean registrationNotYetOpen(String registerPeriodFrom, LocalDate today) {
@@ -3657,8 +3689,9 @@ public class PageDataService {
       else if (key.startsWith("exk_")) idx = 1;
       else if (key.startsWith("exm_")) idx = 2;
       else if (key.startsWith("exf_")) idx = 3;
+      else if (key.startsWith("exd_")) idx = 4;
       else return;
-      groups.computeIfAbsent(key.substring(4), k -> new String[4])[idx] = value;
+      groups.computeIfAbsent(key.substring(4), k -> new String[5])[idx] = value;
     });
 
     int seq = 0;
@@ -3667,6 +3700,7 @@ public class PageDataService {
       String slaveKey = group[1];
       String masterKey = group[2];
       String slaveFilter = group[3];
+      String slaveNotFutureKey = group[4];
       if (!StringUtils.hasText(slaveSlug) || !StringUtils.hasText(slaveKey) || !StringUtils.hasText(masterKey)) continue;
       if (!slaveSlug.matches("[a-zA-Z0-9_-]+")) continue;
 
@@ -3698,6 +3732,20 @@ public class PageDataService {
           cond.append(" AND ").append(buildJsonPath(alias, filterSegs)).append(" = :").append(filterParam);
           bindParams.put(filterParam, kv[1].trim());
           filterSeq++;
+        }
+      }
+
+      // exd_: 슬레이브 행의 날짜 필드가 오늘(사이트 기준)보다 미래면 EXISTS에서 제외한다.
+      // 값이 없거나 빈 문자열이면 게이트를 적용하지 않는다(예: register_period_from 미설정 세션).
+      // 값은 ISO(yyyy-MM-dd...) 문자열이라 앞 10자리 사전식 비교로 날짜 대소를 판정한다.
+      if (StringUtils.hasText(slaveNotFutureKey)) {
+        String[] dateSegs = slaveNotFutureKey.trim().split("\\.");
+        if (isValidSegments(dateSegs)) {
+          String dateExpr = buildJsonPath(alias, dateSegs);
+          String todayParam = "exToday_" + seq;
+          cond.append(" AND (").append(dateExpr).append(" IS NULL OR ").append(dateExpr).append(" = ''")
+              .append(" OR LEFT(").append(dateExpr).append(", 10) <= :").append(todayParam).append(")");
+          bindParams.put(todayParam, resolveTodayIsoDate(siteId));
         }
       }
 
