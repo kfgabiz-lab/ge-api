@@ -93,8 +93,6 @@ ls:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
       connectPortalIv: ${CONNECT_PORTAL_IV:}
-      ctpFileDownApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/download
-      ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : abc
       captchaKey: ${CAPTCHA_ENCRYPTION_KEY:LSE_Captcha_K16!}
@@ -106,6 +104,12 @@ ls:
         clientId: ${CTP_CLIENT_ID:}
         clientSecret: ${CTP_CLIENT_SECRET:}
         grantType: client_credentials
+        #고객포탈 file download, preview API
+        fileDownApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/download
+        fileDownCode: ${CTP_FILEDOWN_CODE:}
+        filePreviewApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/preview
+        filePreviewCode: ${CTP_FILE_PREVIEW_CODE:}
+        fileExpiryMinutes: 5
       # 통합챗봇 검색 API
       chatbotSearch:
 #        apiUrl: https://cxai-dev.ls-electric.com/api/v1/search/stream?include_keywords=true    테스트로 인해 임시 주석 후 운영 URL 적용. 테스트 후 원복 필요.

@@ -73,11 +73,16 @@ ls:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
       connectPortalIv: ${CONNECT_PORTAL_IV:}
-      ctpFileDownApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/download
-      ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : "AIzaSyBkHvBn_MG-VWQd2C8-UA3PJBniWPy5QNk"
       captchaKey: ${CAPTCHA_ENCRYPTION_KEY:LSE_Captcha_K16!}
+      ctp:
+        #고객포탈 file download, preview API
+        fileDownApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/download
+        fileDownCode: ${CTP_FILEDOWN_CODE:}
+        filePreviewApiUrl: https://func-lse-eus-dev-ctp-01-erfrhfhkcgfmd5f3.eastus-01.azurewebsites.net/api/preview
+        filePreviewCode: ${CTP_FILE_PREVIEW_CODE:}
+        fileExpiryMinutes: 5
       azure-search:
         api-url: ${AZURE_SEARCH_API_URL:}
         api-key: ${AZURE_SEARCH_API_KEY:}

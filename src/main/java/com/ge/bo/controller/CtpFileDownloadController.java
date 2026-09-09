@@ -20,4 +20,9 @@ public class CtpFileDownloadController {
     public String fileDownload(@RequestParam("filePath") String filePath) {
         return ctpFileDownloadService.ctpFileDownApi(filePath);
     }
+
+    @GetMapping("/filePreviewUrl")
+    public String filePreview(@RequestParam("filePath") String filePath) {
+        return ctpFileDownloadService.ctpFilePreviewApi(filePath);
+    }
 }

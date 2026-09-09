@@ -90,8 +90,6 @@ ls:
     inApi:
       connectPortalEncKey: ${CONNECT_PORTAL_ENC_KEY:}
       connectPortalIv: ${CONNECT_PORTAL_IV:}
-      ctpFileDownApiUrl: https://func-lse-eus-prd-ctp-01-fnapeqa7hzbwcbbd.eastus-01.azurewebsites.net/api/download
-      ctpFileDownCode: ${CTP_FILEDOWN_CODE:}
     outApi:
       googleMapKey : abc
       captchaKey: ${CAPTCHA_ENCRYPTION_KEY:LSE_Captcha_K16!}
@@ -110,6 +108,12 @@ ls:
 #        clientId: ${CTP_CLIENT_ID:}
 #        clientSecret: ${CTP_CLIENT_SECRET:}
 #        grantType: client_credentials
+        #고객포탈 file download, preview API
+        fileDownApiUrl: https://func-lse-eus-prd-ctp-01-fnapeqa7hzbwcbbd.eastus-01.azurewebsites.net/api/download
+        fileDownCode: ${CTP_FILEDOWN_CODE:}
+        filePreviewApiUrl: https://func-lse-eus-prd-ctp-01-fnapeqa7hzbwcbbd.eastus-01.azurewebsites.net/api/preview
+        filePreviewCode: ${CTP_FILE_PREVIEW_CODE:}
+        fileExpiryMinutes: 10075
       # 통합챗봇 검색 API
       chatbotSearch:
         apiUrl: https://cxai.ls-electric.com/api/v1/search/stream?include_keywords=true
