@@ -45,7 +45,6 @@ import java.util.Optional;
 public class AuthService {
 
   private static final long REFRESH_TOKEN_DAYS = 7L;
-  private static final String PENDING_ROLE = "PENDING_ADMIN";
 
   /**
    * 요청 스레드의 X-Site-Id 값 — @Async 접속이력 저장 스레드에는 ThreadLocal이 전파되지 않으므로
@@ -81,7 +80,7 @@ public class AuthService {
   @Value("${ls.lse.sso.sysName:NAHP}")
   private String ssoSysName;
 
-  /** SSO 자동 생성 계정의 기본 역할 코드 */
+  /** SSO 자동 생성 계정의 기본 역할 코드 — 곧 관리자 승인 전(승인 대기) 상태를 의미 */
   @Value("${ls.lse.sso.defaultRole:USER}")
   private String ssoDefaultRole;
 
@@ -181,7 +180,7 @@ public class AuthService {
     loginAdminService.recordSuccess(admin.getId());
 
     // 승인 대기 확인 (SUCCESS 로그보다 먼저 체크하여 PENDING은 FAIL로 기록)
-    if (PENDING_ROLE.equals(admin.getRole())) {
+    if (ssoDefaultRole.equals(admin.getRole())) {
       loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
     }
@@ -304,6 +303,11 @@ public class AuthService {
     if (existing.isPresent()) {
       AdminUser a = existing.get();
       if (!a.isActive()) {
+        // 승인 대기 상태(비활성 + 승인대기 역할)는 재로그인 시에도 계속 승인 대기 메시지 유지
+        if (ssoDefaultRole.equals(a.getRole())) {
+          loginLogService.saveAsync(a.getId(), a.getEmployeeId(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
+          throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
+        }
         loginLogService.saveAsync(a.getId(), a.getEmployeeId(), "FAIL", "ACCOUNT_INACTIVE", clientIp, userAgent, currentSiteId());
         throw new BusinessException(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "로그인 권한이 없습니다.");
       }
@@ -373,7 +377,7 @@ public class AuthService {
     adminRepository.save(admin);
 
     // 승인 대기 확인
-    if (PENDING_ROLE.equals(admin.getRole())) {
+    if (ssoDefaultRole.equals(admin.getRole())) {
       loginLogService.saveAsync(admin.getId(), admin.getEmployeeId(), "FAIL", "PENDING_APPROVAL", clientIp, userAgent, currentSiteId());
       throw new BusinessException(HttpStatus.FORBIDDEN, "PENDING_APPROVAL", "관리자 승인을 기다리고 있습니다.");
     }
