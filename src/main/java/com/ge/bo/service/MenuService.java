@@ -66,6 +66,9 @@ public class MenuService {
 
   private static final String SUPER_ADMIN_CODE = "SUPER_ADMIN";
 
+    /** "시스템관리" 루트 메뉴 ID — 프론트(menu-detail.tsx PROTECTED_ROOT_MENU_ID)와 동일해야 한다 */
+  private static final Long PROTECTED_ROOT_MENU_ID = 212L;
+
     /* ══════════════════════════════════════ */
     /*  조회                                  */
     /* ══════════════════════════════════════ */
@@ -247,7 +250,42 @@ public class MenuService {
             .siteId(siteId)
             .build();
 
-    return MenuResponse.from(menuRepository.save(menu));
+    Menu saved = menuRepository.save(menu);
+
+        /* "시스템관리"(212) 하위 메뉴는 프론트에서 권한선택 체크박스가 잠겨있어(disable)
+           SUPER_ADMIN role_menu 행을 UI로 만들 방법이 없다 — 생성 시점에 대신 만들어준다.
+           그 외 일반 메뉴는 체크박스로 직접 권한을 부여할 수 있으므로 자동 생성 대상에서 제외한다. */
+    if (isUnderProtectedRoot(parent)) {
+      grantSuperAdminAccess(saved.getId(), siteId);
+    }
+
+    return MenuResponse.from(saved);
+  }
+
+    /** 메뉴(또는 그 조상)가 "시스템관리" 보호 루트(212) 하위인지 확인 */
+  private boolean isUnderProtectedRoot(Menu menu) {
+    Menu current = menu;
+    while (current != null) {
+      if (PROTECTED_ROOT_MENU_ID.equals(current.getId())) {
+        return true;
+      }
+      current = current.getParent();
+    }
+    return false;
+  }
+
+    /**
+     * SUPER_ADMIN에 대한 role_menu 매핑을 자동 생성한다.
+     * SUPER_ADMIN은 role.is_system=true가 아니므로 getMenuTree()의 전체반환 bypass를 타지 않고
+     * role_menu 매핑에 의해 사이드바 노출 여부가 결정된다.
+     */
+  private void grantSuperAdminAccess(Long menuId, Long siteId) {
+    roleRepository.findByCode(SUPER_ADMIN_CODE).ifPresent(role ->
+        roleMenuRepository.save(RoleMenu.builder()
+            .roleId(role.getId())
+            .menuId(menuId)
+            .siteId(siteId)
+            .build()));
   }
 
   @Transactional
