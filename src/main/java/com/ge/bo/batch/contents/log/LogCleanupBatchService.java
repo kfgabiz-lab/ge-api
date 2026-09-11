@@ -28,7 +28,7 @@ import java.time.ZoneId;
 @RequiredArgsConstructor
 public class LogCleanupBatchService {
 
-    /** 로그 보관기간 계산 기준 시간대 — 북미 동부시간 */
+    /** 로그 보관기간 계산 기준 시간대 — 북미 동부시간  */
     private static final ZoneId ZONE_ID = ZoneId.of("America/New_York");
 
     /** 일반 접속/행위 로그 보관기간 — 1년 */
