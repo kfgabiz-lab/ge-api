@@ -3323,6 +3323,13 @@ public class PageDataService {
         String pName = "p_sort_" + paramSeq.getAndIncrement();
         outParams.put(pName, stripQuotes(token));
         parts.add("CAST(:" + pName + " AS text)");
+      } else if (isMsgKeyBracketToken(token)) {
+        // FE evalColumnDataExpr(parseConcatTokens)와 동일 규칙 — {msgKey} 브라켓 토큰은
+        // 화면 표시용 다국어 키라 실제 필드가 아니며, 정렬에서는 브라켓 문자열 그대로를
+        // 비교 가능한 리터럴로 취급한다(그렇지 않으면 필드 참조로 오인돼 파싱이 null로 폴백된다).
+        String pName = "p_sort_" + paramSeq.getAndIncrement();
+        outParams.put(pName, token);
+        parts.add("CAST(:" + pName + " AS text)");
       } else if (FETCH_SORT_ACCESSOR_PATTERN.matcher(token).matches()) {
         if (fieldRefCount.incrementAndGet() > SORT_EXPR_MAX_FIELD_REFS) return null;
         String relationExpr = buildSingleRelationSortExpr(token, slug, siteId, null);
@@ -3390,6 +3397,14 @@ public class PageDataService {
     char q = t.charAt(0);
     if ((q != '\'' && q != '"') || t.charAt(t.length() - 1) != q) return false;
     return t.indexOf(q, 1) == t.length() - 1;
+  }
+
+  private static final java.util.regex.Pattern MSG_KEY_BRACKET_PATTERN =
+      java.util.regex.Pattern.compile("^\\{[^{}]+}$");
+
+  /** FE utils.ts의 MSG_KEY_BRACKET_RE(/^\{[^{}]+\}$/)와 동일 판정 규칙. */
+  private boolean isMsgKeyBracketToken(String token) {
+    return token != null && MSG_KEY_BRACKET_PATTERN.matcher(token.trim()).matches();
   }
 
   private String buildNestedOrderByExpr(String key) {
