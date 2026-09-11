@@ -15,12 +15,12 @@ public record ChatbotSearchRequest(
         public ChatbotSearchRequest {
                 dataMarket =
                         dataMarket == null || dataMarket.isBlank()
-                                ? "GLOBAL"
+                                ? "NA"
                                 : dataMarket;
 
                 webEnabled =
                         webEnabled == null || webEnabled.isBlank()
-                                ? "true"
+                                ? "false"
                                 : webEnabled;
         }
 }
