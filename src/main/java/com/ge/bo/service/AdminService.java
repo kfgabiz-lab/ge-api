@@ -4,7 +4,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.ge.bo.common.util.RoleCodeUtils;
 import com.ge.bo.dto.AdminDto;
 import com.ge.bo.entity.AdminUser;
 import com.ge.bo.entity.Role;
@@ -69,10 +68,11 @@ public class AdminService {
         .orElseThrow(() -> new BusinessException(
             HttpStatus.NOT_FOUND, "ADMIN_NOT_FOUND", "해당 관리자를 찾을 수 없습니다."));
 
+    // SYSTEM_ADMIN(role.is_system=true) 배정은 isSystemRole()로 차단한다.
+    // SUPER_ADMIN(최고 관리자)은 is_system=false인 배정 가능 역할이므로 예약어 검사로 막지 않는다.
     if (request.getRole() != null
         && (!roleRepository.existsByCode(request.getRole())
-            || isSystemRole(request.getRole())
-            || RoleCodeUtils.containsReservedCode(request.getRole()))) {
+            || isSystemRole(request.getRole()))) {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_ROLE", "유효하지 않은 역할 코드입니다.");
     }
 
