@@ -2,6 +2,7 @@ package com.ge.bo.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ge.bo.common.context.SiteTimeZoneResolver;
 import com.ge.bo.common.excel.ExcelService;
 import com.ge.bo.common.util.ClientIpUtils;
 import com.ge.bo.dto.TrainingApplicationResponse;
@@ -55,6 +56,7 @@ public class TrainingApplicationService {
     private final DownloadLogService downloadLogService;
     private final AdminRepository adminRepository;
     private final ObjectMapper objectMapper;
+    private final SiteTimeZoneResolver siteTimeZoneResolver;
 
     private static final String TRAINING_SCHEDULE_TYPE_REGULAR = "01";
     private static final String TRAINING_SCHEDULE_TYPE_IRREGULAR = "02";
@@ -533,9 +535,20 @@ public class TrainingApplicationService {
                 (String) row[5],
                 toLocalDate(row[6]),
                 toLocalDate(row[7]),
-                toOffsetDateTime(row[8]),
+                toDisplayZone(toOffsetDateTime(row[8])),
                 (String) row[9],
                 (String) row[10]);
+    }
+
+    /**
+     * 신청 일시를 응답으로 내보내기 직전에 사이트 시간대로 환산한다(EmailSendHisService.toDisplayZone과 동일 패턴).
+     * DB에는 저장 시점의 절대시각이 그대로 남고, 표시되는 시/분만 사이트 시간대 기준으로 바뀐다.
+     */
+    private OffsetDateTime toDisplayZone(OffsetDateTime value) {
+        if (value == null) {
+            return null;
+        }
+        return value.atZoneSameInstant(siteTimeZoneResolver.resolveFromContext()).toOffsetDateTime();
     }
 
     private LocalDate toLocalDate(Object obj) {
