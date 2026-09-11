@@ -94,7 +94,7 @@ ls:
       googleMapKey : abc
       captchaKey: ${CAPTCHA_ENCRYPTION_KEY:LSE_Captcha_K16!}
       ctp:
-        # Connect Portal(Salesforce) Sandbox — IF_SRR_NAHP_CTP_0001(문의접수) / _0002(문의결과조회) 현재 개발 정보임. 운영 정보로 변경 필요.
+        # Connect Portal(Salesforce) Sandbox — IF_SRR_NAHP_CTP_0001(문의접수) / _0002(문의결과조회).
         tokenUrl: https://connect-lse.my.salesforce.com/services/oauth2/token
         apiUrl: https://connect-lse.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0001
         detailApiUrl: https://connect-lse.my.salesforce.com/services/apexrest/api/IF_SRR_NAHP_CTP_0002
