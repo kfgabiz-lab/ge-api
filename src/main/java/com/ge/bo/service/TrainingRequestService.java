@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 /**
@@ -74,7 +75,7 @@ public class TrainingRequestService {
     /** trainingFormat 값 — 현장 필드 노출 여부 판단용 */
     private static final String TRAINING_FORMAT_IN_PERSON = "In-Person";
 
-    private static final DateTimeFormatter DATE_DISPLAY_FORMAT = DateTimeFormatter.ofPattern("MMM d, yyyy");
+    private static final DateTimeFormatter DATE_DISPLAY_FORMAT = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH);
 
     private final TrainingRequestRepository trainingRequestRepository;
     private final CaptchaService captchaService;
