@@ -7,7 +7,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Collections;
 import java.util.Map;
 
@@ -26,9 +26,9 @@ public class PageDataResponse {
     /** 다중 slug 저장 그룹 식별자 (UUID) — 단일 저장 시 null */
   private String groupId;
   private String createdBy;
-  private LocalDateTime createdAt;
+  private OffsetDateTime createdAt;
   private String updatedBy;
-  private LocalDateTime updatedAt;
+  private OffsetDateTime updatedAt;
   private Long count;
 
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();

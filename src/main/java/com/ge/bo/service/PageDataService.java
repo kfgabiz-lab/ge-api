@@ -46,6 +46,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -1420,7 +1421,7 @@ public class PageDataService {
     cleanDataJson = applySnapshotPathFields(slug, null, cleanDataJson, cleanDataJson);
     String dataJsonStr = serializeDataJson(cleanDataJson);
     String currentUser = getCurrentUserId();
-    LocalDateTime now = LocalDateTime.now(siteTimeZoneResolver.resolve(siteId));
+    OffsetDateTime now = OffsetDateTime.now(siteTimeZoneResolver.resolve(siteId));
     final Query insertQuery;
     if (request.getGroupId() != null && !request.getGroupId().isBlank()) {
       insertQuery = entityManager.createNativeQuery(
@@ -1488,7 +1489,7 @@ public class PageDataService {
     dataJsonWithId.put("id", id);
     String dataJsonStr = serializeDataJson(dataJsonWithId);
     String currentUser = getCurrentUserId();
-    LocalDateTime updatedAt = LocalDateTime.now(siteTimeZoneResolver.resolve(existing.getSiteId()));
+    OffsetDateTime updatedAt = OffsetDateTime.now(siteTimeZoneResolver.resolve(existing.getSiteId()));
     Query updateQuery = entityManager.createNativeQuery(
         "UPDATE page_data"
         + " SET data_json = CAST(:dataJson AS jsonb), updated_by = :updatedBy, updated_at = :updatedAt"
@@ -1769,7 +1770,7 @@ public class PageDataService {
     dataJson.put("id", id);
     String dataJsonStr = serializeDataJson(dataJson);
     String currentUser = getCurrentUserId();
-    LocalDateTime updatedAt = LocalDateTime.now(siteTimeZoneResolver.resolve(existing.getSiteId()));
+    OffsetDateTime updatedAt = OffsetDateTime.now(siteTimeZoneResolver.resolve(existing.getSiteId()));
     Query updateQuery = entityManager.createNativeQuery(
         "UPDATE page_data"
         + " SET data_json = CAST(:dataJson AS jsonb), updated_by = :updatedBy, updated_at = :updatedAt"
@@ -2606,14 +2607,14 @@ public class PageDataService {
     }
   }
 
-  private java.time.LocalDateTime toLocalDateTime(Object obj) {
+  private java.time.OffsetDateTime toLocalDateTime(Object obj) {
     if (obj == null) return null;
-    if (obj instanceof java.time.LocalDateTime ldt) return ldt;
-    if (obj instanceof java.sql.Timestamp ts) return ts.toLocalDateTime();
-    if (obj instanceof java.time.OffsetDateTime odt) return odt.toLocalDateTime();
-    if (obj instanceof java.time.ZonedDateTime zdt) return zdt.toLocalDateTime();
-    if (obj instanceof java.time.Instant instant) return java.time.LocalDateTime.ofInstant(instant, java.time.ZoneOffset.UTC);
-    try { return java.time.LocalDateTime.parse(obj.toString()); } catch (Exception ignored) {}
+    if (obj instanceof java.time.OffsetDateTime odt) return odt;
+    if (obj instanceof java.sql.Timestamp ts) return ts.toInstant().atOffset(java.time.ZoneOffset.UTC);
+    if (obj instanceof java.time.Instant instant) return instant.atOffset(java.time.ZoneOffset.UTC);
+    if (obj instanceof java.time.ZonedDateTime zdt) return zdt.toOffsetDateTime();
+    if (obj instanceof java.time.LocalDateTime ldt) return ldt.atZone(java.time.ZoneId.systemDefault()).toOffsetDateTime();
+    try { return java.time.OffsetDateTime.parse(obj.toString()); } catch (Exception ignored) {}
     return null;
   }
 

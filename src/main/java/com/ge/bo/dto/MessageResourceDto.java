@@ -7,7 +7,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.*;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 public class MessageResourceDto {
 
@@ -71,9 +71,9 @@ public class MessageResourceDto {
     private boolean active;
     private MessageResourceType resourceType;
     private String createdBy;
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
     private String updatedBy;
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
   }
 
     /** 목록 조회 응답 DTO (페이징 포함) */

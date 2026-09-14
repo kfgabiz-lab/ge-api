@@ -13,7 +13,7 @@ import dev.samstevens.totp.code.HashingAlgorithm;
 import dev.samstevens.totp.qr.QrData;
 import dev.samstevens.totp.secret.DefaultSecretGenerator;
 import dev.samstevens.totp.time.SystemTimeProvider;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -114,7 +114,7 @@ public class TotpService {
     verifyTotpCode(admin, request.getTotpCode());
 
     admin.setTotpEnabled(true);
-    admin.setLastLoginAt(LocalDateTime.now());
+    admin.setLastLoginAt(OffsetDateTime.now());
     admin.setFailedLoginAttempts(0);
     admin.setTotpFailedAttempts(0);
     admin.setLockedUntil(null);
@@ -146,7 +146,7 @@ public class TotpService {
     verifyTotpCode(admin, request.getTotpCode());
 
     admin.setTotpEnabled(true);
-    admin.setLastLoginAt(LocalDateTime.now());
+    admin.setLastLoginAt(OffsetDateTime.now());
     admin.setFailedLoginAttempts(0);
     admin.setTotpFailedAttempts(0);
     admin.setLockedUntil(null);
@@ -193,7 +193,7 @@ public class TotpService {
     }
     verifyTotpCode(admin, request.getTotpCode());
 
-    admin.setLastLoginAt(LocalDateTime.now());
+    admin.setLastLoginAt(OffsetDateTime.now());
     admin.setFailedLoginAttempts(0);
     admin.setTotpFailedAttempts(0);
     admin.setLockedUntil(null);
@@ -226,7 +226,7 @@ public class TotpService {
     }
     verifyTotpCode(admin, request.getTotpCode());
 
-    admin.setLastLoginAt(LocalDateTime.now());
+    admin.setLastLoginAt(OffsetDateTime.now());
     admin.setFailedLoginAttempts(0);
     admin.setTotpFailedAttempts(0);
     admin.setLockedUntil(null);

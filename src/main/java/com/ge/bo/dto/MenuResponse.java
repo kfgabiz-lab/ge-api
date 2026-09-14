@@ -2,7 +2,7 @@ package com.ge.bo.dto;
 
 import com.ge.bo.entity.Menu;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
 
@@ -25,8 +25,8 @@ public record MenuResponse(
     Boolean visible,
     Boolean isSystem,
     Long siteId,
-    LocalDateTime createdAt,
-    LocalDateTime updatedAt,
+    OffsetDateTime createdAt,
+    OffsetDateTime updatedAt,
     List<MenuResponse> children
 ) {
     /** 엔티티 → DTO 변환 (재귀) */

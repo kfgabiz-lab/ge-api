@@ -4,7 +4,6 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.SQLRestriction;
 
-import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 
 /**
@@ -44,10 +43,10 @@ public class RoleMenu {
     private OffsetDateTime deletedAt;
 
   @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
   @PrePersist
     public void prePersist() {
-    this.createdAt = LocalDateTime.now();
+    this.createdAt = OffsetDateTime.now();
   }
 }

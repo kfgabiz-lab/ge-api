@@ -35,7 +35,7 @@ import com.ge.bo.sso.SsoResult;
 import com.ge.bo.sso.SsoResultCode;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -403,7 +403,7 @@ public class AuthService {
         .deptCode(sso.deptCode())
         .deptName(sso.deptName())
         .isActive(false)
-        .lastLoginAt(LocalDateTime.now())
+        .lastLoginAt(OffsetDateTime.now())
         .build();
   }
 

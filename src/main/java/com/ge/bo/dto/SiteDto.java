@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.*;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 public class SiteDto {
@@ -77,9 +77,9 @@ public class SiteDto {
     private String locale;
     private Boolean isActive;
     private String createdBy;
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
     private String updatedBy;
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
   }
 
     /** 관리자-홈페이지 매핑 일괄 변경 요청 */

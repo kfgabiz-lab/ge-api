@@ -256,19 +256,19 @@ public class FoTrainingService {
     }
 
     /**
-     * 다양한 시간 타입 → LocalDateTime (PageDataService.toLocalDateTime 동일 로직)
-     * created_at/updated_at은 timestamp without time zone 컬럼이라 pgjdbc가 보통 java.sql.Timestamp로 반환하며,
-     * Timestamp.toLocalDateTime()은 존 변환 없이 저장된 벽시계 값을 그대로 추출한다(사이트 timezone 값 보존)
+     * 다양한 시간 타입 → OffsetDateTime (PageDataService.toLocalDateTime 동일 로직)
+     * created_at/updated_at은 timestamptz 컬럼이라 pgjdbc가 java.sql.Timestamp로 반환할 수 있어,
+     * Timestamp.toInstant()로 절대 시각을 그대로 보존해 OffsetDateTime으로 변환한다
      */
-    private java.time.LocalDateTime toLocalDateTime(Object obj) {
+    private java.time.OffsetDateTime toLocalDateTime(Object obj) {
         if (obj == null) return null;
-        if (obj instanceof java.time.LocalDateTime ldt) return ldt;
-        if (obj instanceof java.sql.Timestamp ts) return ts.toLocalDateTime();
-        if (obj instanceof java.time.OffsetDateTime odt) return odt.toLocalDateTime();
-        if (obj instanceof java.time.ZonedDateTime zdt) return zdt.toLocalDateTime();
-        if (obj instanceof java.time.Instant instant) return java.time.LocalDateTime.ofInstant(instant, java.time.ZoneOffset.UTC);
+        if (obj instanceof java.time.OffsetDateTime odt) return odt;
+        if (obj instanceof java.sql.Timestamp ts) return ts.toInstant().atOffset(java.time.ZoneOffset.UTC);
+        if (obj instanceof java.time.Instant instant) return instant.atOffset(java.time.ZoneOffset.UTC);
+        if (obj instanceof java.time.ZonedDateTime zdt) return zdt.toOffsetDateTime();
+        if (obj instanceof java.time.LocalDateTime ldt) return ldt.atZone(java.time.ZoneId.systemDefault()).toOffsetDateTime();
         try {
-            return java.time.LocalDateTime.parse(obj.toString());
+            return java.time.OffsetDateTime.parse(obj.toString());
         } catch (Exception ignored) {
             return null;
         }
